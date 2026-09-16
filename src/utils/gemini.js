@@ -14,8 +14,13 @@ function getLocalAi() {
     return _localai;
 }
 
-// Provider mode: 'byok', 'cloud', or 'local'
+// Provider mode: 'byok', 'cloud', 'local', or 'deepseek'
 let currentProviderMode = 'byok';
+
+// 'local' and 'deepseek' both transcribe with the bundled whisper.cpp server.
+function isNativeBackendMode() {
+    return currentProviderMode === 'local' || currentProviderMode === 'deepseek';
+}
 
 // Groq conversation history for context
 let groqConversationHistory = [];
@@ -921,7 +926,7 @@ async function startMacOSAudioCapture(geminiSessionRef) {
 
             if (currentProviderMode === 'cloud') {
                 sendCloudAudio(monoChunk);
-            } else if (currentProviderMode === 'local') {
+            } else if (isNativeBackendMode()) {
                 getLocalAi().processLocalAudio(monoChunk);
             } else {
                 const base64Data = monoChunk.toString('base64');
@@ -1091,6 +1096,15 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         return success;
     });
 
+    ipcMain.handle('initialize-deepseek', async (event, whisperModel, profile, customPrompt) => {
+        currentProviderMode = 'deepseek';
+        const success = await getLocalAi().initializeDeepSeekSession(whisperModel, profile, customPrompt);
+        if (!success) {
+            currentProviderMode = 'byok';
+        }
+        return success;
+    });
+
     ipcMain.handle('cancel-local-initialization', async () => {
         const cancelled = await getLocalAi().cancelLocalInitialization();
         if (cancelled) {
@@ -1110,7 +1124,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 return { success: false, error: error.message };
             }
         }
-        if (currentProviderMode === 'local') {
+        if (isNativeBackendMode()) {
             try {
                 const pcmBuffer = Buffer.from(data, 'base64');
                 getLocalAi().processLocalAudio(pcmBuffer);
@@ -1145,7 +1159,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 return { success: false, error: error.message };
             }
         }
-        if (currentProviderMode === 'local') {
+        if (isNativeBackendMode()) {
             try {
                 const pcmBuffer = Buffer.from(data, 'base64');
                 getLocalAi().processLocalAudio(pcmBuffer);
@@ -1192,7 +1206,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 return { success: true, model: 'cloud' };
             }
 
-            if (currentProviderMode === 'local') {
+            if (isNativeBackendMode()) {
                 const result = await getLocalAi().sendLocalImage(data, prompt);
                 return result;
             }
@@ -1221,9 +1235,9 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             }
         }
 
-        if (currentProviderMode === 'local') {
+        if (isNativeBackendMode()) {
             try {
-                console.log('Sending text to local Llama:', text);
+                console.log('Sending text to local backend:', text);
                 return await getLocalAi().sendLocalText(text.trim());
             } catch (error) {
                 console.error('Error sending local text:', error);
@@ -1287,7 +1301,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 return { success: true };
             }
 
-            if (currentProviderMode === 'local') {
+            if (isNativeBackendMode()) {
                 getLocalAi().closeLocalSession();
                 currentProviderMode = 'byok';
                 closeTransportLog();

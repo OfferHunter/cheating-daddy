@@ -56,6 +56,13 @@ const storage = {
     async setGroqApiKey(groqApiKey) {
         return ipcRenderer.invoke('storage:set-groq-api-key', groqApiKey);
     },
+    async getDeepseekApiKey() {
+        const result = await ipcRenderer.invoke('storage:get-deepseek-api-key');
+        return result.success ? result.data : '';
+    },
+    async setDeepseekApiKey(deepseekApiKey) {
+        return ipcRenderer.invoke('storage:set-deepseek-api-key', deepseekApiKey);
+    },
 
     // Preferences
     async getPreferences() {
@@ -167,6 +174,20 @@ async function initializeLocal(profile = 'interview') {
         cheatingDaddy.setStatus('error');
         return false;
     }
+}
+
+async function initializeDeepSeek(profile = 'interview') {
+    const prefs = await storage.getPreferences();
+    const whisperModel = prefs.whisperModel || 'tiny.en';
+    const customPrompt = prefs.customPrompt || '';
+
+    const success = await ipcRenderer.invoke('initialize-deepseek', whisperModel, profile, customPrompt);
+    if (success) {
+        cheatingDaddy.setStatus('DeepSeek Live');
+        return true;
+    }
+    cheatingDaddy.setStatus('error');
+    return false;
 }
 
 async function cancelLocalInitialization() {
@@ -1088,6 +1109,7 @@ const cheatingDaddy = {
     initializeGemini,
     initializeCloud,
     initializeLocal,
+    initializeDeepSeek,
     cancelLocalInitialization,
     startCapture,
     stopCapture,

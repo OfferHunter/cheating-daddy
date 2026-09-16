@@ -13,11 +13,13 @@ const DEFAULT_CONFIG = {
     groqModel: 'qwen/qwen3.6-27b',
     groqImageModel: 'qwen/qwen3.6-27b',
     disableGroqThinking: true,
+    deepseekModel: 'deepseek-flash',
 };
 
 const DEFAULT_CREDENTIALS = {
     apiKey: '',
     groqApiKey: '',
+    deepseekApiKey: '',
 };
 
 const DEFAULT_PREFERENCES = {
@@ -209,6 +211,14 @@ function setGroqApiKey(groqApiKey) {
     return setCredentials({ groqApiKey });
 }
 
+function getDeepseekApiKey() {
+    return getCredentials().deepseekApiKey || '';
+}
+
+function setDeepseekApiKey(deepseekApiKey) {
+    return setCredentials({ deepseekApiKey });
+}
+
 // ============ PREFERENCES ============
 
 function getPreferences() {
@@ -283,6 +293,9 @@ function getTodayLimits() {
                 'gemma-4-26b-a4b-it': { chars: 0 },
             };
         }
+        if (!todayEntry.deepseek) {
+            todayEntry.deepseek = {};
+        }
         setLimits(limits);
         return todayEntry;
     }
@@ -302,6 +315,7 @@ function getTodayLimits() {
         gemini: {
             'gemma-4-26b-a4b-it': { chars: 0 },
         },
+        deepseek: {},
     };
     limits.data.push(newEntry);
     setLimits(limits);
@@ -348,10 +362,15 @@ function incrementCharUsage(provider, model, charCount) {
     const today = getTodayDateString();
     const todayEntry = limits.data.find(entry => entry.date === today);
 
-    if (todayEntry[provider] && todayEntry[provider][model]) {
-        todayEntry[provider][model].chars += charCount;
-        setLimits(limits);
+    if (!todayEntry[provider]) {
+        todayEntry[provider] = {};
     }
+    if (!todayEntry[provider][model]) {
+        todayEntry[provider][model] = { chars: 0 };
+    }
+
+    todayEntry[provider][model].chars += charCount;
+    setLimits(limits);
 
     return todayEntry;
 }
@@ -513,6 +532,8 @@ module.exports = {
     setApiKey,
     getGroqApiKey,
     setGroqApiKey,
+    getDeepseekApiKey,
+    setDeepseekApiKey,
 
     // Preferences
     getPreferences,

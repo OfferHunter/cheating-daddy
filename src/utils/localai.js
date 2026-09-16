@@ -12,6 +12,8 @@ const {
     stopNativeServer,
     waitForServer,
 } = require('./native-ai-runtime');
+const { getDeepSeekModel, requestChat } = require('./deepseek');
+const { incrementCharUsage } = require('../storage');
 
 let llamaProcess = null;
 let llamaBaseUrl = null;
@@ -23,6 +25,9 @@ let currentSystemPrompt = null;
 let isLocalActive = false;
 let initializationController = null;
 let llamaCacheSnapshot = new Set();
+
+// Which backend answers transcribed speech: the bundled llama.cpp model or the DeepSeek API.
+let responseBackend = 'llama';
 
 let isSpeaking = false;
 let speechBuffers = [];
@@ -176,7 +181,7 @@ async function handleSpeechEnd(audioData) {
         }
 
         sendToRenderer('update-status', 'Generating response...');
-        await sendToLlama(transcription);
+        await sendTurn(transcription);
     } catch (error) {
         console.error('[LocalAI] Transcription error:', error);
         sendToRenderer('update-status', 'Transcription error: ' + error.message);
@@ -238,7 +243,22 @@ async function requestLlama(messages, onText) {
     return readStreamingResponse(response, onText);
 }
 
-async function sendToLlama(transcription) {
+function getBackendLabel() {
+    return responseBackend === 'deepseek' ? 'DeepSeek' : 'Local AI';
+}
+
+async function requestResponse(messages, onText) {
+    return responseBackend === 'deepseek' ? requestChat(messages, onText) : requestLlama(messages, onText);
+}
+
+function countMessageChars(messages) {
+    return messages.reduce((sum, message) => {
+        const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+        return sum + content.length;
+    }, 0);
+}
+
+async function sendTurn(transcription) {
     localConversationHistory.push({
         role: 'user',
         content: transcription.trim(),
@@ -252,10 +272,14 @@ async function sendToLlama(transcription) {
         const messages = [{ role: 'system', content: currentSystemPrompt || 'You are a helpful assistant.' }, ...localConversationHistory];
 
         let isFirst = true;
-        const fullText = await requestLlama(messages, text => {
+        const fullText = await requestResponse(messages, text => {
             sendToRenderer(isFirst ? 'new-response' : 'update-response', text);
             isFirst = false;
         });
+
+        if (responseBackend === 'deepseek') {
+            incrementCharUsage('deepseek', getDeepSeekModel(), countMessageChars(messages) + fullText.length);
+        }
 
         if (fullText.trim()) {
             localConversationHistory.push({
@@ -265,11 +289,11 @@ async function sendToLlama(transcription) {
             saveConversationTurn(transcription, fullText);
         }
 
-        console.log('[LocalAI] Llama response completed');
+        console.log(`[${getBackendLabel()}] response completed`);
         sendToRenderer('update-status', 'Listening...');
     } catch (error) {
-        console.error('[LocalAI] Llama error:', error);
-        sendToRenderer('update-status', 'Local AI error: ' + error.message);
+        console.error(`[${getBackendLabel()}] error:`, error);
+        sendToRenderer('update-status', `${getBackendLabel()} error: ` + error.message);
         throw error;
     }
 }
@@ -324,14 +348,15 @@ function removeNewLlamaCacheEntries() {
     }
 }
 
-async function prepareNativeFiles(llamaModelReference, whisperModel, signal) {
-    const binaryProgress = label => progress => {
+function createDownloadProgressReporter() {
+    return label => progress => {
         sendToRenderer('update-status', formatDownloadStatus(label, progress));
         sendDownloadProgress(label, progress);
     };
+}
 
-    sendDownloadProgress('Checking Llama runner');
-    const llamaBinaryPath = await ensureNativeBinary('llama', binaryProgress('Llama runner'), signal);
+async function prepareWhisperFiles(whisperModel, signal) {
+    const binaryProgress = createDownloadProgressReporter();
 
     sendDownloadProgress('Checking Whisper runner');
     const whisperBinaryPath = await ensureNativeBinary('whisper', binaryProgress('Whisper runner'), signal);
@@ -345,15 +370,29 @@ async function prepareNativeFiles(llamaModelReference, whisperModel, signal) {
         sendToRenderer('whisper-downloading', false);
     }
 
+    return { whisperBinaryPath, whisperModelPath };
+}
+
+async function prepareLlamaFiles(llamaModelReference, signal) {
+    const binaryProgress = createDownloadProgressReporter();
+
+    sendDownloadProgress('Checking Llama runner');
+    const llamaBinaryPath = await ensureNativeBinary('llama', binaryProgress('Llama runner'), signal);
+
     sendDownloadProgress('Checking language model');
     const llamaFiles = await ensureLlamaModel(llamaModelReference, binaryProgress('Language model'), binaryProgress('Vision model'), signal);
+
     return {
         llamaBinaryPath,
-        whisperBinaryPath,
-        whisperModelPath,
         llamaModelPath: llamaFiles.modelPath,
         projectorPath: llamaFiles.projectorPath,
     };
+}
+
+async function prepareNativeFiles(llamaModelReference, whisperModel, signal) {
+    const whisperFiles = await prepareWhisperFiles(whisperModel, signal);
+    const llamaFiles = await prepareLlamaFiles(llamaModelReference, signal);
+    return { ...whisperFiles, ...llamaFiles };
 }
 
 function validatePreparedNativeFiles(nativeFiles) {
@@ -363,6 +402,19 @@ function validatePreparedNativeFiles(nativeFiles) {
         ['Whisper model', nativeFiles.whisperModelPath],
         ['Language model', nativeFiles.llamaModelPath],
         ['Vision model', nativeFiles.projectorPath],
+    ];
+
+    for (const [label, filePath] of requiredFiles) {
+        if (!filePath || !fs.existsSync(filePath)) {
+            throw new Error(`${label} path is invalid: ${filePath}`);
+        }
+    }
+}
+
+function validateWhisperFiles(nativeFiles) {
+    const requiredFiles = [
+        ['Whisper runner', nativeFiles.whisperBinaryPath],
+        ['Whisper model', nativeFiles.whisperModelPath],
     ];
 
     for (const [label, filePath] of requiredFiles) {
@@ -422,6 +474,37 @@ async function startLlamaServer(executablePath, modelPath, projectorPath) {
     await waitForServer(`${llamaBaseUrl}/health`, llamaProcess, 30 * 60 * 1000);
 }
 
+function resetAudioState() {
+    isSpeaking = false;
+    speechBuffers = [];
+    silenceFrameCount = 0;
+    speechFrameCount = 0;
+    resampleRemainder = Buffer.alloc(0);
+    localConversationHistory = [];
+}
+
+// Snapshots the llama cache so a cancelled download only removes files fetched during this attempt.
+function snapshotLlamaCache() {
+    llamaCacheSnapshot = getDirectoryEntries(path.join(getModelsDirectory(), 'llama'));
+}
+
+function handleInitializationFailure(error, label) {
+    const wasCancelled = error.name === 'AbortError' || initializationController?.signal.aborted;
+    if (wasCancelled) {
+        console.log(`[${label}] Initialization cancelled`);
+    } else {
+        console.error(`[${label}] Initialization error:`, error);
+    }
+    closeLocalSession();
+    if (wasCancelled) {
+        removeNewLlamaCacheEntries();
+    }
+    sendToRenderer('local-ai-download-progress', { active: false });
+    sendToRenderer('session-initializing', false);
+    sendToRenderer('update-status', wasCancelled ? 'Download cancelled' : `${label} error: ` + error.message);
+    return false;
+}
+
 async function initializeLocalSession(model, whisperModel, profile, customPrompt) {
     console.log('[LocalAI] Initializing native local session:', { model, whisperModel, profile });
     sendToRenderer('session-initializing', true);
@@ -429,7 +512,7 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
     try {
         closeLocalSession();
         initializationController = new AbortController();
-        llamaCacheSnapshot = getDirectoryEntries(path.join(getModelsDirectory(), 'llama'));
+        snapshotLlamaCache();
         currentSystemPrompt = getSystemPrompt(profile, customPrompt, false);
         llamaModel = model;
 
@@ -444,13 +527,8 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
         sendDownloadProgress('Loading language model');
         await startLlamaServer(nativeFiles.llamaBinaryPath, nativeFiles.llamaModelPath, nativeFiles.projectorPath);
 
-        isSpeaking = false;
-        speechBuffers = [];
-        silenceFrameCount = 0;
-        speechFrameCount = 0;
-        resampleRemainder = Buffer.alloc(0);
-        localConversationHistory = [];
-
+        responseBackend = 'llama';
+        resetAudioState();
         initializeNewSession(profile, customPrompt);
         isLocalActive = true;
         initializationController = null;
@@ -460,20 +538,39 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
         console.log('[LocalAI] Native session initialized successfully');
         return true;
     } catch (error) {
-        const wasCancelled = error.name === 'AbortError' || initializationController?.signal.aborted;
-        if (wasCancelled) {
-            console.log('[LocalAI] Initialization cancelled');
-        } else {
-            console.error('[LocalAI] Initialization error:', error);
-        }
+        return handleInitializationFailure(error, 'Local AI');
+    }
+}
+
+async function initializeDeepSeekSession(whisperModel, profile, customPrompt) {
+    console.log('[DeepSeek] Initializing whisper + DeepSeek session:', { whisperModel, profile });
+    sendToRenderer('session-initializing', true);
+
+    try {
         closeLocalSession();
-        if (wasCancelled) {
-            removeNewLlamaCacheEntries();
-        }
+        initializationController = new AbortController();
+        snapshotLlamaCache();
+        currentSystemPrompt = getSystemPrompt(profile, customPrompt, false);
+
+        const whisperFiles = await prepareWhisperFiles(whisperModel, initializationController.signal);
+        validateWhisperFiles(whisperFiles);
+
+        sendToRenderer('update-status', 'Starting Whisper...');
+        sendDownloadProgress('Starting Whisper');
+        await startWhisperServer(whisperFiles.whisperBinaryPath, whisperFiles.whisperModelPath);
+
+        responseBackend = 'deepseek';
+        resetAudioState();
+        initializeNewSession(profile, customPrompt);
+        isLocalActive = true;
+        initializationController = null;
         sendToRenderer('local-ai-download-progress', { active: false });
         sendToRenderer('session-initializing', false);
-        sendToRenderer('update-status', wasCancelled ? 'Local AI download cancelled' : 'Local AI error: ' + error.message);
-        return false;
+        sendToRenderer('update-status', 'DeepSeek ready - Listening...');
+        console.log('[DeepSeek] Session initialized successfully');
+        return true;
+    } catch (error) {
+        return handleInitializationFailure(error, 'DeepSeek');
     }
 }
 
@@ -497,13 +594,13 @@ function closeLocalSession() {
     llamaBaseUrl = null;
     whisperBaseUrl = null;
     llamaModel = null;
-    isSpeaking = false;
-    speechBuffers = [];
-    silenceFrameCount = 0;
-    speechFrameCount = 0;
-    resampleRemainder = Buffer.alloc(0);
-    localConversationHistory = [];
+    responseBackend = 'llama';
+    resetAudioState();
     currentSystemPrompt = null;
+}
+
+function isResponseBackendRunning() {
+    return responseBackend === 'deepseek' ? isLocalActive : Boolean(llamaProcess);
 }
 
 async function cancelLocalInitialization() {
@@ -526,12 +623,12 @@ function isLocalSessionActive() {
 }
 
 async function sendLocalText(text) {
-    if (!isLocalActive || !llamaProcess) {
+    if (!isLocalActive || !isResponseBackendRunning()) {
         return { success: false, error: 'No active local session' };
     }
 
     try {
-        await sendToLlama(text);
+        await sendTurn(text);
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
@@ -539,7 +636,7 @@ async function sendLocalText(text) {
 }
 
 async function sendLocalImage(base64Data, prompt) {
-    if (!isLocalActive || !llamaProcess) {
+    if (!isLocalActive || !isResponseBackendRunning()) {
         return { success: false, error: 'No active local session' };
     }
 
@@ -570,10 +667,14 @@ async function sendLocalImage(base64Data, prompt) {
         ];
 
         let isFirst = true;
-        const fullText = await requestLlama(messages, text => {
+        const fullText = await requestResponse(messages, text => {
             sendToRenderer(isFirst ? 'new-response' : 'update-response', text);
             isFirst = false;
         });
+
+        if (responseBackend === 'deepseek') {
+            incrementCharUsage('deepseek', getDeepSeekModel(), countMessageChars(messages) + fullText.length);
+        }
 
         if (fullText.trim()) {
             localConversationHistory.push({ role: 'assistant', content: fullText.trim() });
@@ -581,16 +682,17 @@ async function sendLocalImage(base64Data, prompt) {
         }
 
         sendToRenderer('update-status', 'Listening...');
-        return { success: true, text: fullText, model: llamaModel };
+        return { success: true, text: fullText, model: responseBackend === 'deepseek' ? getDeepSeekModel() : llamaModel };
     } catch (error) {
-        console.error('[LocalAI] Image error:', error);
-        sendToRenderer('update-status', 'Local AI image error: ' + error.message);
+        console.error(`[${getBackendLabel()}] Image error:`, error);
+        sendToRenderer('update-status', `${getBackendLabel()} image error: ` + error.message);
         return { success: false, error: error.message };
     }
 }
 
 module.exports = {
     initializeLocalSession,
+    initializeDeepSeekSession,
     cancelLocalInitialization,
     processLocalAudio,
     closeLocalSession,

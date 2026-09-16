@@ -138,6 +138,25 @@ function setupStorageIpcHandlers() {
         }
     });
 
+    ipcMain.handle('storage:get-deepseek-api-key', async () => {
+        try {
+            return { success: true, data: storage.getDeepseekApiKey() };
+        } catch (error) {
+            console.error('Error getting DeepSeek API key:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('storage:set-deepseek-api-key', async (event, deepseekApiKey) => {
+        try {
+            storage.setDeepseekApiKey(deepseekApiKey);
+            return { success: true };
+        } catch (error) {
+            console.error('Error setting DeepSeek API key:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     // ============ PREFERENCES ============
     ipcMain.handle('storage:get-preferences', async () => {
         try {

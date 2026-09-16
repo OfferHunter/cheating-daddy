@@ -1,5 +1,11 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 
+const MODE_META = {
+    byok: { suffix: 'BYOK', subtitle: 'Bring your own API keys' },
+    local: { suffix: 'Local AI', subtitle: 'Run models locally on your machine' },
+    deepseek: { suffix: 'DeepSeek', subtitle: 'Local Whisper transcription with DeepSeek responses' },
+};
+
 const LOCAL_LLM_PRESETS = [
     { value: 'unsloth/Qwen3.5-0.8B-GGUF:Q4_K_M', label: 'Qwen 3.5 0.8B Q4 — 0.74 GB · Fastest' },
     { value: 'unsloth/Qwen3.5-0.8B-GGUF:Q8_0', label: 'Qwen 3.5 0.8B Q8 — 1.02 GB' },
@@ -704,6 +710,9 @@ export class MainView extends LitElement {
         _disableGroqThinking: { state: true },
         _tokenError: { state: true },
         _keyError: { state: true },
+        // DeepSeek state
+        _deepseekKey: { state: true },
+        _deepseekModel: { state: true },
         // Local AI state
         _localLlmModel: { state: true },
         _useCustomLocalLlmModel: { state: true },
@@ -733,6 +742,8 @@ export class MainView extends LitElement {
         this._disableGroqThinking = true;
         this._tokenError = false;
         this._keyError = false;
+        this._deepseekKey = '';
+        this._deepseekModel = 'deepseek-flash';
         this._showLocalHelp = false;
         this._localLlmModel = 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
         this._useCustomLocalLlmModel = false;
@@ -771,6 +782,10 @@ export class MainView extends LitElement {
             this._groqModel = config.groqModel || 'qwen/qwen3.6-27b';
             this._groqImageModel = config.groqImageModel || 'qwen/qwen3.6-27b';
             this._disableGroqThinking = config.disableGroqThinking === true;
+            this._deepseekModel = config.deepseekModel || 'deepseek-flash';
+
+            // Load DeepSeek key
+            this._deepseekKey = (await cheatingDaddy.storage.getDeepseekApiKey().catch(() => '')) || '';
 
             // Load local AI settings
             this._localLlmModel = prefs.localLlmModel || 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
@@ -978,6 +993,19 @@ export class MainView extends LitElement {
         this.requestUpdate();
     }
 
+    async _saveDeepseekKey(val) {
+        this._deepseekKey = val;
+        this._keyError = false;
+        await cheatingDaddy.storage.setDeepseekApiKey(val);
+        this.requestUpdate();
+    }
+
+    async _saveDeepseekModel(val) {
+        this._deepseekModel = val;
+        await cheatingDaddy.storage.updateConfig('deepseekModel', val);
+        this.requestUpdate();
+    }
+
     async _saveLocalLlmModel(val) {
         this._localLlmModel = val;
         await cheatingDaddy.storage.updatePreference('localLlmModel', val);
@@ -1032,6 +1060,12 @@ export class MainView extends LitElement {
             if (!this._localLlmModel.trim()) {
                 return;
             }
+        } else if (this._mode === 'deepseek') {
+            if (!this._deepseekKey.trim() || !this._deepseekModel.trim()) {
+                this._keyError = true;
+                this.requestUpdate();
+                return;
+            }
         }
 
         this.onStart();
@@ -1051,7 +1085,7 @@ export class MainView extends LitElement {
 
     _renderStartButton() {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        const isDownloading = this._mode === 'local' && this.downloadProgress.active;
+        const isDownloading = (this._mode === 'local' || this._mode === 'deepseek') && this.downloadProgress.active;
         const percentage = this.downloadProgress.percentage;
         const hasPercentage = Number.isFinite(percentage);
 
@@ -1239,6 +1273,7 @@ export class MainView extends LitElement {
 
             <div class="mode-links">
                 <button class="mode-link" @click=${() => this._saveMode('local')}>Use local AI</button>
+                <button class="mode-link" @click=${() => this._saveMode('deepseek')}>Use local Whisper + DeepSeek</button>
             </div>
         `;
     }
@@ -1282,6 +1317,19 @@ export class MainView extends LitElement {
                 </div>
             </details>
 
+            ${this._renderWhisperModelSection()} ${this._renderStartButton()} ${this._renderDivider()}
+
+            <!-- Cloud promo intentionally removed from the active UI. -->
+
+            <div class="mode-links">
+                <button class="mode-link" @click=${() => this._saveMode('byok')}>Use own API keys</button>
+                <button class="mode-link" @click=${() => this._saveMode('deepseek')}>Use local Whisper + DeepSeek</button>
+            </div>
+        `;
+    }
+
+    _renderWhisperModelSection() {
+        return html`
             <details class="config-section">
                 <summary class="config-summary">
                     <span class="config-summary-text">
@@ -1305,13 +1353,52 @@ export class MainView extends LitElement {
                     </div>
                 </div>
             </details>
+        `;
+    }
 
-            ${this._renderStartButton()} ${this._renderDivider()}
+    // ── DeepSeek mode ──
 
-            <!-- Cloud promo intentionally removed from the active UI. -->
+    _renderDeepSeekMode() {
+        return html`
+            <details class="config-section" open>
+                <summary class="config-summary">
+                    <span class="config-summary-text">
+                        <span class="config-summary-title">AI responses</span>
+                        <span class="config-summary-description">DeepSeek API</span>
+                    </span>
+                    ${this._renderConfigChevron()}
+                </summary>
+                <div class="config-content">
+                    <div class="form-group">
+                        <label class="form-label">DeepSeek API Key</label>
+                        <input
+                            type="password"
+                            placeholder="Required"
+                            .value=${this._deepseekKey}
+                            @input=${e => this._saveDeepseekKey(e.target.value)}
+                            class=${this._keyError ? 'error' : ''}
+                        />
+                        <div class="form-hint">
+                            <span class="link" @click=${() => this.onExternalLink('https://platform.deepseek.com/api_keys')}>Get DeepSeek key</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">DeepSeek Model</label>
+                        <input type="text" .value=${this._deepseekModel} @input=${e => this._saveDeepseekModel(e.target.value)} />
+                    </div>
+
+                    <div class="config-note">
+                        Speech is transcribed locally by Whisper. Only the transcript and the current screenshot are sent to DeepSeek.
+                    </div>
+                </div>
+            </details>
+
+            ${this._renderWhisperModelSection()} ${this._renderStartButton()} ${this._renderDivider()}
 
             <div class="mode-links">
                 <button class="mode-link" @click=${() => this._saveMode('byok')}>Use own API keys</button>
+                <button class="mode-link" @click=${() => this._saveMode('local')}>Use local AI</button>
             </div>
         `;
     }
@@ -1329,22 +1416,25 @@ export class MainView extends LitElement {
             <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12" />
         </svg>`;
 
+        const meta = MODE_META[this._mode] || MODE_META.byok;
+
         return html`
             <div class="form-wrapper">
                 ${
                     this._mode === 'local'
                         ? html`
                               <div class="title-row">
-                                  <div class="page-title">Cheating Daddy <span class="mode-suffix">Local AI</span></div>
+                                  <div class="page-title">Cheating Daddy <span class="mode-suffix">${meta.suffix}</span></div>
                                   <button class="help-btn" @click=${this._openLocalHelp} aria-label="Open Local AI help">${helpIcon}</button>
                               </div>
                           `
-                        : html` <div class="page-title">${html`Cheating Daddy <span class="mode-suffix">BYOK</span>`}</div> `
+                        : html` <div class="page-title">Cheating Daddy <span class="mode-suffix">${meta.suffix}</span></div> `
                 }
-                <div class="page-subtitle">${this._mode === 'byok' ? 'Bring your own API keys' : 'Run models locally on your machine'}</div>
+                <div class="page-subtitle">${meta.subtitle}</div>
 
                 <!-- Cloud mode render branch intentionally disabled. -->
                 ${this._mode === 'byok' ? this._renderByokMode() : ''} ${this._mode === 'local' ? this._renderLocalMode() : ''}
+                ${this._mode === 'deepseek' ? this._renderDeepSeekMode() : ''}
             </div>
             ${this._mode === 'local' && this._showLocalHelp ? this._renderLocalHelp(closeIcon) : ''}
         `;
