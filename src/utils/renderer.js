@@ -42,20 +42,6 @@ const storage = {
     async setCredentials(credentials) {
         return ipcRenderer.invoke('storage:set-credentials', credentials);
     },
-    async getApiKey() {
-        const result = await ipcRenderer.invoke('storage:get-api-key');
-        return result.success ? result.data : '';
-    },
-    async setApiKey(apiKey) {
-        return ipcRenderer.invoke('storage:set-api-key', apiKey);
-    },
-    async getGroqApiKey() {
-        const result = await ipcRenderer.invoke('storage:get-groq-api-key');
-        return result.success ? result.data : '';
-    },
-    async setGroqApiKey(groqApiKey) {
-        return ipcRenderer.invoke('storage:set-groq-api-key', groqApiKey);
-    },
     async getDeepseekApiKey() {
         const result = await ipcRenderer.invoke('storage:get-deepseek-api-key');
         return result.success ? result.data : '';
@@ -115,12 +101,6 @@ const storage = {
     async clearAll() {
         return ipcRenderer.invoke('storage:clear-all');
     },
-
-    // Limits
-    async getTodayLimits() {
-        const result = await ipcRenderer.invoke('storage:get-today-limits');
-        return result.success ? result.data : { flash: { count: 0 }, flashLite: { count: 0 } };
-    },
 };
 
 // Cache for preferences to avoid async calls in hot paths
@@ -154,74 +134,18 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-async function initializeGemini(profile = 'interview', language = 'en-US') {
-    const apiKey = await storage.getApiKey();
-    if (apiKey) {
-        const prefs = await storage.getPreferences();
-        const success = await ipcRenderer.invoke('initialize-gemini', apiKey, prefs.customPrompt || '', profile, language);
-        if (success) {
-            cheatingDaddy.setStatus('Live');
-        } else {
-            cheatingDaddy.setStatus('error');
-        }
-    }
-}
-
-async function initializeLocal(profile = 'interview') {
+async function initializeChat(profile = 'interview') {
     const prefs = await storage.getPreferences();
-    const localLlmModel = prefs.localLlmModel || 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
-    const whisperModel = prefs.whisperModel || 'tiny.en';
     const customPrompt = prefs.customPrompt || '';
     const selectedLanguage = prefs.selectedLanguage || 'en-US';
-    const service = prefs.transcriptionService || 'local';
 
-    const success = await ipcRenderer.invoke('initialize-local', localLlmModel, whisperModel, profile, customPrompt, selectedLanguage, service);
+    const success = await ipcRenderer.invoke('initialize-chat', profile, customPrompt, selectedLanguage);
     if (success) {
-        cheatingDaddy.setStatus('Local AI Live');
-        return true;
-    } else {
-        cheatingDaddy.setStatus('error');
-        return false;
-    }
-}
-
-async function initializeDeepSeek(profile = 'interview') {
-    const prefs = await storage.getPreferences();
-    const whisperModel = prefs.whisperModel || 'tiny.en';
-    const customPrompt = prefs.customPrompt || '';
-    const selectedLanguage = prefs.selectedLanguage || 'en-US';
-    const service = prefs.transcriptionService || 'local';
-
-    const success = await ipcRenderer.invoke('initialize-deepseek', whisperModel, profile, customPrompt, selectedLanguage, service);
-    if (success) {
-        cheatingDaddy.setStatus('DeepSeek Live');
+        cheatingDaddy.setStatus('Live');
         return true;
     }
     cheatingDaddy.setStatus('error');
     return false;
-}
-
-async function cancelLocalInitialization() {
-    return ipcRenderer.invoke('cancel-local-initialization');
-}
-
-async function initializeCloud(profile = 'interview') {
-    const creds = await storage.getCredentials();
-    const token = creds.cloudToken;
-    if (!token || !token.trim()) {
-        cheatingDaddy.setStatus('error');
-        return false;
-    }
-
-    const prefs = await storage.getPreferences();
-    const success = await ipcRenderer.invoke('initialize-cloud', token, profile, prefs.customPrompt || '');
-    if (success) {
-        cheatingDaddy.setStatus('Live');
-        return true;
-    } else {
-        cheatingDaddy.setStatus('error');
-        return false;
-    }
 }
 
 // Listen for status updates
@@ -740,7 +664,7 @@ function stopCapture() {
     offscreenContext = null;
 }
 
-// Send text message to Gemini
+// Send text message to the chat endpoint
 async function sendTextMessage(text) {
     if (!text || text.trim().length === 0) {
         console.warn('Cannot send empty text message');
@@ -1117,11 +1041,7 @@ const cheatingDaddy = {
     updateCurrentResponse: response => cheatingDaddyApp.updateCurrentResponse(response),
 
     // Core functionality
-    initializeGemini,
-    initializeCloud,
-    initializeLocal,
-    initializeDeepSeek,
-    cancelLocalInitialization,
+    initializeChat,
     startCapture,
     stopCapture,
     sendTextMessage,

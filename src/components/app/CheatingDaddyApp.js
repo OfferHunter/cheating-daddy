@@ -386,8 +386,6 @@ export class CheatingDaddyApp extends LitElement {
         shouldAnimateResponse: { type: Boolean },
         _storageLoaded: { state: true },
         _updateAvailable: { state: true },
-        _whisperDownloading: { state: true },
-        _localAiDownloadProgress: { state: true },
     };
 
     constructor() {
@@ -412,8 +410,6 @@ export class CheatingDaddyApp extends LitElement {
         this._storageLoaded = false;
         this._timerInterval = null;
         this._updateAvailable = false;
-        this._whisperDownloading = false;
-        this._localAiDownloadProgress = { active: false, label: '', percentage: null };
         this._localVersion = '';
 
         this._loadFromStorage();
@@ -475,12 +471,6 @@ export class CheatingDaddyApp extends LitElement {
                 this._isClickThrough = isEnabled;
             });
             ipcRenderer.on('reconnect-failed', (_, data) => this.addNewResponse(data.message));
-            ipcRenderer.on('whisper-downloading', (_, downloading) => {
-                this._whisperDownloading = downloading;
-            });
-            ipcRenderer.on('local-ai-download-progress', (_, progress) => {
-                this._localAiDownloadProgress = progress;
-            });
         }
     }
 
@@ -494,8 +484,6 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.removeAllListeners('update-status');
             ipcRenderer.removeAllListeners('click-through-toggled');
             ipcRenderer.removeAllListeners('reconnect-failed');
-            ipcRenderer.removeAllListeners('whisper-downloading');
-            ipcRenderer.removeAllListeners('local-ai-download-progress');
         }
     }
 
@@ -596,77 +584,26 @@ export class CheatingDaddyApp extends LitElement {
     // ── Session start ──
 
     async handleStart() {
-        const prefs = await cheatingDaddy.storage.getPreferences();
-        const providerMode = prefs.providerMode === 'cloud' ? 'byok' : prefs.providerMode || 'byok';
+        const [chatKey, siliconflowKey] = await Promise.all([
+            cheatingDaddy.storage.getDeepseekApiKey(),
+            cheatingDaddy.storage.getSiliconflowApiKey(),
+        ]);
 
-        const usesNativeBackend = providerMode === 'local' || providerMode === 'deepseek';
-        if (usesNativeBackend && prefs.transcriptionService === 'siliconflow') {
-            const siliconflowKey = await cheatingDaddy.storage.getSiliconflowApiKey();
-            if (!siliconflowKey || siliconflowKey.trim() === '') {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
+        if (!chatKey || chatKey.trim() === '' || !siliconflowKey || siliconflowKey.trim() === '') {
+            const mainView = this.shadowRoot.querySelector('main-view');
+            if (mainView && mainView.triggerApiKeyError) {
+                mainView.triggerApiKeyError();
             }
+            return;
         }
 
-        if (providerMode === 'cloud') {
-            const creds = await cheatingDaddy.storage.getCredentials();
-            if (!creds.cloudToken || creds.cloudToken.trim() === '') {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
+        const success = await cheatingDaddy.initializeChat(this.selectedProfile);
+        if (!success) {
+            const mainView = this.shadowRoot.querySelector('main-view');
+            if (mainView && mainView.triggerApiKeyError) {
+                mainView.triggerApiKeyError();
             }
-
-            const success = await cheatingDaddy.initializeCloud(this.selectedProfile);
-            if (!success) {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
-            }
-        } else if (providerMode === 'local') {
-            const success = await cheatingDaddy.initializeLocal(this.selectedProfile);
-            if (!success) {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
-            }
-        } else if (providerMode === 'deepseek') {
-            const deepseekKey = await cheatingDaddy.storage.getDeepseekApiKey();
-            if (!deepseekKey || deepseekKey.trim() === '') {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
-            }
-
-            const success = await cheatingDaddy.initializeDeepSeek(this.selectedProfile);
-            if (!success) {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
-            }
-        } else {
-            const apiKey = await cheatingDaddy.storage.getApiKey();
-            if (!apiKey || apiKey === '') {
-                const mainView = this.shadowRoot.querySelector('main-view');
-                if (mainView && mainView.triggerApiKeyError) {
-                    mainView.triggerApiKeyError();
-                }
-                return;
-            }
-
-            await cheatingDaddy.initializeGemini(this.selectedProfile, this.selectedLanguage);
+            return;
         }
 
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
@@ -676,24 +613,6 @@ export class CheatingDaddyApp extends LitElement {
         this.sessionActive = true;
         this.currentView = 'assistant';
         this._startTimer();
-    }
-
-    async handleCancelLocalDownload() {
-        await cheatingDaddy.cancelLocalInitialization();
-    }
-
-    async handleAPIKeyHelp() {
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('open-external', 'https://cheatingdaddy.com/help/api-key');
-        }
-    }
-
-    async handleGroqAPIKeyHelp() {
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('open-external', 'https://console.groq.com/keys');
-        }
     }
 
     // ── Settings handlers ──
@@ -782,9 +701,6 @@ export class CheatingDaddyApp extends LitElement {
                         .onProfileChange=${p => this.handleProfileChange(p)}
                         .onStart=${() => this.handleStart()}
                         .onExternalLink=${url => this.handleExternalLinkClick(url)}
-                        .whisperDownloading=${this._whisperDownloading}
-                        .downloadProgress=${this._localAiDownloadProgress}
-                        .onCancelDownload=${() => this.handleCancelLocalDownload()}
                     ></main-view>
                 `;
 

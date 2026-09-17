@@ -2,7 +2,7 @@ import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
 
 // Reference points shown under the Voice Detection inputs. The "Very aggressive" row must match
-// FALLBACK_VAD in src/utils/localai.js and DEFAULT_PREFERENCES in src/storage.js.
+// FALLBACK_VAD in src/utils/pipeline.js and DEFAULT_PREFERENCES in src/storage.js.
 const VAD_LEVELS = [
     { label: 'Normal', speechThreshold: 0.01, silenceBeforeCut: 3, triggerFrames: 3 },
     { label: 'Low bitrate audio', speechThreshold: 0.008, silenceBeforeCut: 3.5, triggerFrames: 4 },
@@ -194,7 +194,6 @@ export class CustomizeView extends LitElement {
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
         keybinds: { type: Object },
-        googleSearchEnabled: { type: Boolean },
         backgroundTransparency: { type: Number },
         fontSize: { type: Number },
         theme: { type: String },
@@ -222,7 +221,6 @@ export class CustomizeView extends LitElement {
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
-        this.googleSearchEnabled = true;
         this.isClearing = false;
         this.isRestoring = false;
         this.clearStatusMessage = '';
@@ -245,7 +243,6 @@ export class CustomizeView extends LitElement {
     async _loadFromStorage() {
         try {
             const [prefs, keybinds] = await Promise.all([cheatingDaddy.storage.getPreferences(), cheatingDaddy.storage.getKeybinds()]);
-            this.googleSearchEnabled = prefs.googleSearchEnabled ?? true;
             this.backgroundTransparency = prefs.backgroundTransparency ?? 0.8;
             this.fontSize = prefs.fontSize ?? 20;
             this.audioMode = prefs.audioMode ?? 'speaker_only';
@@ -401,20 +398,6 @@ export class CustomizeView extends LitElement {
         this.requestUpdate();
     }
 
-    async handleGoogleSearchChange(e) {
-        this.googleSearchEnabled = e.target.checked;
-        await cheatingDaddy.storage.updatePreference('googleSearchEnabled', this.googleSearchEnabled);
-        if (window.require) {
-            try {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('update-google-search-setting', this.googleSearchEnabled);
-            } catch (error) {
-                console.error('Failed to notify main process:', error);
-            }
-        }
-        this.requestUpdate();
-    }
-
     async handleBackgroundTransparencyChange(e) {
         this.backgroundTransparency = parseFloat(e.target.value);
         await cheatingDaddy.storage.updatePreference('backgroundTransparency', this.backgroundTransparency);
@@ -521,7 +504,6 @@ export class CustomizeView extends LitElement {
                 audioMode: 'speaker_only',
                 fontSize: 20,
                 backgroundTransparency: 0.8,
-                googleSearchEnabled: false,
                 theme: 'dark',
                 vadSpeechThreshold: 0.02,
                 vadSilenceBeforeCut: 1.5,
@@ -546,7 +528,6 @@ export class CustomizeView extends LitElement {
             this.audioMode = defaults.audioMode;
             this.fontSize = defaults.fontSize;
             this.backgroundTransparency = defaults.backgroundTransparency;
-            this.googleSearchEnabled = defaults.googleSearchEnabled;
             this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
             this.vadSpeechThreshold = defaults.vadSpeechThreshold;

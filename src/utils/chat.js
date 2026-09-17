@@ -1,9 +1,14 @@
 const { getConfig, getDeepseekApiKey } = require('../storage');
 
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
-const DEEPSEEK_MAX_TOKENS = 8192;
+const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
+const CHAT_MAX_TOKENS = 8192;
 
-function getDeepSeekModel() {
+function getChatBaseUrl() {
+    const configured = (getConfig().chatBaseUrl || '').trim();
+    return configured ? configured.replace(/\/+$/, '') : DEFAULT_CHAT_BASE_URL;
+}
+
+function getChatModel() {
     return getConfig().deepseekModel || 'deepseek-flash';
 }
 
@@ -44,32 +49,33 @@ async function readStreamingResponse(response, onText) {
 async function requestChat(messages, onText) {
     const apiKey = getDeepseekApiKey();
     if (!apiKey || !apiKey.trim()) {
-        throw new Error('No DeepSeek API key configured');
+        throw new Error('No chat API key configured');
     }
 
-    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    const response = await fetch(`${getChatBaseUrl()}/chat/completions`, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${apiKey.trim()}`,
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            model: getDeepSeekModel(),
+            model: getChatModel(),
             messages,
             stream: true,
-            max_tokens: DEEPSEEK_MAX_TOKENS,
+            max_tokens: CHAT_MAX_TOKENS,
         }),
     });
 
     if (!response.ok || !response.body) {
         const errorText = await response.text().catch(() => '');
-        throw new Error(`DeepSeek returned HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
+        throw new Error(`Chat API returned HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
     }
 
     return readStreamingResponse(response, onText);
 }
 
 module.exports = {
-    getDeepSeekModel,
+    getChatBaseUrl,
+    getChatModel,
     requestChat,
 };
