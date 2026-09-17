@@ -13,7 +13,8 @@ const {
     waitForServer,
 } = require('./native-ai-runtime');
 const { getDeepSeekModel, requestChat } = require('./deepseek');
-const { incrementCharUsage } = require('../storage');
+const { transcribe: transcribeWithSiliconFlow } = require('./siliconflow');
+const { getPreferences, incrementCharUsage } = require('../storage');
 
 let llamaProcess = null;
 let llamaBaseUrl = null;
@@ -25,6 +26,11 @@ let currentSystemPrompt = null;
 let isLocalActive = false;
 let initializationController = null;
 let llamaCacheSnapshot = new Set();
+let activeWhisperModel = null;
+let transcriptionLanguage = null;
+
+// 'local' runs the bundled whisper.cpp server; 'siliconflow' sends audio to the cloud.
+let transcriptionService = 'local';
 
 // Which backend answers transcribed speech: the bundled llama.cpp model or the DeepSeek API.
 let responseBackend = 'llama';
@@ -33,16 +39,32 @@ let isSpeaking = false;
 let speechBuffers = [];
 let silenceFrameCount = 0;
 let speechFrameCount = 0;
+// Audio kept while idle so the onset of an utterance isn't clipped when detection finally fires.
+let speechPreRoll = [];
 
-const VAD_MODES = {
-    NORMAL: { energyThreshold: 0.01, speechFramesRequired: 3, silenceFramesRequired: 30 },
-    LOW_BITRATE: { energyThreshold: 0.008, speechFramesRequired: 4, silenceFramesRequired: 35 },
-    AGGRESSIVE: { energyThreshold: 0.015, speechFramesRequired: 2, silenceFramesRequired: 20 },
-    VERY_AGGRESSIVE: { energyThreshold: 0.02, speechFramesRequired: 2, silenceFramesRequired: 15 },
-};
+// Voice detection is tuned from preferences. These fallbacks must match DEFAULT_PREFERENCES in
+// storage.js and the "Very aggressive" preset in CustomizeView.js.
+const VAD_FRAME_MS = 100;
+const FALLBACK_VAD = { speechThreshold: 0.02, silenceBeforeCut: 1.5, triggerFrames: 2 };
 
-let vadConfig = VAD_MODES.VERY_AGGRESSIVE;
+let vadSettings = null;
 let resampleRemainder = Buffer.alloc(0);
+
+function positiveNumber(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveVadSettings(prefs) {
+    const silenceSeconds = positiveNumber(prefs.vadSilenceBeforeCut, FALLBACK_VAD.silenceBeforeCut);
+
+    return {
+        speechThreshold: positiveNumber(prefs.vadSpeechThreshold, FALLBACK_VAD.speechThreshold),
+        speechFramesRequired: Math.max(1, Math.round(positiveNumber(prefs.vadTriggerFrames, FALLBACK_VAD.triggerFrames))),
+        // Idle audio arrives in 100 ms frames, so seconds convert at 10 frames per second.
+        silenceFramesRequired: Math.max(1, Math.round((silenceSeconds * 1000) / VAD_FRAME_MS)),
+    };
+}
 
 function resample24kTo16k(inputBuffer) {
     const combined = Buffer.concat([resampleRemainder, inputBuffer]);
@@ -82,23 +104,25 @@ function calculateRms(pcm16Buffer) {
 
 function processVad(pcm16kBuffer) {
     const rms = calculateRms(pcm16kBuffer);
-    const isVoice = rms > vadConfig.energyThreshold;
+    const isVoice = rms > vadSettings.speechThreshold;
 
     if (isVoice) {
         speechFrameCount += 1;
         silenceFrameCount = 0;
 
-        if (!isSpeaking && speechFrameCount >= vadConfig.speechFramesRequired) {
+        if (!isSpeaking && speechFrameCount >= vadSettings.speechFramesRequired) {
             isSpeaking = true;
-            speechBuffers = [];
-            console.log('[LocalAI] Speech started (RMS:', rms.toFixed(4), ')');
+            // Adopt the retained idle audio instead of dropping the frames that triggered detection.
+            speechBuffers = speechPreRoll;
+            speechPreRoll = [];
+            console.log('[LocalAI] Speech started (RMS:', rms.toFixed(4), 'threshold:', vadSettings.speechThreshold.toFixed(4), ')');
             sendToRenderer('update-status', 'Listening... (speech detected)');
         }
     } else {
         silenceFrameCount += 1;
         speechFrameCount = 0;
 
-        if (isSpeaking && silenceFrameCount >= vadConfig.silenceFramesRequired) {
+        if (isSpeaking && silenceFrameCount >= vadSettings.silenceFramesRequired) {
             isSpeaking = false;
             const audioData = Buffer.concat(speechBuffers);
             speechBuffers = [];
@@ -111,7 +135,23 @@ function processVad(pcm16kBuffer) {
 
     if (isSpeaking) {
         speechBuffers.push(Buffer.from(pcm16kBuffer));
+    } else {
+        // Idle: keep a short tail so a quiet onset is still there once detection fires.
+        speechPreRoll.push(Buffer.from(pcm16kBuffer));
+        if (speechPreRoll.length > vadSettings.speechFramesRequired) {
+            speechPreRoll.shift();
+        }
     }
+}
+
+// Whisper wants a bare ISO-639-1 code, but preferences store BCP-47 locales.
+function toWhisperLanguage(locale) {
+    if (!locale) {
+        return null;
+    }
+
+    const primary = String(locale).split('-')[0].toLowerCase();
+    return primary === 'cmn' ? 'zh' : primary;
 }
 
 function createWavBuffer(pcm16Buffer) {
@@ -135,7 +175,7 @@ function createWavBuffer(pcm16Buffer) {
     return Buffer.concat([header, pcm16Buffer]);
 }
 
-async function transcribeAudio(pcm16kBuffer) {
+async function transcribeWithWhisper(pcm16kBuffer) {
     if (!whisperBaseUrl) {
         throw new Error('Whisper server is not running');
     }
@@ -145,7 +185,9 @@ async function transcribeAudio(pcm16kBuffer) {
     formData.append('file', new Blob([wavBuffer], { type: 'audio/wav' }), 'speech.wav');
     formData.append('response_format', 'json');
     formData.append('temperature', '0.0');
-    formData.append('language', 'en');
+    // English-only models reject non-English hints, so they keep 'en'.
+    const language = activeWhisperModel?.endsWith('.en') ? 'en' : toWhisperLanguage(transcriptionLanguage) || 'en';
+    formData.append('language', language);
 
     const response = await fetch(`${whisperBaseUrl}/inference`, {
         method: 'POST',
@@ -158,8 +200,18 @@ async function transcribeAudio(pcm16kBuffer) {
 
     const result = await response.json();
     const text = result.text?.trim() || '';
-    console.log('[LocalAI] Transcription:', text);
+    console.log(`[LocalAI] Transcription (${language}):`, text);
     return text;
+}
+
+async function transcribeAudio(pcm16kBuffer) {
+    if (transcriptionService === 'siliconflow') {
+        const text = (await transcribeWithSiliconFlow(createWavBuffer(pcm16kBuffer), toWhisperLanguage(transcriptionLanguage))).trim();
+        console.log(`[LocalAI] Transcription (siliconflow):`, text);
+        return text;
+    }
+
+    return transcribeWithWhisper(pcm16kBuffer);
 }
 
 async function handleSpeechEnd(audioData) {
@@ -389,20 +441,22 @@ async function prepareLlamaFiles(llamaModelReference, signal) {
     };
 }
 
-async function prepareNativeFiles(llamaModelReference, whisperModel, signal) {
-    const whisperFiles = await prepareWhisperFiles(whisperModel, signal);
+async function prepareNativeFiles(llamaModelReference, whisperModel, signal, useLocalWhisper) {
+    const whisperFiles = useLocalWhisper ? await prepareWhisperFiles(whisperModel, signal) : {};
     const llamaFiles = await prepareLlamaFiles(llamaModelReference, signal);
     return { ...whisperFiles, ...llamaFiles };
 }
 
-function validatePreparedNativeFiles(nativeFiles) {
+function validatePreparedNativeFiles(nativeFiles, useLocalWhisper) {
     const requiredFiles = [
         ['Llama runner', nativeFiles.llamaBinaryPath],
-        ['Whisper runner', nativeFiles.whisperBinaryPath],
-        ['Whisper model', nativeFiles.whisperModelPath],
         ['Language model', nativeFiles.llamaModelPath],
         ['Vision model', nativeFiles.projectorPath],
     ];
+
+    if (useLocalWhisper) {
+        requiredFiles.push(['Whisper runner', nativeFiles.whisperBinaryPath], ['Whisper model', nativeFiles.whisperModelPath]);
+    }
 
     for (const [label, filePath] of requiredFiles) {
         if (!filePath || !fs.existsSync(filePath)) {
@@ -481,6 +535,10 @@ function resetAudioState() {
     speechFrameCount = 0;
     resampleRemainder = Buffer.alloc(0);
     localConversationHistory = [];
+    activeWhisperModel = null;
+    transcriptionLanguage = null;
+    transcriptionService = 'local';
+    speechPreRoll = [];
 }
 
 // Snapshots the llama cache so a cancelled download only removes files fetched during this attempt.
@@ -505,8 +563,9 @@ function handleInitializationFailure(error, label) {
     return false;
 }
 
-async function initializeLocalSession(model, whisperModel, profile, customPrompt) {
-    console.log('[LocalAI] Initializing native local session:', { model, whisperModel, profile });
+async function initializeLocalSession(model, whisperModel, profile, customPrompt, selectedLanguage, service) {
+    const useLocalWhisper = service !== 'siliconflow';
+    console.log('[LocalAI] Initializing native local session:', { model, whisperModel, profile, selectedLanguage, service });
     sendToRenderer('session-initializing', true);
 
     try {
@@ -515,13 +574,16 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
         snapshotLlamaCache();
         currentSystemPrompt = getSystemPrompt(profile, customPrompt, false);
         llamaModel = model;
+        const prefs = getPreferences();
 
-        const nativeFiles = await prepareNativeFiles(model, whisperModel, initializationController.signal);
-        validatePreparedNativeFiles(nativeFiles);
+        const nativeFiles = await prepareNativeFiles(model, whisperModel, initializationController.signal, useLocalWhisper);
+        validatePreparedNativeFiles(nativeFiles, useLocalWhisper);
 
-        sendToRenderer('update-status', 'Starting Whisper...');
-        sendDownloadProgress('Starting Whisper');
-        await startWhisperServer(nativeFiles.whisperBinaryPath, nativeFiles.whisperModelPath);
+        if (useLocalWhisper) {
+            sendToRenderer('update-status', 'Starting Whisper...');
+            sendDownloadProgress('Starting Whisper');
+            await startWhisperServer(nativeFiles.whisperBinaryPath, nativeFiles.whisperModelPath);
+        }
 
         sendToRenderer('update-status', 'Loading local language model...');
         sendDownloadProgress('Loading language model');
@@ -529,6 +591,11 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
 
         responseBackend = 'llama';
         resetAudioState();
+        // Left null for cloud transcription so the '.en' hint rule can't force English.
+        activeWhisperModel = useLocalWhisper ? whisperModel : null;
+        transcriptionLanguage = selectedLanguage;
+        vadSettings = resolveVadSettings(prefs);
+        transcriptionService = useLocalWhisper ? 'local' : 'siliconflow';
         initializeNewSession(profile, customPrompt);
         isLocalActive = true;
         initializationController = null;
@@ -542,8 +609,9 @@ async function initializeLocalSession(model, whisperModel, profile, customPrompt
     }
 }
 
-async function initializeDeepSeekSession(whisperModel, profile, customPrompt) {
-    console.log('[DeepSeek] Initializing whisper + DeepSeek session:', { whisperModel, profile });
+async function initializeDeepSeekSession(whisperModel, profile, customPrompt, selectedLanguage, service) {
+    const useLocalWhisper = service !== 'siliconflow';
+    console.log('[DeepSeek] Initializing whisper + DeepSeek session:', { whisperModel, profile, selectedLanguage, service });
     sendToRenderer('session-initializing', true);
 
     try {
@@ -551,16 +619,24 @@ async function initializeDeepSeekSession(whisperModel, profile, customPrompt) {
         initializationController = new AbortController();
         snapshotLlamaCache();
         currentSystemPrompt = getSystemPrompt(profile, customPrompt, false);
+        const prefs = getPreferences();
 
-        const whisperFiles = await prepareWhisperFiles(whisperModel, initializationController.signal);
-        validateWhisperFiles(whisperFiles);
+        if (useLocalWhisper) {
+            const whisperFiles = await prepareWhisperFiles(whisperModel, initializationController.signal);
+            validateWhisperFiles(whisperFiles);
 
-        sendToRenderer('update-status', 'Starting Whisper...');
-        sendDownloadProgress('Starting Whisper');
-        await startWhisperServer(whisperFiles.whisperBinaryPath, whisperFiles.whisperModelPath);
+            sendToRenderer('update-status', 'Starting Whisper...');
+            sendDownloadProgress('Starting Whisper');
+            await startWhisperServer(whisperFiles.whisperBinaryPath, whisperFiles.whisperModelPath);
+        }
 
         responseBackend = 'deepseek';
         resetAudioState();
+        // Left null for cloud transcription so the '.en' hint rule can't force English.
+        activeWhisperModel = useLocalWhisper ? whisperModel : null;
+        transcriptionLanguage = selectedLanguage;
+        transcriptionService = useLocalWhisper ? 'local' : 'siliconflow';
+        vadSettings = resolveVadSettings(prefs);
         initializeNewSession(profile, customPrompt);
         isLocalActive = true;
         initializationController = null;

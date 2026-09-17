@@ -9,6 +9,9 @@ const { getConfigDir } = require('../storage');
 
 const RELEASE_BASE_URL = 'https://github.com/sohzm/cheating-daddy/releases/download/v0.7.0';
 
+// Overridable for networks that cannot reach huggingface.co, e.g. HF_ENDPOINT=https://hf-mirror.com
+const HUGGING_FACE_ENDPOINT = (process.env.HF_ENDPOINT || 'https://huggingface.co').replace(/\/+$/, '');
+
 const BINARY_RELEASES = {
     darwin: {
         arm64: {
@@ -46,21 +49,32 @@ const BINARY_RELEASES = {
     },
 };
 
+const WHISPER_REPOSITORY_PATH = 'ggerganov/whisper.cpp/resolve/main';
+
 const WHISPER_MODELS = {
     'tiny.en': {
         filename: 'ggml-tiny.en.bin',
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin',
         sha256: '921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f',
     },
     'base.en': {
         filename: 'ggml-base.en.bin',
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
         sha256: 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002',
     },
     'small.en': {
         filename: 'ggml-small.en.bin',
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin',
         sha256: 'c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d',
+    },
+    medium: {
+        filename: 'ggml-medium.bin',
+        sha256: '6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208',
+    },
+    'large-v3-turbo': {
+        filename: 'ggml-large-v3-turbo.bin',
+        sha256: '1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69',
+    },
+    'large-v3': {
+        filename: 'ggml-large-v3.bin',
+        sha256: '64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2',
     },
 };
 
@@ -190,7 +204,7 @@ async function ensureWhisperModel(modelName, onProgress, signal) {
 
     const destinationPath = path.join(getModelsDirectory(), 'whisper', model.filename);
     return installVerifiedFile({
-        url: model.url,
+        url: `${HUGGING_FACE_ENDPOINT}/${WHISPER_REPOSITORY_PATH}/${model.filename}`,
         destinationPath,
         sha256: model.sha256,
         executable: false,
@@ -227,7 +241,7 @@ function parseHuggingFaceModelReference(modelReference) {
 async function resolveHuggingFaceGguf(modelReference, signal) {
     const { repository, quant } = parseHuggingFaceModelReference(modelReference);
     const repositoryUrl = encodePathParts(repository);
-    const response = await fetch(`https://huggingface.co/api/models/${repositoryUrl}/tree/main?recursive=true&expand=true`, { signal });
+    const response = await fetch(`${HUGGING_FACE_ENDPOINT}/api/models/${repositoryUrl}/tree/main?recursive=true&expand=true`, { signal });
 
     if (!response.ok) {
         throw new Error(`Could not inspect Hugging Face model: HTTP ${response.status}`);
@@ -286,7 +300,7 @@ async function ensureLlamaModel(modelReference, onModelProgress, onProjectorProg
     const model = await resolveHuggingFaceGguf(modelReference, signal);
     const repositoryDirectory = path.join(getModelsDirectory(), 'llama', model.repository);
     const modelPath = await installVerifiedFile({
-        url: `https://huggingface.co/${encodePathParts(model.repository)}/resolve/main/${encodePathParts(model.model.path)}`,
+        url: `${HUGGING_FACE_ENDPOINT}/${encodePathParts(model.repository)}/resolve/main/${encodePathParts(model.model.path)}`,
         destinationPath: path.join(repositoryDirectory, path.basename(model.model.path)),
         sha256: model.model.sha256,
         executable: false,
@@ -294,7 +308,7 @@ async function ensureLlamaModel(modelReference, onModelProgress, onProjectorProg
         signal,
     });
     const projectorPath = await installVerifiedFile({
-        url: `https://huggingface.co/${encodePathParts(model.repository)}/resolve/main/${encodePathParts(model.projector.path)}`,
+        url: `${HUGGING_FACE_ENDPOINT}/${encodePathParts(model.repository)}/resolve/main/${encodePathParts(model.projector.path)}`,
         destinationPath: path.join(repositoryDirectory, path.basename(model.projector.path)),
         sha256: model.projector.sha256,
         executable: false,

@@ -63,6 +63,13 @@ const storage = {
     async setDeepseekApiKey(deepseekApiKey) {
         return ipcRenderer.invoke('storage:set-deepseek-api-key', deepseekApiKey);
     },
+    async getSiliconflowApiKey() {
+        const result = await ipcRenderer.invoke('storage:get-siliconflow-api-key');
+        return result.success ? result.data : '';
+    },
+    async setSiliconflowApiKey(siliconflowApiKey) {
+        return ipcRenderer.invoke('storage:set-siliconflow-api-key', siliconflowApiKey);
+    },
 
     // Preferences
     async getPreferences() {
@@ -165,8 +172,10 @@ async function initializeLocal(profile = 'interview') {
     const localLlmModel = prefs.localLlmModel || 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
     const whisperModel = prefs.whisperModel || 'tiny.en';
     const customPrompt = prefs.customPrompt || '';
+    const selectedLanguage = prefs.selectedLanguage || 'en-US';
+    const service = prefs.transcriptionService || 'local';
 
-    const success = await ipcRenderer.invoke('initialize-local', localLlmModel, whisperModel, profile, customPrompt);
+    const success = await ipcRenderer.invoke('initialize-local', localLlmModel, whisperModel, profile, customPrompt, selectedLanguage, service);
     if (success) {
         cheatingDaddy.setStatus('Local AI Live');
         return true;
@@ -180,8 +189,10 @@ async function initializeDeepSeek(profile = 'interview') {
     const prefs = await storage.getPreferences();
     const whisperModel = prefs.whisperModel || 'tiny.en';
     const customPrompt = prefs.customPrompt || '';
+    const selectedLanguage = prefs.selectedLanguage || 'en-US';
+    const service = prefs.transcriptionService || 'local';
 
-    const success = await ipcRenderer.invoke('initialize-deepseek', whisperModel, profile, customPrompt);
+    const success = await ipcRenderer.invoke('initialize-deepseek', whisperModel, profile, customPrompt, selectedLanguage, service);
     if (success) {
         cheatingDaddy.setStatus('DeepSeek Live');
         return true;

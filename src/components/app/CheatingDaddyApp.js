@@ -599,6 +599,18 @@ export class CheatingDaddyApp extends LitElement {
         const prefs = await cheatingDaddy.storage.getPreferences();
         const providerMode = prefs.providerMode === 'cloud' ? 'byok' : prefs.providerMode || 'byok';
 
+        const usesNativeBackend = providerMode === 'local' || providerMode === 'deepseek';
+        if (usesNativeBackend && prefs.transcriptionService === 'siliconflow') {
+            const siliconflowKey = await cheatingDaddy.storage.getSiliconflowApiKey();
+            if (!siliconflowKey || siliconflowKey.trim() === '') {
+                const mainView = this.shadowRoot.querySelector('main-view');
+                if (mainView && mainView.triggerApiKeyError) {
+                    mainView.triggerApiKeyError();
+                }
+                return;
+            }
+        }
+
         if (providerMode === 'cloud') {
             const creds = await cheatingDaddy.storage.getCredentials();
             if (!creds.cloudToken || creds.cloudToken.trim() === '') {

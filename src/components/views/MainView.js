@@ -717,6 +717,9 @@ export class MainView extends LitElement {
         _localLlmModel: { state: true },
         _useCustomLocalLlmModel: { state: true },
         _whisperModel: { state: true },
+        _transcriptionService: { state: true },
+        _siliconflowKey: { state: true },
+        _siliconflowModel: { state: true },
         _showLocalHelp: { state: true },
     };
 
@@ -748,6 +751,9 @@ export class MainView extends LitElement {
         this._localLlmModel = 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
         this._useCustomLocalLlmModel = false;
         this._whisperModel = 'tiny.en';
+        this._transcriptionService = 'local';
+        this._siliconflowKey = '';
+        this._siliconflowModel = 'FunAudioLLM/SenseVoiceSmall';
 
         this._animId = null;
         this._time = 0;
@@ -791,6 +797,9 @@ export class MainView extends LitElement {
             this._localLlmModel = prefs.localLlmModel || 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M';
             this._useCustomLocalLlmModel = !LOCAL_LLM_PRESETS.some(preset => preset.value === this._localLlmModel);
             this._whisperModel = prefs.whisperModel || 'tiny.en';
+            this._transcriptionService = prefs.transcriptionService || 'local';
+            this._siliconflowModel = config.siliconflowModel || 'FunAudioLLM/SenseVoiceSmall';
+            this._siliconflowKey = (await cheatingDaddy.storage.getSiliconflowApiKey().catch(() => '')) || '';
 
             this.requestUpdate();
         } catch (e) {
@@ -1029,6 +1038,26 @@ export class MainView extends LitElement {
         this.requestUpdate();
     }
 
+    async _saveTranscriptionService(val) {
+        this._transcriptionService = val;
+        this._keyError = false;
+        await cheatingDaddy.storage.updatePreference('transcriptionService', val);
+        this.requestUpdate();
+    }
+
+    async _saveSiliconflowKey(val) {
+        this._siliconflowKey = val;
+        this._keyError = false;
+        await cheatingDaddy.storage.setSiliconflowApiKey(val);
+        this.requestUpdate();
+    }
+
+    async _saveSiliconflowModel(val) {
+        this._siliconflowModel = val;
+        await cheatingDaddy.storage.updateConfig('siliconflowModel', val);
+        this.requestUpdate();
+    }
+
     _handleProfileChange(e) {
         this.onProfileChange(e.target.value);
     }
@@ -1050,6 +1079,8 @@ export class MainView extends LitElement {
     _handleStart() {
         if (this.isInitializing || this.downloadProgress.active) return;
 
+        const needsSiliconflowKey = this._transcriptionService === 'siliconflow' && !this._siliconflowKey.trim();
+
         if (this._mode === 'byok') {
             if (!this._geminiKey.trim()) {
                 this._keyError = true;
@@ -1060,8 +1091,13 @@ export class MainView extends LitElement {
             if (!this._localLlmModel.trim()) {
                 return;
             }
+            if (needsSiliconflowKey) {
+                this._keyError = true;
+                this.requestUpdate();
+                return;
+            }
         } else if (this._mode === 'deepseek') {
-            if (!this._deepseekKey.trim() || !this._deepseekModel.trim()) {
+            if (!this._deepseekKey.trim() || !this._deepseekModel.trim() || needsSiliconflowKey) {
                 this._keyError = true;
                 this.requestUpdate();
                 return;
@@ -1072,7 +1108,7 @@ export class MainView extends LitElement {
     }
 
     triggerApiKeyError() {
-        this._keyError = this._mode !== 'local';
+        this._keyError = this._mode !== 'local' || this._transcriptionService === 'siliconflow';
         this.requestUpdate();
         setTimeout(() => {
             this._tokenError = false;
@@ -1317,7 +1353,7 @@ export class MainView extends LitElement {
                 </div>
             </details>
 
-            ${this._renderWhisperModelSection()} ${this._renderStartButton()} ${this._renderDivider()}
+            ${this._renderTranscriptionSection()} ${this._renderStartButton()} ${this._renderDivider()}
 
             <!-- Cloud promo intentionally removed from the active UI. -->
 
@@ -1328,31 +1364,77 @@ export class MainView extends LitElement {
         `;
     }
 
-    _renderWhisperModelSection() {
+    _renderTranscriptionSection() {
         return html`
             <details class="config-section">
                 <summary class="config-summary">
                     <span class="config-summary-text">
                         <span class="config-summary-title">Transcription</span>
-                        <span class="config-summary-description">Whisper speech-to-text model</span>
+                        <span class="config-summary-description">Speech-to-text service</span>
                     </span>
                     ${this._renderConfigChevron()}
                 </summary>
                 <div class="config-content">
                     <div class="form-group">
-                        <div class="whisper-label-row">
-                            <label class="form-label">Whisper Model</label>
-                            ${this.whisperDownloading ? html`<div class="whisper-spinner"></div>` : ''}
-                        </div>
-                        <select .value=${this._whisperModel} @change=${e => this._saveWhisperModel(e.target.value)}>
-                            <option value="tiny.en" ?selected=${this._whisperModel === 'tiny.en'}>Tiny English (75 MB, fastest)</option>
-                            <option value="base.en" ?selected=${this._whisperModel === 'base.en'}>Base English (142 MB)</option>
-                            <option value="small.en" ?selected=${this._whisperModel === 'small.en'}>Small English (466 MB, most accurate)</option>
+                        <label class="form-label">Service</label>
+                        <select .value=${this._transcriptionService} @change=${e => this._saveTranscriptionService(e.target.value)}>
+                            <option value="local" ?selected=${this._transcriptionService === 'local'}>Local Whisper (offline)</option>
+                            <option value="siliconflow" ?selected=${this._transcriptionService === 'siliconflow'}>SiliconFlow (cloud, fast)</option>
                         </select>
-                        <div class="form-hint">${this.whisperDownloading ? 'Downloading model...' : 'Downloaded automatically on first use'}</div>
+                        <div class="form-hint">SiliconFlow uploads recorded speech instead of running Whisper on this machine.</div>
                     </div>
+                    ${this._transcriptionService === 'siliconflow' ? this._renderSiliconFlowFields() : this._renderWhisperModelField()}
                 </div>
             </details>
+        `;
+    }
+
+    _renderWhisperModelField() {
+        return html`
+            <div class="form-group">
+                <div class="whisper-label-row">
+                    <label class="form-label">Whisper Model</label>
+                    ${this.whisperDownloading ? html`<div class="whisper-spinner"></div>` : ''}
+                </div>
+                <select .value=${this._whisperModel} @change=${e => this._saveWhisperModel(e.target.value)}>
+                    <optgroup label="English only (fast)">
+                        <option value="tiny.en" ?selected=${this._whisperModel === 'tiny.en'}>Tiny English (75 MB, fastest)</option>
+                        <option value="base.en" ?selected=${this._whisperModel === 'base.en'}>Base English (142 MB)</option>
+                        <option value="small.en" ?selected=${this._whisperModel === 'small.en'}>Small English (466 MB, most accurate)</option>
+                    </optgroup>
+                    <optgroup label="Multilingual">
+                        <option value="medium" ?selected=${this._whisperModel === 'medium'}>Medium Multilingual (1.43 GB, slow)</option>
+                        <option value="large-v3-turbo" ?selected=${this._whisperModel === 'large-v3-turbo'}>Large v3 Turbo (1.51 GB)</option>
+                        <option value="large-v3" ?selected=${this._whisperModel === 'large-v3'}>Large v3 (2.88 GB, most accurate)</option>
+                    </optgroup>
+                </select>
+                <div class="form-hint">${this.whisperDownloading ? 'Downloading model...' : 'Downloaded automatically on first use'}</div>
+                <div class="form-hint">Multilingual models use the Speech Language setting in Customize.</div>
+            </div>
+        `;
+    }
+
+    _renderSiliconFlowFields() {
+        return html`
+            <div class="form-group">
+                <label class="form-label">SiliconFlow API Key</label>
+                <input
+                    type="password"
+                    placeholder="Required"
+                    .value=${this._siliconflowKey}
+                    @input=${e => this._saveSiliconflowKey(e.target.value)}
+                    class=${this._keyError ? 'error' : ''}
+                />
+                <div class="form-hint">
+                    <span class="link" @click=${() => this.onExternalLink('https://cloud.siliconflow.cn/account/ak')}>Get SiliconFlow key</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">SiliconFlow Model</label>
+                <input type="text" .value=${this._siliconflowModel} @input=${e => this._saveSiliconflowModel(e.target.value)} />
+                <div class="form-hint">Recorded speech is uploaded to SiliconFlow for transcription.</div>
+            </div>
         `;
     }
 
@@ -1389,12 +1471,16 @@ export class MainView extends LitElement {
                     </div>
 
                     <div class="config-note">
-                        Speech is transcribed locally by Whisper. Only the transcript and the current screenshot are sent to DeepSeek.
+                        ${
+                            this._transcriptionService === 'siliconflow'
+                                ? 'Speech is transcribed by SiliconFlow. Only the transcript and the current screenshot are sent to DeepSeek.'
+                                : 'Speech is transcribed locally by Whisper. Only the transcript and the current screenshot are sent to DeepSeek.'
+                        }
                     </div>
                 </div>
             </details>
 
-            ${this._renderWhisperModelSection()} ${this._renderStartButton()} ${this._renderDivider()}
+            ${this._renderTranscriptionSection()} ${this._renderStartButton()} ${this._renderDivider()}
 
             <div class="mode-links">
                 <button class="mode-link" @click=${() => this._saveMode('byok')}>Use own API keys</button>

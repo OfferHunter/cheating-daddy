@@ -1087,18 +1087,18 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         return false;
     });
 
-    ipcMain.handle('initialize-local', async (event, localLlmModel, whisperModel, profile, customPrompt) => {
+    ipcMain.handle('initialize-local', async (event, localLlmModel, whisperModel, profile, customPrompt, selectedLanguage, service) => {
         currentProviderMode = 'local';
-        const success = await getLocalAi().initializeLocalSession(localLlmModel, whisperModel, profile, customPrompt);
+        const success = await getLocalAi().initializeLocalSession(localLlmModel, whisperModel, profile, customPrompt, selectedLanguage, service);
         if (!success) {
             currentProviderMode = 'byok';
         }
         return success;
     });
 
-    ipcMain.handle('initialize-deepseek', async (event, whisperModel, profile, customPrompt) => {
+    ipcMain.handle('initialize-deepseek', async (event, whisperModel, profile, customPrompt, selectedLanguage, service) => {
         currentProviderMode = 'deepseek';
-        const success = await getLocalAi().initializeDeepSeekSession(whisperModel, profile, customPrompt);
+        const success = await getLocalAi().initializeDeepSeekSession(whisperModel, profile, customPrompt, selectedLanguage, service);
         if (!success) {
             currentProviderMode = 'byok';
         }

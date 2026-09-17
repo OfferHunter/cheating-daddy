@@ -14,12 +14,14 @@ const DEFAULT_CONFIG = {
     groqImageModel: 'qwen/qwen3.6-27b',
     disableGroqThinking: true,
     deepseekModel: 'deepseek-flash',
+    siliconflowModel: 'FunAudioLLM/SenseVoiceSmall',
 };
 
 const DEFAULT_CREDENTIALS = {
     apiKey: '',
     groqApiKey: '',
     deepseekApiKey: '',
+    siliconflowApiKey: '',
 };
 
 const DEFAULT_PREFERENCES = {
@@ -36,6 +38,11 @@ const DEFAULT_PREFERENCES = {
     googleSearchEnabled: false,
     localLlmModel: 'unsloth/Qwen3.5-4B-GGUF:Q4_K_M',
     whisperModel: 'tiny.en',
+    transcriptionService: 'local',
+    // Voice detection tuning; the defaults match the "very aggressive" preset.
+    vadSpeechThreshold: 0.02,
+    vadSilenceBeforeCut: 1.5,
+    vadTriggerFrames: 2,
 };
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
@@ -217,6 +224,14 @@ function getDeepseekApiKey() {
 
 function setDeepseekApiKey(deepseekApiKey) {
     return setCredentials({ deepseekApiKey });
+}
+
+function getSiliconflowApiKey() {
+    return getCredentials().siliconflowApiKey || '';
+}
+
+function setSiliconflowApiKey(siliconflowApiKey) {
+    return setCredentials({ siliconflowApiKey });
 }
 
 // ============ PREFERENCES ============
@@ -534,6 +549,8 @@ module.exports = {
     setGroqApiKey,
     getDeepseekApiKey,
     setDeepseekApiKey,
+    getSiliconflowApiKey,
+    setSiliconflowApiKey,
 
     // Preferences
     getPreferences,
