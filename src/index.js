@@ -137,6 +137,25 @@ function setupStorageIpcHandlers() {
         }
     });
 
+    ipcMain.handle('storage:get-bailian-api-key', async () => {
+        try {
+            return { success: true, data: storage.getBailianApiKey() };
+        } catch (error) {
+            console.error('Error getting Bailian API key:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('storage:set-bailian-api-key', async (event, bailianApiKey) => {
+        try {
+            storage.setBailianApiKey(bailianApiKey);
+            return { success: true };
+        } catch (error) {
+            console.error('Error setting Bailian API key:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     // ============ PREFERENCES ============
     ipcMain.handle('storage:get-preferences', async () => {
         try {

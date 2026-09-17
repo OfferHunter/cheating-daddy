@@ -213,7 +213,7 @@ export class CustomizeView extends LitElement {
     constructor() {
         super();
         this.selectedProfile = 'interview';
-        this.selectedLanguage = 'en-US';
+        this.selectedLanguage = 'cmn-CN';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
         this.keybinds = this.getDefaultKeybinds();
@@ -498,7 +498,7 @@ export class CustomizeView extends LitElement {
             const defaults = {
                 customPrompt: '',
                 selectedProfile: 'interview',
-                selectedLanguage: 'en-US',
+                selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
                 selectedImageQuality: 'medium',
                 audioMode: 'speaker_only',

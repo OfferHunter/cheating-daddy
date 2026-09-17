@@ -188,7 +188,7 @@ async function startMacOSAudioCapture() {
 
             const monoChunk = CHANNELS === 2 ? convertStereoToMono(chunk) : chunk;
 
-            getPipeline().processLocalAudio(monoChunk);
+            getPipeline().processLocalAudio(monoChunk, 'system');
 
             if (process.env.DEBUG_AUDIO) {
                 console.log(`Processed audio chunk: ${chunk.length} bytes`);
@@ -250,7 +250,7 @@ function setupIpcHandlers() {
     ipcMain.handle('send-audio-content', async (event, { data }) => {
         if (!chatSessionActive) return { success: false, error: 'No active session' };
         try {
-            getPipeline().processLocalAudio(Buffer.from(data, 'base64'));
+            getPipeline().processLocalAudio(Buffer.from(data, 'base64'), 'system');
             return { success: true };
         } catch (error) {
             console.error('Error sending system audio:', error);
@@ -262,7 +262,7 @@ function setupIpcHandlers() {
     ipcMain.handle('send-mic-audio-content', async (event, { data }) => {
         if (!chatSessionActive) return { success: false, error: 'No active session' };
         try {
-            getPipeline().processLocalAudio(Buffer.from(data, 'base64'));
+            getPipeline().processLocalAudio(Buffer.from(data, 'base64'), 'mic');
             return { success: true };
         } catch (error) {
             console.error('Error sending mic audio:', error);

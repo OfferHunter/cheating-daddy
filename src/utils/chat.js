@@ -2,6 +2,9 @@ const { getConfig, getDeepseekApiKey } = require('../storage');
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
 const CHAT_MAX_TOKENS = 8192;
+// Covers the whole streamed response, not just the headers. Without it a stalled stream would
+// leave the caller's in-flight guard latched forever and silently eat every later turn.
+const CHAT_TIMEOUT_MS = 120000;
 
 function getChatBaseUrl() {
     const configured = (getConfig().chatBaseUrl || '').trim();
@@ -64,6 +67,7 @@ async function requestChat(messages, onText) {
             stream: true,
             max_tokens: CHAT_MAX_TOKENS,
         }),
+        signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
     });
 
     if (!response.ok || !response.body) {

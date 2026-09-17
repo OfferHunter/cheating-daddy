@@ -13,17 +13,22 @@ const DEFAULT_CONFIG = {
     chatBaseUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-flash',
     siliconflowModel: 'FunAudioLLM/SenseVoiceSmall',
+    // 'bailian' streams over a websocket; 'siliconflow' uploads the whole utterance and waits.
+    asrProvider: 'bailian',
+    bailianModel: 'paraformer-realtime-v2',
 };
 
 const DEFAULT_CREDENTIALS = {
     deepseekApiKey: '',
     siliconflowApiKey: '',
+    bailianApiKey: '',
 };
 
 const DEFAULT_PREFERENCES = {
     customPrompt: '',
     selectedProfile: 'interview',
-    selectedLanguage: 'en-US',
+    // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
+    selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
     selectedImageQuality: 'medium',
     audioMode: 'speaker_only',
@@ -200,6 +205,14 @@ function setSiliconflowApiKey(siliconflowApiKey) {
     return setCredentials({ siliconflowApiKey });
 }
 
+function getBailianApiKey() {
+    return getCredentials().bailianApiKey || '';
+}
+
+function setBailianApiKey(bailianApiKey) {
+    return setCredentials({ bailianApiKey });
+}
+
 // ============ PREFERENCES ============
 
 function getPreferences() {
@@ -354,6 +367,8 @@ module.exports = {
     setDeepseekApiKey,
     getSiliconflowApiKey,
     setSiliconflowApiKey,
+    getBailianApiKey,
+    setBailianApiKey,
 
     // Preferences
     getPreferences,

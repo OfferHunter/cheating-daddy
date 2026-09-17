@@ -56,6 +56,13 @@ const storage = {
     async setSiliconflowApiKey(siliconflowApiKey) {
         return ipcRenderer.invoke('storage:set-siliconflow-api-key', siliconflowApiKey);
     },
+    async getBailianApiKey() {
+        const result = await ipcRenderer.invoke('storage:get-bailian-api-key');
+        return result.success ? result.data : '';
+    },
+    async setBailianApiKey(bailianApiKey) {
+        return ipcRenderer.invoke('storage:set-bailian-api-key', bailianApiKey);
+    },
 
     // Preferences
     async getPreferences() {
@@ -137,7 +144,7 @@ function arrayBufferToBase64(buffer) {
 async function initializeChat(profile = 'interview') {
     const prefs = await storage.getPreferences();
     const customPrompt = prefs.customPrompt || '';
-    const selectedLanguage = prefs.selectedLanguage || 'en-US';
+    const selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
 
     const success = await ipcRenderer.invoke('initialize-chat', profile, customPrompt, selectedLanguage);
     if (success) {
@@ -509,10 +516,11 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
-const MANUAL_SCREENSHOT_PROMPT = `Help me on this page, give me the answer no bs, complete answer.
-So if its a code question, give me the approach in few bullet points, then the entire code. Also if theres anything else i need to know, tell me.
-If its a question about the website, give me the answer no bs, complete answer.
-If its a mcq question, give me the answer no bs, complete answer.`;
+const MANUAL_SCREENSHOT_PROMPT = `帮我看下这个页面，直接给答案，别说废话，要完整。
+如果是代码题，先用几个要点讲思路，再给出完整代码；如果有别的需要我知道的，也一并说明。
+如果是关于这个网站的问题，直接给答案，别说废话，要完整。
+如果是选择题，直接给答案，别说废话，要完整。
+使用页面/题目所用的语言作答：中文内容就用简体中文，英文内容就用英文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
 
 async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');

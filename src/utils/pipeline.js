@@ -2,12 +2,35 @@ const { getSystemPrompt } = require('./prompts');
 const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
 const { transcribe: transcribeWithSiliconFlow } = require('./siliconflow');
-const { getPreferences } = require('../storage');
+const { createRealtimeAsr } = require('./bailianAsr');
+const { logTransportEvent } = require('./transportLogger');
+const { getConfig, getPreferences } = require('../storage');
 
 let localConversationHistory = [];
 let currentSystemPrompt = null;
 let isLocalActive = false;
 let transcriptionLanguage = null;
+
+// 'stream' pipes PCM straight to the Bailian websocket and lets its server-side VAD end turns;
+// 'batch' keeps the original buffer-the-whole-utterance-then-upload path.
+let asrMode = 'batch';
+let asrClient = null;
+// Only one capture feeds a session. Without headphones the same voice arrives over both the
+// loopback and the microphone, which would transcribe every question twice.
+let activeSource = 'system';
+
+// Text for the turn currently being assembled from streaming sentences. The server rewrites an
+// in-flight sentence as it hears more, so the uncommitted tail is held separately and only folded
+// in when it is committed or rescued by the idle flush.
+let turnText = '';
+let interimText = '';
+let turnSettleTimer = null;
+let streamSilenceMs = 0;
+
+// One chat request at a time. Text that lands mid-request is merged here and dispatched as the
+// next single turn rather than fired concurrently or dropped.
+let isChatInFlight = false;
+let queuedTurnText = '';
 
 let isSpeaking = false;
 let speechBuffers = [];
@@ -20,6 +43,14 @@ let speechPreRoll = [];
 // storage.js and the Reference Levels shown in CustomizeView.js.
 const VAD_FRAME_MS = 100;
 const FALLBACK_VAD = { speechThreshold: 0.02, silenceBeforeCut: 1.5, triggerFrames: 2 };
+
+// A streaming final sentence is already the product of server-side VAD, but one question often
+// arrives as several of them back to back. This window coalesces that burst; it is not a pause
+// detector of our own (the server's max_sentence_silence owns that).
+const TURN_SETTLE_MS = 250;
+// The server's silence timer normally ends a turn. If the stream stays quiet this long with text
+// still pending, no final sentence is coming and the turn is flushed anyway.
+const STREAM_IDLE_FLUSH_MS = 3000;
 
 let vadSettings = null;
 let resampleRemainder = Buffer.alloc(0);
@@ -173,12 +204,130 @@ async function handleSpeechEnd(audioData) {
             return;
         }
 
-        sendToRenderer('update-status', 'Generating response...');
-        await sendTurn(transcription);
+        logTransportEvent('asr.sentence_final', { mode: asrMode, text: transcription });
+        dispatchTurn(transcription);
     } catch (error) {
         console.error('[Pipeline] Transcription error:', error);
         sendToRenderer('update-status', 'Transcription error: ' + error.message);
     }
+}
+
+// ── Streaming turn assembly ──
+
+function handleAsrSentence(text, sentenceEnd) {
+    if (!isLocalActive || !text) return;
+
+    const sentence = text.trim();
+    if (!sentence) return;
+
+    if (!sentenceEnd) {
+        // Provisional: it replaces the previous interim rather than appending to it.
+        interimText = sentence;
+        sendToRenderer('update-status', 'Listening... ' + (turnText ? `${turnText} ${sentence}` : sentence));
+        return;
+    }
+
+    turnText = turnText ? `${turnText} ${sentence}` : sentence;
+    interimText = '';
+    console.log('[Pipeline] ASR sentence:', sentence);
+    logTransportEvent('asr.sentence_final', { mode: asrMode, text: sentence });
+
+    // Restarting the window on every sentence is what merges the burst into one turn.
+    if (turnSettleTimer) clearTimeout(turnSettleTimer);
+    turnSettleTimer = setTimeout(flushTurn, TURN_SETTLE_MS);
+}
+
+function flushTurn() {
+    if (turnSettleTimer) {
+        clearTimeout(turnSettleTimer);
+        turnSettleTimer = null;
+    }
+
+    // An uncommitted tail is still better than losing the utterance entirely.
+    const text = (turnText && interimText ? `${turnText} ${interimText}` : turnText || interimText).trim();
+    turnText = '';
+    interimText = '';
+    streamSilenceMs = 0;
+
+    if (!isLocalActive || text.length < 2) return;
+
+    console.log('[Pipeline] Turn dispatched:', text);
+    dispatchTurn(text);
+}
+
+function dispatchTurn(text) {
+    const trimmed = (text || '').trim();
+    if (!trimmed || trimmed.length < 2) return;
+
+    if (isChatInFlight) {
+        queuedTurnText = queuedTurnText ? `${queuedTurnText} ${trimmed}` : trimmed;
+        console.log('[Pipeline] Chat in flight, merging turn:', trimmed);
+        return;
+    }
+
+    isChatInFlight = true;
+    logTransportEvent('asr.turn_dispatched', { mode: asrMode, text: trimmed });
+    sendToRenderer('update-status', 'Generating response...');
+
+    sendTurn(trimmed)
+        .catch(() => {})
+        .finally(() => {
+            isChatInFlight = false;
+            if (queuedTurnText) {
+                const pending = queuedTurnText;
+                queuedTurnText = '';
+                dispatchTurn(pending);
+            }
+        });
+}
+
+// Status text and a safety flush only: the server's VAD owns turn boundaries in streaming mode.
+function trackStreamLevel(pcm16k) {
+    const rms = calculateRms(pcm16k);
+
+    if (rms > vadSettings.speechThreshold) {
+        streamSilenceMs = 0;
+        speechFrameCount += 1;
+
+        if (!isSpeaking && speechFrameCount >= vadSettings.speechFramesRequired) {
+            isSpeaking = true;
+            console.log('[Pipeline] Speech started (RMS:', rms.toFixed(4), ')');
+            sendToRenderer('update-status', 'Listening... (speech detected)');
+        }
+        return;
+    }
+
+    speechFrameCount = 0;
+    isSpeaking = false;
+    streamSilenceMs += VAD_FRAME_MS;
+
+    if ((turnText || interimText) && streamSilenceMs >= STREAM_IDLE_FLUSH_MS) {
+        flushTurn();
+    }
+}
+
+function startAsrClient() {
+    asrClient = createRealtimeAsr({
+        language: toAsrLanguage(transcriptionLanguage),
+        onSentence: handleAsrSentence,
+        onState: state => {
+            if (state === 'reconnecting') {
+                sendToRenderer('update-status', 'Reconnecting transcription...');
+            }
+        },
+        onError: error => {
+            // Unrecoverable for this session: drop to the batch path so answers keep flowing.
+            console.error('[Pipeline] Streaming ASR failed, falling back to batch:', error.message);
+            asrMode = 'batch';
+            if (asrClient) {
+                asrClient.close();
+                asrClient = null;
+            }
+            sendToRenderer('update-status', 'Transcription error: ' + error.message);
+        },
+    });
+
+    asrClient.start();
 }
 
 async function sendTurn(transcription) {
@@ -192,10 +341,11 @@ async function sendTurn(transcription) {
     }
 
     try {
-        const messages = [{ role: 'system', content: currentSystemPrompt || 'You are a helpful assistant.' }, ...localConversationHistory];
+        const messages = [{ role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' }, ...localConversationHistory];
 
         let isFirst = true;
         const fullText = await requestChat(messages, text => {
+            if (isFirst) logTransportEvent('chat.first_token', {});
             sendToRenderer(isFirst ? 'new-response' : 'update-response', text);
             isFirst = false;
         });
@@ -208,6 +358,7 @@ async function sendTurn(transcription) {
             saveConversationTurn(transcription, fullText);
         }
 
+        logTransportEvent('chat.completed', {});
         console.log('[Pipeline] response completed');
         sendToRenderer('update-status', 'Listening...');
     } catch (error) {
@@ -226,6 +377,9 @@ function resetAudioState() {
     localConversationHistory = [];
     transcriptionLanguage = null;
     speechPreRoll = [];
+    turnText = '';
+    interimText = '';
+    streamSilenceMs = 0;
 }
 
 function initializeChatSession(profile, customPrompt, selectedLanguage) {
@@ -236,9 +390,19 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
     currentSystemPrompt = getSystemPrompt(profile, customPrompt);
 
     transcriptionLanguage = selectedLanguage;
-    vadSettings = resolveVadSettings(getPreferences());
+
+    const prefs = getPreferences();
+    vadSettings = resolveVadSettings(prefs);
+    // In 'both' mode the loopback copy is the clean one; the mic only carries an echo of it.
+    activeSource = prefs.audioMode === 'mic_only' ? 'mic' : 'system';
+    asrMode = getConfig().asrProvider === 'siliconflow' ? 'batch' : 'stream';
+
     initializeNewSession(profile, customPrompt);
     isLocalActive = true;
+
+    if (asrMode === 'stream') {
+        startAsrClient();
+    }
 
     sendToRenderer('session-initializing', false);
     sendToRenderer('update-status', 'Ready - Listening...');
@@ -246,17 +410,38 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
     return true;
 }
 
-function processLocalAudio(monoChunk24k) {
+function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
+    if (source !== activeSource) return;
 
     const pcm16k = resample24kTo16k(monoChunk24k);
-    if (pcm16k.length > 0) {
-        processVad(pcm16k);
+    if (pcm16k.length === 0) return;
+
+    if (asrMode === 'stream' && asrClient) {
+        asrClient.sendAudio(pcm16k);
+        trackStreamLevel(pcm16k);
+        return;
     }
+
+    processVad(pcm16k);
 }
 
 function closeLocalSession() {
     isLocalActive = false;
+
+    if (turnSettleTimer) {
+        clearTimeout(turnSettleTimer);
+        turnSettleTimer = null;
+    }
+
+    if (asrClient) {
+        asrClient.close();
+        asrClient = null;
+    }
+
+    queuedTurnText = '';
+    isChatInFlight = false;
+
     resetAudioState();
     currentSystemPrompt = null;
 }
@@ -304,7 +489,7 @@ async function sendLocalImage(base64Data, prompt) {
     try {
         sendToRenderer('update-status', 'Analyzing image...');
         const messages = [
-            { role: 'system', content: currentSystemPrompt || 'You are a helpful assistant.' },
+            { role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' },
             ...localConversationHistory.slice(0, -1),
             userMessage,
         ];
