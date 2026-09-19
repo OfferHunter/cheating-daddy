@@ -36,15 +36,11 @@ export class AICustomizeView extends LitElement {
     ];
 
     static properties = {
-        selectedProfile: { type: String },
-        onProfileChange: { type: Function },
         _context: { state: true },
     };
 
     constructor() {
         super();
-        this.selectedProfile = 'interview';
-        this.onProfileChange = () => {};
         this._context = '';
         this._loadFromStorage();
     }
@@ -59,37 +55,12 @@ export class AICustomizeView extends LitElement {
         }
     }
 
-    _handleProfileChange(e) {
-        this.onProfileChange(e.target.value);
-    }
-
     async _saveContext(val) {
         this._context = val;
         await cheatingDaddy.storage.updatePreference('customPrompt', val);
     }
 
-    _getProfileName(profile) {
-        const names = {
-            interview: 'Job Interview',
-            sales: 'Sales Call',
-            meeting: 'Business Meeting',
-            presentation: 'Presentation',
-            negotiation: 'Negotiation',
-            exam: 'Exam Assistant',
-        };
-        return names[profile] || profile;
-    }
-
     render() {
-        const profiles = [
-            { value: 'interview', label: 'Job Interview' },
-            { value: 'sales', label: 'Sales Call' },
-            { value: 'meeting', label: 'Business Meeting' },
-            { value: 'presentation', label: 'Presentation' },
-            { value: 'negotiation', label: 'Negotiation' },
-            { value: 'exam', label: 'Exam Assistant' },
-        ];
-
         return html`
             <div class="unified-page">
                 <div class="unified-wrap">
@@ -99,12 +70,6 @@ export class AICustomizeView extends LitElement {
 
                     <section class="surface">
                         <div class="form-grid">
-                            <div class="form-group">
-                                <label class="form-label">Profile</label>
-                                <select class="control" .value=${this.selectedProfile} @change=${this._handleProfileChange}>
-                                    ${profiles.map(profile => html`<option value=${profile.value}>${profile.label}</option>`)}
-                                </select>
-                            </div>
                             <div class="form-group vertical">
                                 <label class="form-label">Custom Instructions</label>
                                 <textarea

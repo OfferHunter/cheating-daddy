@@ -380,7 +380,6 @@ export class AssistantView extends LitElement {
 
     static properties = {
         messages: { type: Array },
-        selectedProfile: { type: String },
         onSendText: { type: Function },
         isAnalyzing: { type: Boolean, state: true },
     };
@@ -388,23 +387,11 @@ export class AssistantView extends LitElement {
     constructor() {
         super();
         this.messages = [];
-        this.selectedProfile = 'interview';
         this.onSendText = () => {};
         this.isAnalyzing = false;
         this._animFrame = null;
         this._pinned = true;
         this._responseCountWhenStarted = 0;
-    }
-
-    getProfileNames() {
-        return {
-            interview: 'Job Interview',
-            sales: 'Sales Call',
-            meeting: 'Business Meeting',
-            presentation: 'Presentation',
-            negotiation: 'Negotiation',
-            exam: 'Exam Assistant',
-        };
     }
 
     renderMarkdown(content) {
@@ -724,13 +711,11 @@ export class AssistantView extends LitElement {
     }
 
     render() {
-        const profileNames = this.getProfileNames();
-
         return html`
             <div class="chat-wrap">
                 <div class="chat-scroll" @scroll=${this.handleScroll}>
                     ${this.messages.length === 0
-                        ? html`<div class="chat-empty">Listening to your ${profileNames[this.selectedProfile] || 'session'}...</div>`
+                        ? html`<div class="chat-empty">Listening to the interview...</div>`
                         : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`}
                 </div>
                 <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">

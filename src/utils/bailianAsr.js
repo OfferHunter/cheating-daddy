@@ -3,10 +3,13 @@
 //
 // The wire format was verified with scripts/asr-smoke.js against a live endpoint. Field names
 // here are the ones that probe printed.
+//
+// `maxSentenceSilenceMs` is the caller's, not a preference read here: there is one socket per audio
+// source and the two sources want different values, so the pipeline owns the policy.
 
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
-const { getConfig, getBailianApiKey, getMaxSentenceSilenceMs } = require('../storage');
+const { getConfig, getBailianApiKey } = require('../storage');
 
 const ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 const DEFAULT_MODEL = 'paraformer-realtime-v2';
@@ -18,7 +21,7 @@ const PING_INTERVAL_MS = 30000;
 const PONG_TIMEOUT_MS = 10000;
 const FINISH_GRACE_MS = 1000;
 
-function createRealtimeAsr({ language, onSentence, onState, onError } = {}) {
+function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState, onError } = {}) {
     let socket = null;
     let state = 'idle';
     let taskId = null;
@@ -81,7 +84,7 @@ function createRealtimeAsr({ language, onSentence, onState, onError } = {}) {
             format: 'pcm',
             sample_rate: 16000,
             semantic_punctuation_enabled: false,
-            max_sentence_silence: getMaxSentenceSilenceMs(),
+            max_sentence_silence: maxSentenceSilenceMs,
             punctuation_prediction_enabled: true,
             inverse_text_normalization_enabled: true,
             heartbeat: true,

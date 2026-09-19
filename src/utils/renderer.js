@@ -134,12 +134,12 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-async function initializeChat(profile = 'interview') {
+async function initializeChat() {
     const prefs = await storage.getPreferences();
     const customPrompt = prefs.customPrompt || '';
     const selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
 
-    const success = await ipcRenderer.invoke('initialize-chat', profile, customPrompt, selectedLanguage);
+    const success = await ipcRenderer.invoke('initialize-chat', customPrompt, selectedLanguage);
     if (success) {
         cheatingDaddy.setStatus('Live');
         return true;

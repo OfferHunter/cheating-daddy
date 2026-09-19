@@ -192,7 +192,6 @@ export class CustomizeView extends LitElement {
     ];
 
     static properties = {
-        selectedProfile: { type: String },
         selectedLanguage: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
@@ -201,7 +200,6 @@ export class CustomizeView extends LitElement {
         textTransparency: { type: Number },
         fontSize: { type: Number },
         theme: { type: String },
-        onProfileChange: { type: Function },
         onLanguageChange: { type: Function },
         onImageQualityChange: { type: Function },
         onLayoutModeChange: { type: Function },
@@ -210,6 +208,7 @@ export class CustomizeView extends LitElement {
         clearStatusMessage: { type: String },
         clearStatusType: { type: String },
         maxSentenceSilenceMs: { type: Number },
+        micMaxSentenceSilenceMs: { type: Number },
         micGateDb: { type: Number },
         micGateDwellMs: { type: Number },
         audioInputDeviceId: { type: String },
@@ -218,12 +217,10 @@ export class CustomizeView extends LitElement {
 
     constructor() {
         super();
-        this.selectedProfile = 'interview';
         this.selectedLanguage = 'cmn-CN';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
         this.keybinds = this.getDefaultKeybinds();
-        this.onProfileChange = () => {};
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
@@ -239,6 +236,7 @@ export class CustomizeView extends LitElement {
         this.customPrompt = '';
         this.theme = 'dark';
         this.maxSentenceSilenceMs = 1500;
+        this.micMaxSentenceSilenceMs = 3000;
         this.micGateDb = -45;
         this.micGateDwellMs = 300;
         this._loadFromStorage();
@@ -302,6 +300,7 @@ export class CustomizeView extends LitElement {
             this.customPrompt = prefs.customPrompt ?? '';
             this.theme = prefs.theme ?? 'dark';
             this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
+            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? 3000;
             this.micGateDb = prefs.micGateDb ?? -45;
             this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
             if (keybinds) {
@@ -317,16 +316,6 @@ export class CustomizeView extends LitElement {
         }
     }
 
-    getProfiles() {
-        return [
-            { value: 'interview', name: 'Job Interview' },
-            { value: 'sales', name: 'Sales Call' },
-            { value: 'meeting', name: 'Business Meeting' },
-            { value: 'presentation', name: 'Presentation' },
-            { value: 'negotiation', name: 'Negotiation' },
-            { value: 'exam', name: 'Exam Assistant' },
-        ];
-    }
 
     getLanguages() {
         return [
@@ -406,11 +395,6 @@ export class CustomizeView extends LitElement {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.send('update-keybinds', this.keybinds);
         }
-    }
-
-    handleProfileSelect(e) {
-        this.selectedProfile = e.target.value;
-        this.onProfileChange(this.selectedProfile);
     }
 
     handleLanguageSelect(e) {
@@ -584,7 +568,6 @@ export class CustomizeView extends LitElement {
             // Restore all preferences to defaults
             const defaults = {
                 customPrompt: '',
-                selectedProfile: 'interview',
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
                 selectedImageQuality: 'medium',
@@ -594,6 +577,7 @@ export class CustomizeView extends LitElement {
                 textTransparency: 1,
                 theme: 'dark',
                 maxSentenceSilenceMs: 1500,
+                micMaxSentenceSilenceMs: 3000,
                 micGateDb: -45,
                 micGateDwellMs: 300,
             };
@@ -610,7 +594,6 @@ export class CustomizeView extends LitElement {
             }
 
             // Apply to local state
-            this.selectedProfile = defaults.selectedProfile;
             this.selectedLanguage = defaults.selectedLanguage;
             this.selectedImageQuality = defaults.selectedImageQuality;
             this.audioInputDeviceId = defaults.audioInputDeviceId;
@@ -620,11 +603,11 @@ export class CustomizeView extends LitElement {
             this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
             this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
+            this.micMaxSentenceSilenceMs = defaults.micMaxSentenceSilenceMs;
             this.micGateDb = defaults.micGateDb;
             this.micGateDwellMs = defaults.micGateDwellMs;
 
             // Notify parent callbacks
-            this.onProfileChange(defaults.selectedProfile);
             this.onLanguageChange(defaults.selectedLanguage);
             this.onImageQualityChange(defaults.selectedImageQuality);
 
@@ -728,6 +711,19 @@ export class CustomizeView extends LitElement {
                             @change=${e => this.handleNumberPreferenceInput('maxSentenceSilenceMs', e.target.value)}
                         />
                         <div class="form-help">How much silence ends a question and sends it. Lower is faster but may split it. 200-6000.</div>
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">My Sentence Silence (ms)</label>
+                        <input
+                            type="number"
+                            step="100"
+                            min="200"
+                            max="6000"
+                            class="control"
+                            .value=${this.micMaxSentenceSilenceMs}
+                            @change=${e => this.handleNumberPreferenceInput('micMaxSentenceSilenceMs', e.target.value)}
+                        />
+                        <div class="form-help">The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into several fragments on screen. Only affects your column. 200-6000.</div>
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Speaker Gate (dBFS)</label>

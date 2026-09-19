@@ -22,7 +22,6 @@ const DEFAULT_CREDENTIALS = {
 
 const DEFAULT_PREFERENCES = {
     customPrompt: '',
-    selectedProfile: 'interview',
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
@@ -38,6 +37,10 @@ const DEFAULT_PREFERENCES = {
     // How much silence ends a sentence on the ASR server. It is added to every turn's latency, so
     // it trades directly against the server splitting one question into fragments.
     maxSentenceSilenceMs: 1500,
+    // The same knob for the microphone, and deliberately a larger one: the candidate stutters, so a
+    // short silence would cut one answer into many fragments. Fragments are not charged per turn,
+    // but each one is a bubble on screen, so a longer wait buys a calmer transcript.
+    micMaxSentenceSilenceMs: 3000,
     // Speaker gate, in dBFS: while the loopback level is above this the microphone is muted, so the
     // interviewer's voice cannot leak into the candidate column. -80 is effectively digital silence,
     // which is how the gate is turned off.
@@ -245,6 +248,12 @@ function getMaxSentenceSilenceMs() {
     return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
 }
 
+function getMicMaxSentenceSilenceMs() {
+    const value = Number(getPreferences().micMaxSentenceSilenceMs);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.micMaxSentenceSilenceMs;
+    return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
+}
+
 function getMicGateDb() {
     const value = Number(getPreferences().micGateDb);
     const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.micGateDb;
@@ -398,6 +407,7 @@ module.exports = {
     setPreferences,
     updatePreference,
     getMaxSentenceSilenceMs,
+    getMicMaxSentenceSilenceMs,
     getMicGateDb,
     getMicGateDwellMs,
 

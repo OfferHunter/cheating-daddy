@@ -373,7 +373,6 @@ export class CheatingDaddyApp extends LitElement {
         startTime: { type: Number },
         isRecording: { type: Boolean },
         sessionActive: { type: Boolean },
-        selectedProfile: { type: String },
         selectedLanguage: { type: String },
         messages: { type: Array },
         selectedScreenshotInterval: { type: String },
@@ -392,7 +391,6 @@ export class CheatingDaddyApp extends LitElement {
         this.startTime = null;
         this.isRecording = false;
         this.sessionActive = false;
-        this.selectedProfile = 'interview';
         this.selectedLanguage = 'cmn-CN';
         this.selectedScreenshotInterval = '5';
         this.selectedImageQuality = 'medium';
@@ -438,7 +436,6 @@ export class CheatingDaddyApp extends LitElement {
             const [config, prefs] = await Promise.all([cheatingDaddy.storage.getConfig(), cheatingDaddy.storage.getPreferences()]);
 
             this.currentView = config.onboarded ? 'main' : 'onboarding';
-            this.selectedProfile = prefs.selectedProfile || 'interview';
             this.selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
             this.selectedScreenshotInterval = prefs.selectedScreenshotInterval || '5';
             this.selectedImageQuality = prefs.selectedImageQuality || 'medium';
@@ -526,6 +523,22 @@ export class CheatingDaddyApp extends LitElement {
     // rewritten by the other, and a bubble keeps the position where its speaker started talking.
     upsertTranscription(text, final, speaker = 'interviewer') {
         const role = speaker === 'user' ? 'user' : 'interviewer';
+
+        // The candidate's block is a single bubble that grows: every update already carries everything
+        // said since the last question, so it is rewritten in place instead of opening one bubble per
+        // fragment. Only the last row is eligible — the moment a question or a screenshot lands below
+        // it the block is closed for good, and the next thing the candidate says starts a new one.
+        if (role === 'user') {
+            const last = this.messages.length - 1;
+            if (last >= 0 && this.messages[last].role === 'user') {
+                this._replaceMessage(last, { text });
+                return;
+            }
+
+            this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final: false }];
+            this.requestUpdate();
+            return;
+        }
 
         for (let i = this.messages.length - 1; i >= 0; i--) {
             const message = this.messages[i];
@@ -643,7 +656,7 @@ export class CheatingDaddyApp extends LitElement {
             return;
         }
 
-        const success = await cheatingDaddy.initializeChat(this.selectedProfile);
+        const success = await cheatingDaddy.initializeChat();
         if (!success) {
             const mainView = this.shadowRoot.querySelector('main-view');
             if (mainView && mainView.triggerApiKeyError) {
@@ -661,11 +674,6 @@ export class CheatingDaddyApp extends LitElement {
     }
 
     // ── Settings handlers ──
-
-    async handleProfileChange(profile) {
-        this.selectedProfile = profile;
-        await cheatingDaddy.storage.updatePreference('selectedProfile', profile);
-    }
 
     async handleLanguageChange(language) {
         this.selectedLanguage = language;
@@ -735,30 +743,21 @@ export class CheatingDaddyApp extends LitElement {
             case 'main':
                 return html`
                     <main-view
-                        .selectedProfile=${this.selectedProfile}
-                        .onProfileChange=${p => this.handleProfileChange(p)}
                         .onStart=${() => this.handleStart()}
                         .onExternalLink=${url => this.handleExternalLinkClick(url)}
                     ></main-view>
                 `;
 
             case 'ai-customize':
-                return html`
-                    <ai-customize-view
-                        .selectedProfile=${this.selectedProfile}
-                        .onProfileChange=${p => this.handleProfileChange(p)}
-                    ></ai-customize-view>
-                `;
+                return html`<ai-customize-view></ai-customize-view>`;
 
             case 'customize':
                 return html`
                     <customize-view
-                        .selectedProfile=${this.selectedProfile}
                         .selectedLanguage=${this.selectedLanguage}
                         .selectedScreenshotInterval=${this.selectedScreenshotInterval}
                         .selectedImageQuality=${this.selectedImageQuality}
                         .layoutMode=${this.layoutMode}
-                        .onProfileChange=${p => this.handleProfileChange(p)}
                         .onLanguageChange=${l => this.handleLanguageChange(l)}
                         .onScreenshotIntervalChange=${i => this.handleScreenshotIntervalChange(i)}
                         .onImageQualityChange=${q => this.handleImageQualityChange(q)}
@@ -777,11 +776,7 @@ export class CheatingDaddyApp extends LitElement {
 
             case 'assistant':
                 return html`
-                    <assistant-view
-                        .messages=${this.messages}
-                        .selectedProfile=${this.selectedProfile}
-                        .onSendText=${msg => this.handleSendText(msg)}
-                    ></assistant-view>
+                    <assistant-view .messages=${this.messages} .onSendText=${msg => this.handleSendText(msg)}></assistant-view>
                 `;
 
             default:
@@ -909,15 +904,6 @@ export class CheatingDaddyApp extends LitElement {
     renderLiveBar() {
         if (!this._isLiveMode()) return '';
 
-        const profileLabels = {
-            interview: 'Interview',
-            sales: 'Sales Call',
-            meeting: 'Meeting',
-            presentation: 'Presentation',
-            negotiation: 'Negotiation',
-            exam: 'Exam',
-        };
-
         return html`
             <div class="live-bar">
                 <div class="live-bar-left">
@@ -931,7 +917,7 @@ export class CheatingDaddyApp extends LitElement {
                         </svg>
                     </button>
                 </div>
-                <div class="live-bar-center">${profileLabels[this.selectedProfile] || 'Session'}</div>
+                <div class="live-bar-center">Interview</div>
                 <div class="live-bar-right">
                     ${this.statusText ? html`<span class="live-bar-text">${this.statusText}</span>` : ''}
                     <span class="live-bar-text">${this.getElapsedTime()}</span>

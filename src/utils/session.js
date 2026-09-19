@@ -16,7 +16,10 @@ let chatSessionActive = false;
 let currentSessionId = null;
 let conversationHistory = [];
 let screenAnalysisHistory = [];
-let currentProfile = null;
+// The app is an interview teleprompter, so every recorded session carries the same label. It is still
+// written out because the history view reads it, and sessions saved before had other profiles.
+const SESSION_PROFILE = 'interview';
+let currentProfile = SESSION_PROFILE;
 let currentCustomPrompt = null;
 
 // Audio capture variables
@@ -30,23 +33,21 @@ function sendToRenderer(channel, data) {
 }
 
 // Conversation management functions
-function initializeNewSession(profile = null, customPrompt = null) {
+function initializeNewSession(customPrompt = null) {
     currentSessionId = Date.now().toString();
     startTransportLog(currentSessionId);
     conversationHistory = [];
     screenAnalysisHistory = [];
-    currentProfile = profile;
+    currentProfile = SESSION_PROFILE;
     currentCustomPrompt = customPrompt;
-    console.log('New conversation session started:', currentSessionId, 'profile:', profile);
+    console.log('New conversation session started:', currentSessionId);
 
     // Save initial session with profile context
-    if (profile) {
-        sendToRenderer('save-session-context', {
-            sessionId: currentSessionId,
-            profile: profile,
-            customPrompt: customPrompt || '',
-        });
-    }
+    sendToRenderer('save-session-context', {
+        sessionId: currentSessionId,
+        profile: SESSION_PROFILE,
+        customPrompt: customPrompt || '',
+    });
 }
 
 // Turns now complete out of order: a question asked mid-stream is answered before the answer it
@@ -247,8 +248,8 @@ function stopMacOSAudioCapture() {
 // ── IPC ──
 
 function setupIpcHandlers() {
-    ipcMain.handle('initialize-chat', async (event, profile, customPrompt, selectedLanguage) => {
-        chatSessionActive = getPipeline().initializeChatSession(profile, customPrompt, selectedLanguage);
+    ipcMain.handle('initialize-chat', async (event, customPrompt, selectedLanguage) => {
+        chatSessionActive = getPipeline().initializeChatSession(customPrompt, selectedLanguage);
         return chatSessionActive;
     });
 

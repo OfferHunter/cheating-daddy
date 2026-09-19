@@ -3,7 +3,13 @@ const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAn
 const { getChatModel, requestChat } = require('./chat');
 const { createRealtimeAsr } = require('./bailianAsr');
 const { logTransportEvent } = require('./transportLogger');
-const { getPreferences, getMaxSentenceSilenceMs, getMicGateDb, getMicGateDwellMs } = require('../storage');
+const {
+    getPreferences,
+    getMaxSentenceSilenceMs,
+    getMicMaxSentenceSilenceMs,
+    getMicGateDb,
+    getMicGateDwellMs,
+} = require('../storage');
 
 let currentSystemPrompt = null;
 let isLocalActive = false;
@@ -22,7 +28,17 @@ const CANDIDATE = 'mic';
 // Per stream, not shared: two voices writing one buffer would splice into a single turn. The
 // resampler's leftover half-sample belongs to exactly one stream for the same reason.
 function createStreamState() {
-    return { asr: null, turnText: '', interimText: '', silenceMs: 0, resampleRemainder: Buffer.alloc(0) };
+    return {
+        asr: null,
+        turnText: '',
+        interimText: '',
+        silenceMs: 0,
+        resampleRemainder: Buffer.alloc(0),
+        // How long the server waits for silence before it ends a sentence on this stream. Set per
+        // source at session start and handed to that stream's recognizer, so the server's own bound
+        // and the client's rescue below can never disagree about it.
+        sentenceSilenceMs: 0,
+    };
 }
 
 const streams = {
@@ -61,10 +77,9 @@ let sessionGeneration = 0;
 //
 // Every sentence event resets this countdown (see handleAsrSentence). If the socket stays quiet
 // this long with text still pending, no final sentence is coming and the turn is flushed anyway.
-// It is derived from the server's max_sentence_silence so it always outlasts it.
+// It is derived from the stream's own max_sentence_silence so it always outlasts it.
 const AUDIO_CHUNK_MS = 100; // must match AUDIO_CHUNK_DURATION in renderer.js
 const IDLE_FLUSH_MARGIN_MS = 1000;
-let streamIdleFlushMs = 3000;
 
 // Speaker gate. The user does not wear headphones, so the interviewer's voice reaches the microphone
 // and the candidate column echoes it. While the loopback level is above micGateDb the microphone is
@@ -132,6 +147,14 @@ function mergeTurnText(state) {
     return state.turnText || state.interimText;
 }
 
+// What one stream's bubble shows right now. For the candidate that is the whole open block, not just
+// the utterance in flight: stumbling over a word then grows the one paragraph on screen instead of
+// opening a second bubble, and the text the block will be committed with is exactly what is shown.
+function bubbleText(source) {
+    const text = mergeTurnText(streams[source]);
+    return source === CANDIDATE ? candidateSpeech.join('') + text : text;
+}
+
 function handleAsrSentence(text, sentenceEnd, source) {
     if (!isLocalActive || !text) return;
 
@@ -147,7 +170,7 @@ function handleAsrSentence(text, sentenceEnd, source) {
     if (!sentenceEnd) {
         // Provisional: it replaces the previous interim rather than appending to it.
         state.interimText = sentence;
-        sendToRenderer('transcription-update', { text: mergeTurnText(state), speaker: speakerFor(source) });
+        sendToRenderer('transcription-update', { text: bubbleText(source), speaker: speakerFor(source) });
         return;
     }
 
@@ -155,7 +178,7 @@ function handleAsrSentence(text, sentenceEnd, source) {
     state.interimText = '';
     console.log(`[Pipeline] ASR sentence (${source}):`, sentence);
     logTransportEvent('asr.sentence_final', { text: sentence, source });
-    sendToRenderer('transcription-update', { text: state.turnText, speaker: speakerFor(source) });
+    sendToRenderer('transcription-update', { text: bubbleText(source), speaker: speakerFor(source) });
 
     flushTurn(source);
 }
@@ -164,8 +187,7 @@ function handleAsrSentence(text, sentenceEnd, source) {
 // do not settle it: the server still holds the audio it already received and will send its own final
 // for this utterance, which rewrites this same open row and records the text exactly once.
 function interruptCandidate() {
-    const state = streams[CANDIDATE];
-    const text = mergeTurnText(state).trim();
+    const text = bubbleText(CANDIDATE).trim();
     if (text.length < 2) return;
 
     console.log('[Pipeline] Candidate interrupted:', text);
@@ -208,12 +230,14 @@ function flushTurn(source) {
     if (!isLocalActive || text.length < 2) return;
 
     if (source === CANDIDATE) {
-        // The bubble is settled like any other, but nothing is dispatched: what the candidate says is
-        // context for the next answer, not a question to answer. It joins the open block and is not
-        // bounded here — the block is closed whole by the next turn (see commitCandidateSpeech).
+        // Nothing is dispatched: what the candidate says is context for the next answer, not a
+        // question to answer. It joins the open block, which is not bounded here — the block is
+        // closed whole by the next turn (see commitCandidateSpeech).
         console.log('[Pipeline] Candidate speech:', text);
-        sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
         candidateSpeech.push(text);
+        // Re-sent in full rather than as this fragment alone: the bubble is the block, so a shrinking
+        // update would visibly undo text the user has already read.
+        sendToRenderer('transcription-final', { text: bubbleText(source), speaker: speakerFor(source) });
         return;
     }
 
@@ -415,7 +439,7 @@ function tickStreamWatchdog(source) {
     const state = streams[source];
     state.silenceMs += AUDIO_CHUNK_MS;
 
-    if ((state.turnText || state.interimText) && state.silenceMs >= streamIdleFlushMs) {
+    if ((state.turnText || state.interimText) && state.silenceMs >= state.sentenceSilenceMs + IDLE_FLUSH_MARGIN_MS) {
         flushTurn(source);
     }
 }
@@ -427,6 +451,7 @@ function startAsrClient(source) {
 
     const client = createRealtimeAsr({
         language: toAsrLanguage(transcriptionLanguage),
+        maxSentenceSilenceMs: streams[source].sentenceSilenceMs,
         onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
         onState: state => {
             if (!isInterviewer) return;
@@ -486,29 +511,32 @@ function resetAudioState() {
     sessionGeneration += 1;
 }
 
-function initializeChatSession(profile, customPrompt, selectedLanguage) {
+function initializeChatSession(customPrompt, selectedLanguage) {
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
-    currentSystemPrompt = getSystemPrompt(profile, customPrompt);
+    currentSystemPrompt = getSystemPrompt(customPrompt);
 
     transcriptionLanguage = selectedLanguage;
 
+    // Each recognizer waits its own amount of silence before ending a sentence. The microphone gets a
+    // longer one because the candidate stutters: a short wait would cut one answer into fragments.
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
-    streamIdleFlushMs = maxSentenceSilenceMs + IDLE_FLUSH_MARGIN_MS;
+    const micMaxSentenceSilenceMs = getMicMaxSentenceSilenceMs();
+    streams[INTERVIEWER].sentenceSilenceMs = maxSentenceSilenceMs;
+    streams[CANDIDATE].sentenceSilenceMs = micMaxSentenceSilenceMs;
 
     micGateDb = getMicGateDb();
     micGateDwellMs = getMicGateDwellMs();
     console.log('[Pipeline] Initializing chat session:', {
-        profile,
         selectedLanguage,
         maxSentenceSilenceMs,
-        streamIdleFlushMs,
+        micMaxSentenceSilenceMs,
         micGateDb,
         micGateDwellMs,
     });
 
-    initializeNewSession(profile, customPrompt);
+    initializeNewSession(customPrompt);
     isLocalActive = true;
 
     // The ASR client's own state owns the status bar from here: Connecting... then Listening....
