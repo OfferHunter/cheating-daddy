@@ -3,7 +3,7 @@ const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAn
 const { getChatModel, requestChat } = require('./chat');
 const { createRealtimeAsr } = require('./bailianAsr');
 const { logTransportEvent } = require('./transportLogger');
-const { getPreferences, getMaxSentenceSilenceMs } = require('../storage');
+const { getPreferences, getMaxSentenceSilenceMs, getMicGateDb, getMicGateDwellMs } = require('../storage');
 
 let currentSystemPrompt = null;
 let isLocalActive = false;
@@ -34,17 +34,17 @@ function speakerFor(source) {
     return source === CANDIDATE ? 'user' : 'interviewer';
 }
 
-// What the candidate has said, replayed on the system prompt. The candidate's speech never becomes
-// a request of its own, so this is the only way it reaches the model. Bounded because the prompt is
-// rebuilt from scratch on every request and only the recent turns matter.
-const CANDIDATE_CONTEXT_LIMIT = 6;
+// What the candidate has said since the last dispatched turn, in the order it was recognized. Fragments
+// accumulate here and are committed as a single context entry when the next turn is created: one answer
+// must stay one entry, which is what a per-fragment cap destroyed — the server cuts an answer into pieces
+// short enough that a handful of them covered only the last few seconds of speech.
 let candidateSpeech = [];
 
 // Every turn is dispatched the moment its question is recognized, even if earlier answers are
 // still streaming: waiting for the previous answer would make the new one arrive too late to be
 // useful. Turns therefore run concurrently and finish out of order, so the log below is the single
 // source of truth for both the prompt context and the recorded history order.
-const CHAT_CONTEXT_TURNS = 10;
+const CHAT_CONTEXT_TURNS = 15;
 // Tokens arrive one IPC message at a time and the renderer re-parses the whole markdown body per
 // message, so a per-turn window keeps a burst of tokens to a handful of renders.
 const STREAM_SEND_INTERVAL_MS = 40;
@@ -65,6 +65,31 @@ let sessionGeneration = 0;
 const AUDIO_CHUNK_MS = 100; // must match AUDIO_CHUNK_DURATION in renderer.js
 const IDLE_FLUSH_MARGIN_MS = 1000;
 let streamIdleFlushMs = 3000;
+
+// Speaker gate. The user does not wear headphones, so the interviewer's voice reaches the microphone
+// and the candidate column echoes it. While the loopback level is above micGateDb the microphone is
+// muted. The level must stay on one side of the threshold for micGateDwellMs before the gate flips,
+// so neither a single spike nor the gap between two words can chop the microphone on and off inside
+// a sentence. Both come from Settings; the values here are only the fallbacks before a session.
+let micGateDb = -45;
+let micGateDwellMs = 300;
+let micGated = false;
+let micGateSideLoud = false;
+let micGateSideSinceMs = 0;
+
+// dBFS of a little-endian int16 chunk, using the same 20*log10(rms) convention as the Settings level
+// meter, so the threshold the user types in Settings means the same thing here.
+function pcmRmsDb(buffer) {
+    const samples = Math.floor(buffer.length / 2);
+    if (samples === 0) return -Infinity;
+
+    let sum = 0;
+    for (let i = 0; i < samples; i++) {
+        const sample = buffer.readInt16LE(i * 2) / 32768;
+        sum += sample * sample;
+    }
+    return 20 * Math.log10(Math.sqrt(sum / samples) + 1e-8);
+}
 
 function resample24kTo16k(inputBuffer, state) {
     const combined = Buffer.concat([state.resampleRemainder, inputBuffer]);
@@ -135,6 +160,42 @@ function handleAsrSentence(text, sentenceEnd, source) {
     flushTurn(source);
 }
 
+// The gate flipped on, so the candidate is being cut off mid-sentence. Show what is there now, but
+// do not settle it: the server still holds the audio it already received and will send its own final
+// for this utterance, which rewrites this same open row and records the text exactly once.
+function interruptCandidate() {
+    const state = streams[CANDIDATE];
+    const text = mergeTurnText(state).trim();
+    if (text.length < 2) return;
+
+    console.log('[Pipeline] Candidate interrupted:', text);
+    sendToRenderer('transcription-update', { text, speaker: speakerFor(CANDIDATE) });
+}
+
+// Called once per loopback chunk. `loud` is measured, not inferred: the level must hold on one side
+// of the threshold for the whole dwell before the gate moves, which is what keeps a sentence from
+// being chopped into fragments by jitter around the threshold.
+function tickMicGate(levelDb) {
+    const loud = levelDb > micGateDb;
+    const now = Date.now();
+
+    if (loud !== micGateSideLoud) {
+        micGateSideLoud = loud;
+        micGateSideSinceMs = now;
+    }
+
+    if (now - micGateSideSinceMs < micGateDwellMs) return;
+    if (loud === micGated) return;
+
+    micGated = loud;
+    if (micGated) {
+        console.log('[Pipeline] Mic gate on:', levelDb.toFixed(1), 'dBFS');
+        interruptCandidate();
+    } else {
+        console.log('[Pipeline] Mic gate off');
+    }
+}
+
 function flushTurn(source) {
     const state = streams[source];
 
@@ -147,14 +208,12 @@ function flushTurn(source) {
     if (!isLocalActive || text.length < 2) return;
 
     if (source === CANDIDATE) {
-        // The bubble is settled like any other, but nothing is dispatched: what the candidate says
-        // is context for the next answer, not a question to answer.
+        // The bubble is settled like any other, but nothing is dispatched: what the candidate says is
+        // context for the next answer, not a question to answer. It joins the open block and is not
+        // bounded here — the block is closed whole by the next turn (see commitCandidateSpeech).
         console.log('[Pipeline] Candidate speech:', text);
         sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
         candidateSpeech.push(text);
-        if (candidateSpeech.length > CANDIDATE_CONTEXT_LIMIT) {
-            candidateSpeech = candidateSpeech.slice(-CANDIDATE_CONTEXT_LIMIT);
-        }
         return;
     }
 
@@ -162,16 +221,6 @@ function flushTurn(source) {
     // The question bubble is settled first, then the answer streams into its own.
     sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
     dispatchTurn(text);
-}
-
-// The candidate's speech rides on the system prompt rather than the turn log: as its own messages it
-// would read as questions aimed at the model, and it would evict real turns from the context window.
-function buildSystemContent() {
-    const base = currentSystemPrompt || '你是一名乐于助人的助手。';
-    if (!candidateSpeech.length) return base;
-
-    const said = candidateSpeech.map(text => `- ${text}`).join('\n');
-    return `${base}\n\n【我在本次对话中已经说过的话，只是背景参考，不是新的提问，不要当成问题回答，也不要重复我已有的说法】\n${said}`;
 }
 
 // Settled turns are kept only as prompt context, so the tail can be dropped once it is longer than
@@ -184,13 +233,17 @@ function pruneTurnLog() {
     turnLog = [...settled, ...pending].sort((a, b) => a.seq - b.seq);
 }
 
-function createTurn(requestContent, contextText, persistKind) {
+// `speaker` picks the label buildChatMessages puts in front of the text. It defaults to the interviewer
+// because a typed question is replayed as one — the API takes only system/user/assistant roles and drops
+// the OpenAI-style `name` field, so who spoke has to be carried in the content itself.
+function createTurn(requestContent, contextText, persistKind, speaker = 'interviewer') {
     const entry = {
         seq: ++turnSeq,
         generation: sessionGeneration,
         // A screenshot turn sends a multimodal array; every later turn only needs its prompt text.
         requestContent,
         contextText: contextText || (typeof requestContent === 'string' ? requestContent : ''),
+        speaker,
         assistant: null,
         partial: '',
         status: 'pending',
@@ -204,12 +257,43 @@ function createTurn(requestContent, contextText, persistKind) {
     return entry;
 }
 
+// Closes the open block of candidate speech as one turn. It is committed on the way into the next turn
+// rather than read at request time, so it holds a fixed seq and position: the prompt of the turn that
+// interrupted the candidate sees it as finished history, and an answer still streaming alongside cannot
+// reorder it.
+function commitCandidateSpeech() {
+    if (!candidateSpeech.length) return;
+
+    const text = candidateSpeech.join('');
+    candidateSpeech = [];
+
+    // Settled the moment it exists: no request stands behind it and nothing will ever stream into it, so
+    // it must not count as pending or the status line would claim an answer is on the way.
+    const entry = createTurn(text, text, null, 'candidate');
+    entry.status = 'done';
+}
+
+// Who said a line, since every line is a `user` message and the model cannot tell the two speakers
+// apart otherwise. Bracketed and on its own line prefix so it reads as a label, not as content.
+const SPEAKER_TAG = { interviewer: '[面试官:]', candidate: '[面试者:]' };
+
+// History replays a turn as text — a screenshot's prompt text stands in for its image, which is what
+// createTurn already keeps in contextText — and only the turn being requested keeps everything it was
+// created with. Screenshot turns are requests addressed to the assistant rather than speech, so they
+// carry no speaker label.
+function userContent(entry, isCurrent = false) {
+    const content = isCurrent ? entry.requestContent : entry.contextText || entry.requestContent;
+
+    if (entry.persistKind === 'screen') return content;
+    return `${SPEAKER_TAG[entry.speaker]} ${content}`;
+}
+
 function buildChatMessages(currentEntry) {
     const history = turnLog.filter(entry => entry !== currentEntry).slice(-CHAT_CONTEXT_TURNS);
-    const messages = [{ role: 'system', content: buildSystemContent() }];
+    const messages = [{ role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' }];
 
     for (const entry of history) {
-        messages.push({ role: 'user', content: entry.contextText || entry.requestContent });
+        messages.push({ role: 'user', content: userContent(entry) });
 
         if (entry.status === 'done') {
             // An empty answer is dropped rather than sent as a blank assistant turn.
@@ -225,7 +309,7 @@ function buildChatMessages(currentEntry) {
         });
     }
 
-    messages.push({ role: 'user', content: currentEntry.requestContent });
+    messages.push({ role: 'user', content: userContent(currentEntry, true) });
     return messages;
 }
 
@@ -315,6 +399,9 @@ function dispatchTurn(text) {
     if (trimmed.length < 2) return null;
 
     logTransportEvent('asr.turn_dispatched', { text: trimmed });
+    // Whatever the candidate has said closes here, ahead of the question that interrupted it, so this
+    // turn's prompt already knows it. The block is not cut short at any earlier point.
+    commitCandidateSpeech();
     const entry = createTurn(trimmed, trimmed, 'conversation');
     runTurn(entry);
     updateStreamingStatus();
@@ -390,6 +477,9 @@ function resetAudioState() {
         state.resampleRemainder = Buffer.alloc(0);
     }
     candidateSpeech = [];
+    micGated = false;
+    micGateSideLoud = false;
+    micGateSideSinceMs = 0;
     transcriptionLanguage = null;
     turnLog = [];
     turnSeq = 0;
@@ -406,7 +496,17 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
 
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
     streamIdleFlushMs = maxSentenceSilenceMs + IDLE_FLUSH_MARGIN_MS;
-    console.log('[Pipeline] Initializing chat session:', { profile, selectedLanguage, maxSentenceSilenceMs, streamIdleFlushMs });
+
+    micGateDb = getMicGateDb();
+    micGateDwellMs = getMicGateDwellMs();
+    console.log('[Pipeline] Initializing chat session:', {
+        profile,
+        selectedLanguage,
+        maxSentenceSilenceMs,
+        streamIdleFlushMs,
+        micGateDb,
+        micGateDwellMs,
+    });
 
     initializeNewSession(profile, customPrompt);
     isLocalActive = true;
@@ -422,13 +522,22 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
 function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
 
+    // Measured before the client check below: the loopback capture keeps delivering chunks even
+    // after its recognizer gave up, and a gate that never saw a quiet chunk would stay on forever.
+    if (source === INTERVIEWER) tickMicGate(pcmRmsDb(monoChunk24k));
+
     // The client is a pipe: audio goes straight to the recognizer. A stream with no client — the
     // candidate stream when no microphone is configured, or any stream whose recognizer gave up —
     // is dropped here, before the resampler, so its half-sample state stays untouched.
     const state = streams[source];
     if (!state || !state.asr) return;
 
-    const pcm16k = resample24kTo16k(monoChunk24k, state);
+    // Gated microphone audio becomes real silence rather than a dropped chunk: the server's VAD
+    // needs frames to close the utterance the interviewer interrupted. Dropping them would leave
+    // that half-sentence pending and merge it with whatever the user says once the gate lifts.
+    const chunk = source === CANDIDATE && micGated ? Buffer.alloc(monoChunk24k.length) : monoChunk24k;
+
+    const pcm16k = resample24kTo16k(chunk, state);
     if (pcm16k.length === 0) return;
 
     state.asr.sendAudio(pcm16k);
@@ -489,6 +598,9 @@ async function sendLocalImage(base64Data, prompt) {
 
     // Runs like any other turn, so a screenshot taken mid-answer streams alongside it instead of
     // displacing it. Only the prompt text is kept for later context; the image itself is not.
+    // A screenshot is not the interviewer speaking, but it is still a new turn: the block has to close
+    // here too, or this prompt would leave out everything the candidate has said since the last question.
+    commitCandidateSpeech();
     const entry = createTurn(requestContent, prompt, 'screen');
     runTurn(entry);
 

@@ -38,10 +38,20 @@ const DEFAULT_PREFERENCES = {
     // How much silence ends a sentence on the ASR server. It is added to every turn's latency, so
     // it trades directly against the server splitting one question into fragments.
     maxSentenceSilenceMs: 1500,
+    // Speaker gate, in dBFS: while the loopback level is above this the microphone is muted, so the
+    // interviewer's voice cannot leak into the candidate column. -80 is effectively digital silence,
+    // which is how the gate is turned off.
+    micGateDb: -45,
+    // How long the loopback level must stay on one side of micGateDb before the gate flips. Without
+    // it, jitter around the threshold chops the microphone on and off inside a single sentence.
+    micGateDwellMs: 300,
 };
 
 // Legal range for DashScope's max_sentence_silence parameter.
 const MAX_SENTENCE_SILENCE_RANGE = { min: 200, max: 6000 };
+
+const MIC_GATE_RANGE = { min: -80, max: 0 };
+const MIC_GATE_DWELL_RANGE = { min: 0, max: 2000 };
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
 
@@ -235,6 +245,18 @@ function getMaxSentenceSilenceMs() {
     return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
 }
 
+function getMicGateDb() {
+    const value = Number(getPreferences().micGateDb);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.micGateDb;
+    return Math.min(MIC_GATE_RANGE.max, Math.max(MIC_GATE_RANGE.min, resolved));
+}
+
+function getMicGateDwellMs() {
+    const value = Number(getPreferences().micGateDwellMs);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.micGateDwellMs;
+    return Math.min(MIC_GATE_DWELL_RANGE.max, Math.max(MIC_GATE_DWELL_RANGE.min, resolved));
+}
+
 // ============ KEYBINDS ============
 
 function getKeybinds() {
@@ -376,6 +398,8 @@ module.exports = {
     setPreferences,
     updatePreference,
     getMaxSentenceSilenceMs,
+    getMicGateDb,
+    getMicGateDwellMs,
 
     // Keybinds
     getKeybinds,

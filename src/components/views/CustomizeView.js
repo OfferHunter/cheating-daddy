@@ -210,6 +210,8 @@ export class CustomizeView extends LitElement {
         clearStatusMessage: { type: String },
         clearStatusType: { type: String },
         maxSentenceSilenceMs: { type: Number },
+        micGateDb: { type: Number },
+        micGateDwellMs: { type: Number },
         audioInputDeviceId: { type: String },
         audioInputDevices: { state: true },
     };
@@ -237,6 +239,8 @@ export class CustomizeView extends LitElement {
         this.customPrompt = '';
         this.theme = 'dark';
         this.maxSentenceSilenceMs = 1500;
+        this.micGateDb = -45;
+        this.micGateDwellMs = 300;
         this._loadFromStorage();
     }
 
@@ -298,6 +302,8 @@ export class CustomizeView extends LitElement {
             this.customPrompt = prefs.customPrompt ?? '';
             this.theme = prefs.theme ?? 'dark';
             this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
+            this.micGateDb = prefs.micGateDb ?? -45;
+            this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
@@ -588,6 +594,8 @@ export class CustomizeView extends LitElement {
                 textTransparency: 1,
                 theme: 'dark',
                 maxSentenceSilenceMs: 1500,
+                micGateDb: -45,
+                micGateDwellMs: 300,
             };
             for (const [key, value] of Object.entries(defaults)) {
                 await cheatingDaddy.storage.updatePreference(key, value);
@@ -612,6 +620,8 @@ export class CustomizeView extends LitElement {
             this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
             this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
+            this.micGateDb = defaults.micGateDb;
+            this.micGateDwellMs = defaults.micGateDwellMs;
 
             // Notify parent callbacks
             this.onProfileChange(defaults.selectedProfile);
@@ -718,6 +728,32 @@ export class CustomizeView extends LitElement {
                             @change=${e => this.handleNumberPreferenceInput('maxSentenceSilenceMs', e.target.value)}
                         />
                         <div class="form-help">How much silence ends a question and sends it. Lower is faster but may split it. 200-6000.</div>
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Speaker Gate (dBFS)</label>
+                        <input
+                            type="number"
+                            step="1"
+                            min="-80"
+                            max="0"
+                            class="control"
+                            .value=${this.micGateDb}
+                            @change=${e => this.handleNumberPreferenceInput('micGateDb', e.target.value)}
+                        />
+                        <div class="form-help">While the speaker is louder than this the microphone is ignored, so the interviewer's voice cannot leak into your column. Higher (closer to 0) gates more aggressively; -80 effectively turns it off.</div>
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Speaker Gate Hold (ms)</label>
+                        <input
+                            type="number"
+                            step="50"
+                            min="0"
+                            max="2000"
+                            class="control"
+                            .value=${this.micGateDwellMs}
+                            @change=${e => this.handleNumberPreferenceInput('micGateDwellMs', e.target.value)}
+                        />
+                        <div class="form-help">How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000.</div>
                     </div>
                 </div>
             </section>
