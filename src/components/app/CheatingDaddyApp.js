@@ -375,15 +375,12 @@ export class CheatingDaddyApp extends LitElement {
         sessionActive: { type: Boolean },
         selectedProfile: { type: String },
         selectedLanguage: { type: String },
-        responses: { type: Array },
-        currentResponseIndex: { type: Number },
+        messages: { type: Array },
         selectedScreenshotInterval: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
         _viewInstances: { type: Object, state: true },
         _isClickThrough: { state: true },
-        _awaitingNewResponse: { state: true },
-        shouldAnimateResponse: { type: Boolean },
         _storageLoaded: { state: true },
         _updateAvailable: { state: true },
     };
@@ -400,13 +397,10 @@ export class CheatingDaddyApp extends LitElement {
         this.selectedScreenshotInterval = '5';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
-        this.responses = [];
-        this.currentResponseIndex = -1;
+        this.messages = [];
+        this._msgSeq = 0;
         this._viewInstances = new Map();
         this._isClickThrough = false;
-        this._awaitingNewResponse = false;
-        this._currentResponseIsComplete = true;
-        this.shouldAnimateResponse = false;
         this._storageLoaded = false;
         this._timerInterval = null;
         this._updateAvailable = false;
@@ -466,6 +460,8 @@ export class CheatingDaddyApp extends LitElement {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
+            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false));
+            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true));
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
             ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
                 this._isClickThrough = isEnabled;
@@ -481,6 +477,8 @@ export class CheatingDaddyApp extends LitElement {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.removeAllListeners('new-response');
             ipcRenderer.removeAllListeners('update-response');
+            ipcRenderer.removeAllListeners('transcription-update');
+            ipcRenderer.removeAllListeners('transcription-final');
             ipcRenderer.removeAllListeners('update-status');
             ipcRenderer.removeAllListeners('click-through-toggled');
             ipcRenderer.removeAllListeners('reconnect-failed');
@@ -518,26 +516,32 @@ export class CheatingDaddyApp extends LitElement {
 
     setStatus(text) {
         this.statusText = text;
-        if (text.includes('Ready') || text.includes('Listening') || text.includes('Error')) {
-            this._currentResponseIsComplete = true;
+    }
+
+    // The transcript arrives as a whole-turn snapshot: rewrite the interview bubble that is still
+    // open, or start a new one. A settled bubble is never touched again.
+    upsertTranscription(text, final) {
+        const last = this.messages[this.messages.length - 1];
+        if (last && last.role === 'interviewer' && !last.final) {
+            this.messages = [...this.messages.slice(0, -1), { ...last, text, final }];
+        } else {
+            this.messages = [...this.messages, { id: ++this._msgSeq, role: 'interviewer', text, ts: Date.now(), final }];
         }
+        this.requestUpdate();
     }
 
     addNewResponse(response) {
-        const wasOnLatest = this.currentResponseIndex === this.responses.length - 1;
-        this.responses = [...this.responses, response];
-        if (wasOnLatest || this.currentResponseIndex === -1) {
-            this.currentResponseIndex = this.responses.length - 1;
-        }
-        this._awaitingNewResponse = false;
+        this.messages = [...this.messages, { id: ++this._msgSeq, role: 'assistant', text: response, ts: Date.now(), final: true }];
         this.requestUpdate();
     }
 
     updateCurrentResponse(response) {
-        if (this.responses.length > 0) {
-            this.responses = [...this.responses.slice(0, -1), response];
+        const last = this.messages[this.messages.length - 1];
+        if (last && last.role === 'assistant') {
+            this.messages = [...this.messages.slice(0, -1), { ...last, text: response }];
         } else {
             this.addNewResponse(response);
+            return;
         }
         this.requestUpdate();
     }
@@ -584,12 +588,14 @@ export class CheatingDaddyApp extends LitElement {
     // ── Session start ──
 
     async handleStart() {
-        const [chatKey, siliconflowKey] = await Promise.all([
+        // Only the key for the selected recognizer is required; the chat key is always DeepSeek's.
+        const config = await cheatingDaddy.storage.getConfig();
+        const [chatKey, asrKey] = await Promise.all([
             cheatingDaddy.storage.getDeepseekApiKey(),
-            cheatingDaddy.storage.getSiliconflowApiKey(),
+            config.asrProvider === 'siliconflow' ? cheatingDaddy.storage.getSiliconflowApiKey() : cheatingDaddy.storage.getBailianApiKey(),
         ]);
 
-        if (!chatKey || chatKey.trim() === '' || !siliconflowKey || siliconflowKey.trim() === '') {
+        if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
             const mainView = this.shadowRoot.querySelector('main-view');
             if (mainView && mainView.triggerApiKeyError) {
                 mainView.triggerApiKeyError();
@@ -607,8 +613,7 @@ export class CheatingDaddyApp extends LitElement {
         }
 
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
-        this.responses = [];
-        this.currentResponseIndex = -1;
+        this.messages = [];
         this.startTime = Date.now();
         this.sessionActive = true;
         this.currentView = 'assistant';
@@ -656,14 +661,7 @@ export class CheatingDaddyApp extends LitElement {
             this.setStatus('Error sending message: ' + result.error);
         } else {
             this.setStatus('Message sent...');
-            this._awaitingNewResponse = true;
         }
-    }
-
-    handleResponseIndexChanged(e) {
-        this.currentResponseIndex = e.detail.index;
-        this.shouldAnimateResponse = false;
-        this.requestUpdate();
     }
 
     handleOnboardingComplete() {
@@ -740,17 +738,9 @@ export class CheatingDaddyApp extends LitElement {
             case 'assistant':
                 return html`
                     <assistant-view
-                        .responses=${this.responses}
-                        .currentResponseIndex=${this.currentResponseIndex}
+                        .messages=${this.messages}
                         .selectedProfile=${this.selectedProfile}
                         .onSendText=${msg => this.handleSendText(msg)}
-                        .shouldAnimateResponse=${this.shouldAnimateResponse}
-                        @response-index-changed=${this.handleResponseIndexChanged}
-                        @response-animation-complete=${() => {
-                            this.shouldAnimateResponse = false;
-                            this._currentResponseIsComplete = true;
-                            this.requestUpdate();
-                        }}
                     ></assistant-view>
                 `;
 

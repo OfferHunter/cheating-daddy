@@ -125,8 +125,6 @@ export class HelpView extends LitElement {
             toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
             toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
             nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-            previousResponse: isMac ? 'Cmd+[' : 'Ctrl+[',
-            nextResponse: isMac ? 'Cmd+]' : 'Ctrl+]',
             scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
             scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         };
@@ -149,8 +147,6 @@ export class HelpView extends LitElement {
             ['Toggle Visibility', this.keybinds.toggleVisibility],
             ['Toggle Click-through', this.keybinds.toggleClickThrough],
             ['Ask Next Step', this.keybinds.nextStep],
-            ['Previous Response', this.keybinds.previousResponse],
-            ['Next Response', this.keybinds.nextResponse],
             ['Scroll Response Up', this.keybinds.scrollUp],
             ['Scroll Response Down', this.keybinds.scrollDown],
         ];

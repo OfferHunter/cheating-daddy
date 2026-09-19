@@ -13,197 +13,238 @@ export class AssistantView extends LitElement {
             cursor: default;
         }
 
-        /* ── Response area ── */
+        /* ── Chat transcript ── */
 
-        .response-container {
+        .chat-wrap {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+        }
+
+        .chat-scroll {
             flex: 1;
             overflow-y: auto;
             font-size: var(--response-font-size, 15px);
             line-height: var(--line-height);
-            background: var(--bg-app);
-            padding: var(--space-sm) var(--space-md);
-            scroll-behavior: smooth;
-            user-select: text;
-            cursor: text;
-            color: var(--text-primary);
-        }
-
-        .response-container * {
+            background: #ededed;
+            scroll-behavior: auto;
             user-select: text;
             cursor: text;
         }
 
-        .response-container a {
+        .chat-scroll * {
+            user-select: text;
+            cursor: text;
+        }
+
+        .chat-scroll a {
             cursor: pointer;
         }
 
-        .response-container [data-word] {
-            display: inline-block;
+        .chat-scroll::-webkit-scrollbar {
+            width: 6px;
         }
 
-        /* ── Markdown ── */
+        .chat-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
 
-        .response-container h1,
-        .response-container h2,
-        .response-container h3,
-        .response-container h4,
-        .response-container h5,
-        .response-container h6 {
+        .chat-scroll::-webkit-scrollbar-thumb {
+            background: #c4c4c4;
+            border-radius: 3px;
+        }
+
+        .chat-scroll::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .chat-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px;
+        }
+
+        .chat-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: var(--space-md);
+            text-align: center;
+            color: #8a8a8a;
+            font-size: var(--font-size-sm);
+        }
+
+        /* ── Bubbles ── */
+
+        .message-row {
+            display: flex;
+        }
+
+        .message-row.interviewer {
+            justify-content: flex-start;
+        }
+
+        .message-row.assistant {
+            justify-content: flex-end;
+        }
+
+        .message-body {
+            max-width: 78%;
+            padding: 8px 12px;
+            border-radius: 10px;
+            color: #1a1a1a;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .message-row.interviewer .message-body {
+            background: #ffffff;
+            border-top-left-radius: 2px;
+        }
+
+        .message-row.assistant .message-body {
+            background: #d3e7ff;
+            border-top-right-radius: 2px;
+        }
+
+        /* ── Markdown (tuned for a light bubble: every colour is inherited or explicit) ── */
+
+        .message-body > :first-child {
+            margin-top: 0;
+        }
+
+        .message-body > :last-child {
+            margin-bottom: 0;
+        }
+
+        .message-body h1,
+        .message-body h2,
+        .message-body h3,
+        .message-body h4,
+        .message-body h5,
+        .message-body h6 {
             margin: 1em 0 0.5em 0;
-            color: var(--text-primary);
+            color: inherit;
             font-weight: var(--font-weight-semibold);
         }
 
-        .response-container h1 { font-size: 1.5em; }
-        .response-container h2 { font-size: 1.3em; }
-        .response-container h3 { font-size: 1.15em; }
-        .response-container h4 { font-size: 1.05em; }
-        .response-container h5,
-        .response-container h6 { font-size: 1em; }
+        .message-body h1 { font-size: 1.5em; }
+        .message-body h2 { font-size: 1.3em; }
+        .message-body h3 { font-size: 1.15em; }
+        .message-body h4 { font-size: 1.05em; }
+        .message-body h5,
+        .message-body h6 { font-size: 1em; }
 
-        .response-container p {
+        .message-body p {
             margin: 0.6em 0;
-            color: var(--text-primary);
+            color: inherit;
         }
 
-        .response-container ul,
-        .response-container ol {
+        .message-body ul,
+        .message-body ol {
             margin: 0.6em 0;
             padding-left: 1.5em;
-            color: var(--text-primary);
+            color: inherit;
         }
 
-        .response-container li {
+        .message-body li {
             margin: 0.3em 0;
         }
 
-        .response-container blockquote {
+        .message-body blockquote {
             margin: 0.8em 0;
             padding: 0.5em 1em;
-            border-left: 2px solid var(--border-strong);
-            background: var(--bg-surface);
+            border-left: 2px solid #b9b9b9;
+            background: rgba(0, 0, 0, 0.04);
             border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
         }
 
-        .response-container code {
-            background: var(--bg-elevated);
+        .message-body code {
+            background: #e6e6e6;
             padding: 0.15em 0.4em;
             border-radius: var(--radius-sm);
             font-family: var(--font-mono);
             font-size: 0.85em;
         }
 
-        .response-container pre {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
+        .message-body pre {
+            background: #f6f6f6;
+            border: 1px solid #dcdcdc;
             border-radius: var(--radius-md);
             padding: var(--space-md);
             overflow-x: auto;
             margin: 0.8em 0;
         }
 
-        .response-container pre code {
+        .message-body pre code {
             background: none;
             padding: 0;
         }
 
-        .response-container a {
-            color: var(--accent);
+        .message-body a {
+            color: #1a56db;
             text-decoration: underline;
             text-underline-offset: 2px;
         }
 
-        .response-container strong,
-        .response-container b {
+        .message-body strong,
+        .message-body b {
             font-weight: var(--font-weight-semibold);
         }
 
-        .response-container hr {
+        .message-body hr {
             border: none;
-            border-top: 1px solid var(--border);
+            border-top: 1px solid #d0d0d0;
             margin: 1.5em 0;
         }
 
-        .response-container table {
+        .message-body table {
             border-collapse: collapse;
             width: 100%;
             margin: 0.8em 0;
         }
 
-        .response-container th,
-        .response-container td {
-            border: 1px solid var(--border);
+        .message-body th,
+        .message-body td {
+            border: 1px solid #d0d0d0;
             padding: var(--space-sm);
             text-align: left;
         }
 
-        .response-container th {
-            background: var(--bg-surface);
+        .message-body th {
+            background: rgba(0, 0, 0, 0.04);
             font-weight: var(--font-weight-semibold);
         }
 
-        .response-container::-webkit-scrollbar {
-            width: 6px;
-        }
+        /* ── Jump to latest ── */
 
-        .response-container::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .response-container::-webkit-scrollbar-thumb {
-            background: var(--border-strong);
-            border-radius: 3px;
-        }
-
-        .response-container::-webkit-scrollbar-thumb:hover {
-            background: #444444;
-        }
-
-        /* ── Response navigation strip ── */
-
-        .response-nav {
+        .jump-latest {
+            position: absolute;
+            right: 12px;
+            bottom: 12px;
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: var(--space-sm);
-            padding: var(--space-xs) var(--space-md);
-            border-top: 1px solid var(--border);
-            background: var(--bg-app);
-        }
-
-        .nav-btn {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            padding: var(--space-xs);
-            border-radius: var(--radius-sm);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: color var(--transition);
-        }
-
-        .nav-btn:hover:not(:disabled) {
-            color: var(--text-primary);
-        }
-
-        .nav-btn:disabled {
-            opacity: 0.25;
-            cursor: default;
-        }
-
-        .nav-btn svg {
-            width: 14px;
-            height: 14px;
-        }
-
-        .response-counter {
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 100px;
+            border: 1px solid #d0d0d0;
+            background: #ffffff;
+            color: #1a1a1a;
             font-size: var(--font-size-xs);
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            min-width: 40px;
-            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+        }
+
+        .jump-latest[hidden] {
+            display: none;
+        }
+
+        .jump-latest svg {
+            width: 12px;
+            height: 12px;
         }
 
         /* ── Bottom input bar ── */
@@ -301,22 +342,21 @@ export class AssistantView extends LitElement {
     `;
 
     static properties = {
-        responses: { type: Array },
-        currentResponseIndex: { type: Number },
+        messages: { type: Array },
         selectedProfile: { type: String },
         onSendText: { type: Function },
-        shouldAnimateResponse: { type: Boolean },
         isAnalyzing: { type: Boolean, state: true },
     };
 
     constructor() {
         super();
-        this.responses = [];
-        this.currentResponseIndex = -1;
+        this.messages = [];
         this.selectedProfile = 'interview';
         this.onSendText = () => {};
         this.isAnalyzing = false;
         this._animFrame = null;
+        this._pinned = true;
+        this._responseCountWhenStarted = 0;
     }
 
     getProfileNames() {
@@ -330,13 +370,6 @@ export class AssistantView extends LitElement {
         };
     }
 
-    getCurrentResponse() {
-        const profileNames = this.getProfileNames();
-        return this.responses.length > 0 && this.currentResponseIndex >= 0
-            ? this.responses[this.currentResponseIndex]
-            : `Listening to your ${profileNames[this.selectedProfile] || 'session'}...`;
-    }
-
     renderMarkdown(content) {
         if (typeof window !== 'undefined' && window.marked) {
             try {
@@ -345,9 +378,7 @@ export class AssistantView extends LitElement {
                     gfm: true,
                     sanitize: false,
                 });
-                let rendered = window.marked.parse(content);
-                rendered = this.wrapWordsInSpans(rendered);
-                return rendered;
+                return window.marked.parse(content);
             } catch (error) {
                 console.warn('Error parsing markdown:', error);
                 return content;
@@ -356,60 +387,52 @@ export class AssistantView extends LitElement {
         return content;
     }
 
-    wrapWordsInSpans(html) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const tagsToSkip = ['PRE'];
-
-        function wrap(node) {
-            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() && !tagsToSkip.includes(node.parentNode.tagName)) {
-                const words = node.textContent.split(/(\s+)/);
-                const frag = document.createDocumentFragment();
-                words.forEach(word => {
-                    if (word.trim()) {
-                        const span = document.createElement('span');
-                        span.setAttribute('data-word', '');
-                        span.textContent = word;
-                        frag.appendChild(span);
-                    } else {
-                        frag.appendChild(document.createTextNode(word));
-                    }
-                });
-                node.parentNode.replaceChild(frag, node);
-            } else if (node.nodeType === Node.ELEMENT_NODE && !tagsToSkip.includes(node.tagName)) {
-                Array.from(node.childNodes).forEach(wrap);
-            }
-        }
-        Array.from(doc.body.childNodes).forEach(wrap);
-        return doc.body.innerHTML;
+    _assistantCount() {
+        return this.messages.filter(m => m.role === 'assistant').length;
     }
 
-    navigateToPreviousResponse() {
-        if (this.currentResponseIndex > 0) {
-            this.currentResponseIndex--;
-            this.dispatchEvent(
-                new CustomEvent('response-index-changed', {
-                    detail: { index: this.currentResponseIndex },
-                })
-            );
+    // Only the bubble whose text actually changed is re-parsed, so a streaming answer costs one
+    // markdown pass per token instead of one per bubble.
+    _syncMarkdown() {
+        for (const message of this.messages) {
+            if (message.role !== 'assistant') continue;
+
+            const el = this.shadowRoot.querySelector(`[data-msg-id="${message.id}"]`);
+            if (!el || el._renderedText === message.text) continue;
+
+            el.innerHTML = this.renderMarkdown(message.text);
+            el._renderedText = message.text;
+        }
+    }
+
+    // ── Scrolling ──
+
+    handleScroll() {
+        const container = this.shadowRoot.querySelector('.chat-scroll');
+        if (!container) return;
+
+        const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        if (atBottom !== this._pinned) {
+            this._pinned = atBottom;
             this.requestUpdate();
         }
     }
 
-    navigateToNextResponse() {
-        if (this.currentResponseIndex < this.responses.length - 1) {
-            this.currentResponseIndex++;
-            this.dispatchEvent(
-                new CustomEvent('response-index-changed', {
-                    detail: { index: this.currentResponseIndex },
-                })
-            );
-            this.requestUpdate();
+    _scrollToBottom() {
+        const container = this.shadowRoot.querySelector('.chat-scroll');
+        if (container) {
+            container.scrollTop = container.scrollHeight;
         }
+    }
+
+    jumpToLatest() {
+        this._pinned = true;
+        this._scrollToBottom();
+        this.requestUpdate();
     }
 
     scrollResponseUp() {
-        const container = this.shadowRoot.querySelector('.response-container');
+        const container = this.shadowRoot.querySelector('.chat-scroll');
         if (container) {
             const scrollAmount = container.clientHeight * 0.3;
             container.scrollTop = Math.max(0, container.scrollTop - scrollAmount);
@@ -417,7 +440,7 @@ export class AssistantView extends LitElement {
     }
 
     scrollResponseDown() {
-        const container = this.shadowRoot.querySelector('.response-container');
+        const container = this.shadowRoot.querySelector('.chat-scroll');
         if (container) {
             const scrollAmount = container.clientHeight * 0.3;
             container.scrollTop = Math.min(container.scrollHeight - container.clientHeight, container.scrollTop + scrollAmount);
@@ -430,13 +453,9 @@ export class AssistantView extends LitElement {
         if (window.require) {
             const { ipcRenderer } = window.require('electron');
 
-            this.handlePreviousResponse = () => this.navigateToPreviousResponse();
-            this.handleNextResponse = () => this.navigateToNextResponse();
             this.handleScrollUp = () => this.scrollResponseUp();
             this.handleScrollDown = () => this.scrollResponseDown();
 
-            ipcRenderer.on('navigate-previous-response', this.handlePreviousResponse);
-            ipcRenderer.on('navigate-next-response', this.handleNextResponse);
             ipcRenderer.on('scroll-response-up', this.handleScrollUp);
             ipcRenderer.on('scroll-response-down', this.handleScrollDown);
         }
@@ -448,8 +467,6 @@ export class AssistantView extends LitElement {
 
         if (window.require) {
             const { ipcRenderer } = window.require('electron');
-            if (this.handlePreviousResponse) ipcRenderer.removeListener('navigate-previous-response', this.handlePreviousResponse);
-            if (this.handleNextResponse) ipcRenderer.removeListener('navigate-next-response', this.handleNextResponse);
             if (this.handleScrollUp) ipcRenderer.removeListener('scroll-response-up', this.handleScrollUp);
             if (this.handleScrollDown) ipcRenderer.removeListener('scroll-response-down', this.handleScrollDown);
         }
@@ -475,7 +492,7 @@ export class AssistantView extends LitElement {
         if (this.isAnalyzing) return;
         if (window.captureManualScreenshot) {
             this.isAnalyzing = true;
-            this._responseCountWhenStarted = this.responses.length;
+            this._responseCountWhenStarted = this._assistantCount();
             window.captureManualScreenshot();
         }
     }
@@ -617,24 +634,14 @@ export class AssistantView extends LitElement {
         }
     }
 
-    scrollToBottom() {
-        setTimeout(() => {
-            const container = this.shadowRoot.querySelector('.response-container');
-            if (container) {
-                container.scrollTop = container.scrollHeight;
-            }
-        }, 0);
-    }
-
-    firstUpdated() {
-        super.firstUpdated();
-        this.updateResponseContent();
-    }
-
     updated(changedProperties) {
         super.updated(changedProperties);
-        if (changedProperties.has('responses') || changedProperties.has('currentResponseIndex')) {
-            this.updateResponseContent();
+
+        this._syncMarkdown();
+
+        // Instant, not smooth: a per-token smooth scroll never catches up and fights itself.
+        if (this._pinned) {
+            this._scrollToBottom();
         }
 
         if (changedProperties.has('isAnalyzing')) {
@@ -645,46 +652,48 @@ export class AssistantView extends LitElement {
             }
         }
 
-        if (changedProperties.has('responses') && this.isAnalyzing) {
-            if (this.responses.length > this._responseCountWhenStarted) {
+        // Counted over answers only, so the question bubble that precedes the reply does not
+        // clear the busy state before there is anything to show.
+        if (changedProperties.has('messages') && this.isAnalyzing) {
+            if (this._assistantCount() > this._responseCountWhenStarted) {
                 this.isAnalyzing = false;
             }
         }
     }
 
-    updateResponseContent() {
-        const container = this.shadowRoot.querySelector('#responseContainer');
-        if (container) {
-            const currentResponse = this.getCurrentResponse();
-            const renderedResponse = this.renderMarkdown(currentResponse);
-            container.innerHTML = renderedResponse;
-            if (this.shouldAnimateResponse) {
-                this.dispatchEvent(new CustomEvent('response-animation-complete', { bubbles: true, composed: true }));
-            }
+    renderMessage(message) {
+        if (message.role === 'interviewer') {
+            return html`
+                <div class="message-row interviewer">
+                    <div class="message-body plain">${message.text || '…'}</div>
+                </div>
+            `;
         }
+
+        return html`
+            <div class="message-row assistant">
+                <div class="message-body markdown" data-msg-id=${message.id}></div>
+            </div>
+        `;
     }
 
     render() {
-        const hasMultipleResponses = this.responses.length > 1;
+        const profileNames = this.getProfileNames();
 
         return html`
-            <div class="response-container" id="responseContainer"></div>
-
-            ${hasMultipleResponses ? html`
-                <div class="response-nav">
-                    <button class="nav-btn" @click=${this.navigateToPreviousResponse} ?disabled=${this.currentResponseIndex <= 0} title="Previous response">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M11.78 5.22a.75.75 0 0 1 0 1.06L8.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
-                    <span class="response-counter">${this.currentResponseIndex + 1} of ${this.responses.length}</span>
-                    <button class="nav-btn" @click=${this.navigateToNextResponse} ?disabled=${this.currentResponseIndex >= this.responses.length - 1} title="Next response">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+            <div class="chat-wrap">
+                <div class="chat-scroll" @scroll=${this.handleScroll}>
+                    ${this.messages.length === 0
+                        ? html`<div class="chat-empty">Listening to your ${profileNames[this.selectedProfile] || 'session'}...</div>`
+                        : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`}
                 </div>
-            ` : ''}
+                <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 5v14M19 12l-7 7-7-7" />
+                    </svg>
+                    Latest
+                </button>
+            </div>
 
             <div class="input-bar">
                 <div class="input-bar-inner">

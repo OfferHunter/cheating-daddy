@@ -12,7 +12,7 @@ const ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 const DEFAULT_MODEL = 'paraformer-realtime-v2';
 // Server-side endpointing: how much silence ends a sentence. This is added to every turn's
 // latency, so it trades directly against the model splitting one question into fragments.
-const MAX_SENTENCE_SILENCE_MS = 600;
+const MAX_SENTENCE_SILENCE_MS = 1500;
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];

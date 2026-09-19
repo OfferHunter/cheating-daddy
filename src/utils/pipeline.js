@@ -24,7 +24,6 @@ let activeSource = 'system';
 // in when it is committed or rescued by the idle flush.
 let turnText = '';
 let interimText = '';
-let turnSettleTimer = null;
 let streamSilenceMs = 0;
 
 // One chat request at a time. Text that lands mid-request is merged here and dispatched as the
@@ -44,12 +43,13 @@ let speechPreRoll = [];
 const VAD_FRAME_MS = 100;
 const FALLBACK_VAD = { speechThreshold: 0.02, silenceBeforeCut: 1.5, triggerFrames: 2 };
 
-// A streaming final sentence is already the product of server-side VAD, but one question often
-// arrives as several of them back to back. This window coalesces that burst; it is not a pause
-// detector of our own (the server's max_sentence_silence owns that).
-const TURN_SETTLE_MS = 250;
+// The server's VAD (max_sentence_silence in bailianAsr.js) is the only turn boundary. A final
+// sentence therefore ends the turn on the spot; there is no client-side settle window, because a
+// window armed on the last final expires while the speaker is still talking.
+//
 // The server's silence timer normally ends a turn. If the stream stays quiet this long with text
-// still pending, no final sentence is coming and the turn is flushed anyway.
+// still pending, no final sentence is coming and the turn is flushed anyway. Keep this above the
+// server's max_sentence_silence or it flushes half a sentence.
 const STREAM_IDLE_FLUSH_MS = 3000;
 
 let vadSettings = null;
@@ -205,6 +205,7 @@ async function handleSpeechEnd(audioData) {
         }
 
         logTransportEvent('asr.sentence_final', { mode: asrMode, text: transcription });
+        sendToRenderer('transcription-final', { text: transcription });
         dispatchTurn(transcription);
     } catch (error) {
         console.error('[Pipeline] Transcription error:', error);
@@ -213,6 +214,12 @@ async function handleSpeechEnd(audioData) {
 }
 
 // ── Streaming turn assembly ──
+
+// The committed sentences plus whatever tail the server has not confirmed yet.
+function mergeTurnText() {
+    if (turnText && interimText) return `${turnText} ${interimText}`;
+    return turnText || interimText;
+}
 
 function handleAsrSentence(text, sentenceEnd) {
     if (!isLocalActive || !text) return;
@@ -223,7 +230,7 @@ function handleAsrSentence(text, sentenceEnd) {
     if (!sentenceEnd) {
         // Provisional: it replaces the previous interim rather than appending to it.
         interimText = sentence;
-        sendToRenderer('update-status', 'Listening... ' + (turnText ? `${turnText} ${sentence}` : sentence));
+        sendToRenderer('transcription-update', { text: mergeTurnText() });
         return;
     }
 
@@ -231,20 +238,14 @@ function handleAsrSentence(text, sentenceEnd) {
     interimText = '';
     console.log('[Pipeline] ASR sentence:', sentence);
     logTransportEvent('asr.sentence_final', { mode: asrMode, text: sentence });
+    sendToRenderer('transcription-update', { text: turnText });
 
-    // Restarting the window on every sentence is what merges the burst into one turn.
-    if (turnSettleTimer) clearTimeout(turnSettleTimer);
-    turnSettleTimer = setTimeout(flushTurn, TURN_SETTLE_MS);
+    flushTurn();
 }
 
 function flushTurn() {
-    if (turnSettleTimer) {
-        clearTimeout(turnSettleTimer);
-        turnSettleTimer = null;
-    }
-
     // An uncommitted tail is still better than losing the utterance entirely.
-    const text = (turnText && interimText ? `${turnText} ${interimText}` : turnText || interimText).trim();
+    const text = mergeTurnText().trim();
     turnText = '';
     interimText = '';
     streamSilenceMs = 0;
@@ -252,6 +253,8 @@ function flushTurn() {
     if (!isLocalActive || text.length < 2) return;
 
     console.log('[Pipeline] Turn dispatched:', text);
+    // The question bubble is settled first, then the answer streams into its own.
+    sendToRenderer('transcription-final', { text });
     dispatchTurn(text);
 }
 
@@ -429,11 +432,6 @@ function processLocalAudio(monoChunk24k, source = 'system') {
 function closeLocalSession() {
     isLocalActive = false;
 
-    if (turnSettleTimer) {
-        clearTimeout(turnSettleTimer);
-        turnSettleTimer = null;
-    }
-
     if (asrClient) {
         asrClient.close();
         asrClient = null;
@@ -456,6 +454,7 @@ async function sendLocalText(text) {
     }
 
     try {
+        sendToRenderer('transcription-final', { text });
         await sendTurn(text);
         return { success: true };
     } catch (error) {
@@ -485,6 +484,9 @@ async function sendLocalImage(base64Data, prompt) {
     if (localConversationHistory.length > 20) {
         localConversationHistory = localConversationHistory.slice(-20);
     }
+
+    // The screenshot prompt is a page of boilerplate, so the bubble gets a short marker instead.
+    sendToRenderer('transcription-final', { text: 'Screenshot' });
 
     try {
         sendToRenderer('update-status', 'Analyzing image...');

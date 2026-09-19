@@ -2,6 +2,9 @@ if (require('electron-squirrel-startup')) {
     process.exit(0);
 }
 
+// First, before anything can log: a GBK console renders our UTF-8 Chinese as mojibake.
+require('./utils/consoleEncoding').enableUtf8Console();
+
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');

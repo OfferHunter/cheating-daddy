@@ -318,8 +318,6 @@ export class CustomizeView extends LitElement {
             toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
             toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
             nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-            previousResponse: isMac ? 'Cmd+[' : 'Ctrl+[',
-            nextResponse: isMac ? 'Cmd+]' : 'Ctrl+]',
             scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
             scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         };
@@ -334,8 +332,6 @@ export class CustomizeView extends LitElement {
             { key: 'toggleVisibility', name: 'Toggle Visibility', description: 'Show or hide the app window' },
             { key: 'toggleClickThrough', name: 'Toggle Click-through', description: 'Enable or disable click-through mode' },
             { key: 'nextStep', name: 'Ask Next Step', description: 'Take screenshot and ask for next step' },
-            { key: 'previousResponse', name: 'Previous Response', description: 'Move to previous AI response' },
-            { key: 'nextResponse', name: 'Next Response', description: 'Move to next AI response' },
             { key: 'scrollUp', name: 'Scroll Response Up', description: 'Scroll response content upward' },
             { key: 'scrollDown', name: 'Scroll Response Down', description: 'Scroll response content downward' },
         ];

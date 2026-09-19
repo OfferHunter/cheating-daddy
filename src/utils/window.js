@@ -99,8 +99,6 @@ function getDefaultKeybinds() {
         toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
         toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
         nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-        previousResponse: isMac ? 'Cmd+[' : 'Ctrl+[',
-        nextResponse: isMac ? 'Cmd+]' : 'Ctrl+]',
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
@@ -209,32 +207,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
             console.log(`Registered nextStep: ${keybinds.nextStep}`);
         } catch (error) {
             console.error(`Failed to register nextStep (${keybinds.nextStep}):`, error);
-        }
-    }
-
-    // Register previous response shortcut
-    if (keybinds.previousResponse) {
-        try {
-            globalShortcut.register(keybinds.previousResponse, () => {
-                console.log('Previous response shortcut triggered');
-                sendToRenderer('navigate-previous-response');
-            });
-            console.log(`Registered previousResponse: ${keybinds.previousResponse}`);
-        } catch (error) {
-            console.error(`Failed to register previousResponse (${keybinds.previousResponse}):`, error);
-        }
-    }
-
-    // Register next response shortcut
-    if (keybinds.nextResponse) {
-        try {
-            globalShortcut.register(keybinds.nextResponse, () => {
-                console.log('Next response shortcut triggered');
-                sendToRenderer('navigate-next-response');
-            });
-            console.log(`Registered nextResponse: ${keybinds.nextResponse}`);
-        } catch (error) {
-            console.error(`Failed to register nextResponse (${keybinds.nextResponse}):`, error);
         }
     }
 
