@@ -121,25 +121,6 @@ function setupStorageIpcHandlers() {
         }
     });
 
-    ipcMain.handle('storage:get-siliconflow-api-key', async () => {
-        try {
-            return { success: true, data: storage.getSiliconflowApiKey() };
-        } catch (error) {
-            console.error('Error getting SiliconFlow API key:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    ipcMain.handle('storage:set-siliconflow-api-key', async (event, siliconflowApiKey) => {
-        try {
-            storage.setSiliconflowApiKey(siliconflowApiKey);
-            return { success: true };
-        } catch (error) {
-            console.error('Error setting SiliconFlow API key:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
     ipcMain.handle('storage:get-bailian-api-key', async () => {
         try {
             return { success: true, data: storage.getBailianApiKey() };

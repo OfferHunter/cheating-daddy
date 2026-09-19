@@ -1,18 +1,14 @@
 const { getSystemPrompt } = require('./prompts');
 const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
-const { transcribe: transcribeWithSiliconFlow } = require('./siliconflow');
 const { createRealtimeAsr } = require('./bailianAsr');
 const { logTransportEvent } = require('./transportLogger');
-const { getConfig, getPreferences } = require('../storage');
+const { getPreferences, getMaxSentenceSilenceMs } = require('../storage');
 
 let currentSystemPrompt = null;
 let isLocalActive = false;
 let transcriptionLanguage = null;
 
-// 'stream' pipes PCM straight to the Bailian websocket and lets its server-side VAD end turns;
-// 'batch' keeps the original buffer-the-whole-utterance-then-upload path.
-let asrMode = 'batch';
 let asrClient = null;
 // Only one capture feeds a session. Without headphones the same voice arrives over both the
 // loopback and the microphone, which would transcribe every question twice.
@@ -40,45 +36,18 @@ let turnSeq = 0;
 // next one, and requests are never aborted.
 let sessionGeneration = 0;
 
-let isSpeaking = false;
-let speechBuffers = [];
-let silenceFrameCount = 0;
-let speechFrameCount = 0;
-// Audio kept while idle so the onset of an utterance isn't clipped when detection finally fires.
-let speechPreRoll = [];
-
-// Voice detection is tuned from preferences. These fallbacks must match DEFAULT_PREFERENCES in
-// storage.js and the Reference Levels shown in CustomizeView.js.
-const VAD_FRAME_MS = 100;
-const FALLBACK_VAD = { speechThreshold: 0.02, silenceBeforeCut: 1.5, triggerFrames: 2 };
-
-// The server's VAD (max_sentence_silence in bailianAsr.js) is the only turn boundary. A final
-// sentence therefore ends the turn on the spot; there is no client-side settle window, because a
-// window armed on the last final expires while the speaker is still talking.
+// Turns are assembled from the server's sentence events; the client analyses no audio. A final
+// sentence ends the turn on the spot, so there is no client-side settle window — a window armed on
+// the last final expires while the speaker is still talking.
 //
-// The server's silence timer normally ends a turn. If the stream stays quiet this long with text
-// still pending, no final sentence is coming and the turn is flushed anyway. Keep this above the
-// server's max_sentence_silence or it flushes half a sentence.
-const STREAM_IDLE_FLUSH_MS = 3000;
+// Every sentence event resets this countdown (see handleAsrSentence). If the socket stays quiet
+// this long with text still pending, no final sentence is coming and the turn is flushed anyway.
+// It is derived from the server's max_sentence_silence so it always outlasts it.
+const AUDIO_CHUNK_MS = 100; // must match AUDIO_CHUNK_DURATION in renderer.js
+const IDLE_FLUSH_MARGIN_MS = 1000;
+let streamIdleFlushMs = 3000;
 
-let vadSettings = null;
 let resampleRemainder = Buffer.alloc(0);
-
-function positiveNumber(value, fallback) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function resolveVadSettings(prefs) {
-    const silenceSeconds = positiveNumber(prefs.vadSilenceBeforeCut, FALLBACK_VAD.silenceBeforeCut);
-
-    return {
-        speechThreshold: positiveNumber(prefs.vadSpeechThreshold, FALLBACK_VAD.speechThreshold),
-        speechFramesRequired: Math.max(1, Math.round(positiveNumber(prefs.vadTriggerFrames, FALLBACK_VAD.triggerFrames))),
-        // Idle audio arrives in 100 ms frames, so seconds convert at 10 frames per second.
-        silenceFramesRequired: Math.max(1, Math.round((silenceSeconds * 1000) / VAD_FRAME_MS)),
-    };
-}
 
 function resample24kTo16k(inputBuffer) {
     const combined = Buffer.concat([resampleRemainder, inputBuffer]);
@@ -103,61 +72,6 @@ function resample24kTo16k(inputBuffer) {
     return outputBuffer;
 }
 
-function calculateRms(pcm16Buffer) {
-    const samples = pcm16Buffer.length / 2;
-    if (samples === 0) return 0;
-
-    let sumSquares = 0;
-    for (let i = 0; i < samples; i++) {
-        const sample = pcm16Buffer.readInt16LE(i * 2) / 32768;
-        sumSquares += sample * sample;
-    }
-
-    return Math.sqrt(sumSquares / samples);
-}
-
-function processVad(pcm16kBuffer) {
-    const rms = calculateRms(pcm16kBuffer);
-    const isVoice = rms > vadSettings.speechThreshold;
-
-    if (isVoice) {
-        speechFrameCount += 1;
-        silenceFrameCount = 0;
-
-        if (!isSpeaking && speechFrameCount >= vadSettings.speechFramesRequired) {
-            isSpeaking = true;
-            // Adopt the retained idle audio instead of dropping the frames that triggered detection.
-            speechBuffers = speechPreRoll;
-            speechPreRoll = [];
-            console.log('[Pipeline] Speech started (RMS:', rms.toFixed(4), 'threshold:', vadSettings.speechThreshold.toFixed(4), ')');
-            sendToRenderer('update-status', 'Listening... (speech detected)');
-        }
-    } else {
-        silenceFrameCount += 1;
-        speechFrameCount = 0;
-
-        if (isSpeaking && silenceFrameCount >= vadSettings.silenceFramesRequired) {
-            isSpeaking = false;
-            const audioData = Buffer.concat(speechBuffers);
-            speechBuffers = [];
-            console.log('[Pipeline] Speech ended, accumulated', audioData.length, 'bytes');
-            sendToRenderer('update-status', 'Transcribing...');
-            handleSpeechEnd(audioData);
-            return;
-        }
-    }
-
-    if (isSpeaking) {
-        speechBuffers.push(Buffer.from(pcm16kBuffer));
-    } else {
-        // Idle: keep a short tail so a quiet onset is still there once detection fires.
-        speechPreRoll.push(Buffer.from(pcm16kBuffer));
-        if (speechPreRoll.length > vadSettings.speechFramesRequired) {
-            speechPreRoll.shift();
-        }
-    }
-}
-
 // The ASR endpoint wants a bare ISO-639-1 code, but preferences store BCP-47 locales.
 function toAsrLanguage(locale) {
     if (!locale) {
@@ -166,60 +80,6 @@ function toAsrLanguage(locale) {
 
     const primary = String(locale).split('-')[0].toLowerCase();
     return primary === 'cmn' ? 'zh' : primary;
-}
-
-function createWavBuffer(pcm16Buffer) {
-    const header = Buffer.alloc(44);
-    const byteRate = 16000 * 2;
-
-    header.write('RIFF', 0);
-    header.writeUInt32LE(36 + pcm16Buffer.length, 4);
-    header.write('WAVE', 8);
-    header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16);
-    header.writeUInt16LE(1, 20);
-    header.writeUInt16LE(1, 22);
-    header.writeUInt32LE(16000, 24);
-    header.writeUInt32LE(byteRate, 28);
-    header.writeUInt16LE(2, 32);
-    header.writeUInt16LE(16, 34);
-    header.write('data', 36);
-    header.writeUInt32LE(pcm16Buffer.length, 40);
-
-    return Buffer.concat([header, pcm16Buffer]);
-}
-
-async function transcribeAudio(pcm16kBuffer) {
-    const text = (await transcribeWithSiliconFlow(createWavBuffer(pcm16kBuffer), toAsrLanguage(transcriptionLanguage))).trim();
-    console.log('[Pipeline] Transcription (siliconflow):', text);
-    return text;
-}
-
-async function handleSpeechEnd(audioData) {
-    if (!isLocalActive) return;
-
-    if (audioData.length < 16000) {
-        console.log('[Pipeline] Audio too short, skipping');
-        sendToRenderer('update-status', 'Listening...');
-        return;
-    }
-
-    try {
-        const transcription = await transcribeAudio(audioData);
-
-        if (!transcription || transcription.length < 2) {
-            console.log('[Pipeline] Empty transcription, skipping');
-            sendToRenderer('update-status', 'Listening...');
-            return;
-        }
-
-        logTransportEvent('asr.sentence_final', { mode: asrMode, text: transcription });
-        sendToRenderer('transcription-final', { text: transcription });
-        dispatchTurn(transcription);
-    } catch (error) {
-        console.error('[Pipeline] Transcription error:', error);
-        sendToRenderer('update-status', 'Transcription error: ' + error.message);
-    }
 }
 
 // ── Streaming turn assembly ──
@@ -236,6 +96,10 @@ function handleAsrSentence(text, sentenceEnd) {
     const sentence = text.trim();
     if (!sentence) return;
 
+    // Any event means the server is still hearing speech, so the idle flush must not fire. Interims
+    // keep arriving while a long question is spoken, which is what stops it being split in two.
+    streamSilenceMs = 0;
+
     if (!sentenceEnd) {
         // Provisional: it replaces the previous interim rather than appending to it.
         interimText = sentence;
@@ -246,7 +110,7 @@ function handleAsrSentence(text, sentenceEnd) {
     turnText = turnText ? `${turnText} ${sentence}` : sentence;
     interimText = '';
     console.log('[Pipeline] ASR sentence:', sentence);
-    logTransportEvent('asr.sentence_final', { mode: asrMode, text: sentence });
+    logTransportEvent('asr.sentence_final', { text: sentence });
     sendToRenderer('transcription-update', { text: turnText });
 
     flushTurn();
@@ -407,34 +271,20 @@ function dispatchTurn(text) {
     const trimmed = (text || '').trim();
     if (trimmed.length < 2) return null;
 
-    logTransportEvent('asr.turn_dispatched', { mode: asrMode, text: trimmed });
+    logTransportEvent('asr.turn_dispatched', { text: trimmed });
     const entry = createTurn(trimmed, trimmed, 'conversation');
     runTurn(entry);
     updateStreamingStatus();
     return entry;
 }
 
-// Status text and a safety flush only: the server's VAD owns turn boundaries in streaming mode.
-function trackStreamLevel(pcm16k) {
-    const rms = calculateRms(pcm16k);
+// A safety flush only: the server's VAD owns turn boundaries. Audio arriving proves nothing on its
+// own — only a sentence event does, and those reset the countdown in handleAsrSentence. If the
+// socket goes quiet with text pending, the final sentence it was waiting for is never coming.
+function tickStreamWatchdog() {
+    streamSilenceMs += AUDIO_CHUNK_MS;
 
-    if (rms > vadSettings.speechThreshold) {
-        streamSilenceMs = 0;
-        speechFrameCount += 1;
-
-        if (!isSpeaking && speechFrameCount >= vadSettings.speechFramesRequired) {
-            isSpeaking = true;
-            console.log('[Pipeline] Speech started (RMS:', rms.toFixed(4), ')');
-            sendToRenderer('update-status', 'Listening... (speech detected)');
-        }
-        return;
-    }
-
-    speechFrameCount = 0;
-    isSpeaking = false;
-    streamSilenceMs += VAD_FRAME_MS;
-
-    if ((turnText || interimText) && streamSilenceMs >= STREAM_IDLE_FLUSH_MS) {
+    if ((turnText || interimText) && streamSilenceMs >= streamIdleFlushMs) {
         flushTurn();
     }
 }
@@ -444,19 +294,25 @@ function startAsrClient() {
         language: toAsrLanguage(transcriptionLanguage),
         onSentence: handleAsrSentence,
         onState: state => {
-            if (state === 'reconnecting') {
+            if (state === 'connecting') {
+                sendToRenderer('update-status', 'Connecting...');
+            } else if (state === 'ready') {
+                sendToRenderer('update-status', 'Listening...');
+            } else if (state === 'reconnecting') {
                 sendToRenderer('update-status', 'Reconnecting transcription...');
             }
         },
         onError: error => {
-            // Unrecoverable for this session: drop to the batch path so answers keep flowing.
-            console.error('[Pipeline] Streaming ASR failed, falling back to batch:', error.message);
-            asrMode = 'batch';
+            // The reconnect backoff inside the ASR client is exhausted, so this session has no
+            // recognizer left. The session stays up and the error is surfaced; audio is dropped
+            // rather than sent into a dead socket.
+            console.error('[Pipeline] Streaming ASR failed:', error.message);
             if (asrClient) {
                 asrClient.close();
                 asrClient = null;
             }
             sendToRenderer('update-status', 'Transcription error: ' + error.message);
+            sendToRenderer('reconnect-failed', { message: 'Transcription stopped: ' + error.message });
         },
     });
 
@@ -464,13 +320,8 @@ function startAsrClient() {
 }
 
 function resetAudioState() {
-    isSpeaking = false;
-    speechBuffers = [];
-    silenceFrameCount = 0;
-    speechFrameCount = 0;
     resampleRemainder = Buffer.alloc(0);
     transcriptionLanguage = null;
-    speechPreRoll = [];
     turnText = '';
     interimText = '';
     streamSilenceMs = 0;
@@ -480,7 +331,6 @@ function resetAudioState() {
 }
 
 function initializeChatSession(profile, customPrompt, selectedLanguage) {
-    console.log('[Pipeline] Initializing chat session:', { profile, selectedLanguage });
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
@@ -489,20 +339,19 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
     transcriptionLanguage = selectedLanguage;
 
     const prefs = getPreferences();
-    vadSettings = resolveVadSettings(prefs);
     // In 'both' mode the loopback copy is the clean one; the mic only carries an echo of it.
     activeSource = prefs.audioMode === 'mic_only' ? 'mic' : 'system';
-    asrMode = getConfig().asrProvider === 'siliconflow' ? 'batch' : 'stream';
+    const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
+    streamIdleFlushMs = maxSentenceSilenceMs + IDLE_FLUSH_MARGIN_MS;
+    console.log('[Pipeline] Initializing chat session:', { profile, selectedLanguage, maxSentenceSilenceMs, streamIdleFlushMs });
 
     initializeNewSession(profile, customPrompt);
     isLocalActive = true;
 
-    if (asrMode === 'stream') {
-        startAsrClient();
-    }
-
+    // The ASR client's own state owns the status bar from here: Connecting... then Listening....
     sendToRenderer('session-initializing', false);
-    sendToRenderer('update-status', 'Ready - Listening...');
+    startAsrClient();
+
     console.log('[Pipeline] Session initialized');
     return true;
 }
@@ -514,13 +363,12 @@ function processLocalAudio(monoChunk24k, source = 'system') {
     const pcm16k = resample24kTo16k(monoChunk24k);
     if (pcm16k.length === 0) return;
 
-    if (asrMode === 'stream' && asrClient) {
-        asrClient.sendAudio(pcm16k);
-        trackStreamLevel(pcm16k);
-        return;
-    }
+    // The client is a pipe: audio goes straight to the recognizer. If it is gone, the audio has
+    // nowhere to go, but the session stays up so the user can see why.
+    if (!asrClient) return;
 
-    processVad(pcm16k);
+    asrClient.sendAudio(pcm16k);
+    tickStreamWatchdog();
 }
 
 function closeLocalSession() {
@@ -561,18 +409,15 @@ async function sendLocalImage(base64Data, prompt) {
         return { success: false, error: 'No active session' };
     }
 
-    const userMessage = {
-        role: 'user',
-        content: [
-            { type: 'text', text: prompt },
-            {
-                type: 'image_url',
-                image_url: {
-                    url: `data:image/jpeg;base64,${base64Data}`,
-                },
+    const requestContent = [
+        { type: 'text', text: prompt },
+        {
+            type: 'image_url',
+            image_url: {
+                url: `data:image/jpeg;base64,${base64Data}`,
             },
-        ],
-    };
+        },
+    ];
 
     // The screenshot prompt is a page of boilerplate, so the bubble gets a short marker instead.
     sendToRenderer('transcription-final', { text: 'Screenshot' });
@@ -580,7 +425,7 @@ async function sendLocalImage(base64Data, prompt) {
 
     // Runs like any other turn, so a screenshot taken mid-answer streams alongside it instead of
     // displacing it. Only the prompt text is kept for later context; the image itself is not.
-    const entry = createTurn(userMessage, prompt, 'screen');
+    const entry = createTurn(requestContent, prompt, 'screen');
     runTurn(entry);
 
     return { success: true, model: getChatModel(), turnId: entry.seq };

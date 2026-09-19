@@ -1,19 +1,6 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
 
-// Reference points shown under the Voice Detection inputs. The "Very aggressive" row must match
-// FALLBACK_VAD in src/utils/pipeline.js and DEFAULT_PREFERENCES in src/storage.js.
-const VAD_LEVELS = [
-    { label: 'Normal', speechThreshold: 0.01, silenceBeforeCut: 3, triggerFrames: 3 },
-    { label: 'Low bitrate audio', speechThreshold: 0.008, silenceBeforeCut: 3.5, triggerFrames: 4 },
-    { label: 'Aggressive', speechThreshold: 0.015, silenceBeforeCut: 2, triggerFrames: 2 },
-    { label: 'Very aggressive (default)', speechThreshold: 0.02, silenceBeforeCut: 1.5, triggerFrames: 2 },
-];
-
-function vadLevelsSummary() {
-    return VAD_LEVELS.map(level => `${level.label}: ${level.speechThreshold} / ${level.silenceBeforeCut}s / ${level.triggerFrames} frames`);
-}
-
 export class CustomizeView extends LitElement {
     static styles = [
         unifiedPageStyles,
@@ -205,9 +192,7 @@ export class CustomizeView extends LitElement {
         isRestoring: { type: Boolean },
         clearStatusMessage: { type: String },
         clearStatusType: { type: String },
-        vadSpeechThreshold: { type: Number },
-        vadSilenceBeforeCut: { type: Number },
-        vadTriggerFrames: { type: Number },
+        maxSentenceSilenceMs: { type: Number },
     };
 
     constructor() {
@@ -230,9 +215,7 @@ export class CustomizeView extends LitElement {
         this.audioMode = 'speaker_only';
         this.customPrompt = '';
         this.theme = 'dark';
-        this.vadSpeechThreshold = 0.02;
-        this.vadSilenceBeforeCut = 1.5;
-        this.vadTriggerFrames = 2;
+        this.maxSentenceSilenceMs = 1500;
         this._loadFromStorage();
     }
 
@@ -248,9 +231,7 @@ export class CustomizeView extends LitElement {
             this.audioMode = prefs.audioMode ?? 'speaker_only';
             this.customPrompt = prefs.customPrompt ?? '';
             this.theme = prefs.theme ?? 'dark';
-            this.vadSpeechThreshold = prefs.vadSpeechThreshold ?? 0.02;
-            this.vadSilenceBeforeCut = prefs.vadSilenceBeforeCut ?? 1.5;
-            this.vadTriggerFrames = prefs.vadTriggerFrames ?? 2;
+            this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
@@ -376,7 +357,7 @@ export class CustomizeView extends LitElement {
         this.requestUpdate();
     }
 
-    async handleVadNumberInput(key, rawValue) {
+    async handleNumberPreferenceInput(key, rawValue) {
         const value = Number.parseFloat(rawValue);
         if (!Number.isFinite(value)) {
             return;
@@ -501,9 +482,7 @@ export class CustomizeView extends LitElement {
                 fontSize: 20,
                 backgroundTransparency: 0.8,
                 theme: 'dark',
-                vadSpeechThreshold: 0.02,
-                vadSilenceBeforeCut: 1.5,
-                vadTriggerFrames: 2,
+                maxSentenceSilenceMs: 1500,
             };
             for (const [key, value] of Object.entries(defaults)) {
                 await cheatingDaddy.storage.updatePreference(key, value);
@@ -526,9 +505,7 @@ export class CustomizeView extends LitElement {
             this.backgroundTransparency = defaults.backgroundTransparency;
             this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
-            this.vadSpeechThreshold = defaults.vadSpeechThreshold;
-            this.vadSilenceBeforeCut = defaults.vadSilenceBeforeCut;
-            this.vadTriggerFrames = defaults.vadTriggerFrames;
+            this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
 
             // Notify parent callbacks
             this.onProfileChange(defaults.selectedProfile);
@@ -608,45 +585,17 @@ export class CustomizeView extends LitElement {
                         </select>
                     </div>
                     <div class="form-group vertical">
-                        <label class="form-label">Speech Threshold</label>
+                        <label class="form-label">Sentence Silence (ms)</label>
                         <input
                             type="number"
-                            step="0.001"
-                            min="0.001"
+                            step="100"
+                            min="200"
+                            max="6000"
                             class="control"
-                            .value=${this.vadSpeechThreshold}
-                            @change=${e => this.handleVadNumberInput('vadSpeechThreshold', e.target.value)}
+                            .value=${this.maxSentenceSilenceMs}
+                            @change=${e => this.handleNumberPreferenceInput('maxSentenceSilenceMs', e.target.value)}
                         />
-                        <div class="form-help">RMS from 0 to 1. Higher means speech has to be louder to start a transcript.</div>
-                    </div>
-                    <div class="form-group vertical">
-                        <label class="form-label">Silence Before Cut (seconds)</label>
-                        <input
-                            type="number"
-                            step="0.1"
-                            min="0.1"
-                            class="control"
-                            .value=${this.vadSilenceBeforeCut}
-                            @change=${e => this.handleVadNumberInput('vadSilenceBeforeCut', e.target.value)}
-                        />
-                        <div class="form-help">Silence this long ends the sentence. Lower cuts sooner, splits more.</div>
-                    </div>
-                    <div class="form-group vertical">
-                        <label class="form-label">Trigger Frames</label>
-                        <input
-                            type="number"
-                            step="1"
-                            min="1"
-                            class="control"
-                            .value=${this.vadTriggerFrames}
-                            @change=${e => this.handleVadNumberInput('vadTriggerFrames', e.target.value)}
-                        />
-                        <div class="form-help">Consecutive loud frames before speech counts as started. Each frame is 0.1 seconds.</div>
-                    </div>
-                    <div class="form-group vertical">
-                        <label class="form-label">Reference Levels</label>
-                        <div class="form-help">Order: threshold / silence before cut / trigger frames.</div>
-                        ${vadLevelsSummary().map(line => html`<div class="form-help">${line}</div>`)}
+                        <div class="form-help">How much silence ends a question and sends it. Lower is faster but may split it. 200-6000.</div>
                     </div>
                 </div>
             </section>

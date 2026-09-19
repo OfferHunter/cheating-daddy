@@ -49,13 +49,6 @@ const storage = {
     async setDeepseekApiKey(deepseekApiKey) {
         return ipcRenderer.invoke('storage:set-deepseek-api-key', deepseekApiKey);
     },
-    async getSiliconflowApiKey() {
-        const result = await ipcRenderer.invoke('storage:get-siliconflow-api-key');
-        return result.success ? result.data : '';
-    },
-    async setSiliconflowApiKey(siliconflowApiKey) {
-        return ipcRenderer.invoke('storage:set-siliconflow-api-key', siliconflowApiKey);
-    },
     async getBailianApiKey() {
         const result = await ipcRenderer.invoke('storage:get-bailian-api-key');
         return result.success ? result.data : '';

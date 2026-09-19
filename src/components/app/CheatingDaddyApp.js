@@ -622,11 +622,7 @@ export class CheatingDaddyApp extends LitElement {
 
     async handleStart() {
         // Only the key for the selected recognizer is required; the chat key is always DeepSeek's.
-        const config = await cheatingDaddy.storage.getConfig();
-        const [chatKey, asrKey] = await Promise.all([
-            cheatingDaddy.storage.getDeepseekApiKey(),
-            config.asrProvider === 'siliconflow' ? cheatingDaddy.storage.getSiliconflowApiKey() : cheatingDaddy.storage.getBailianApiKey(),
-        ]);
+        const [chatKey, asrKey] = await Promise.all([cheatingDaddy.storage.getDeepseekApiKey(), cheatingDaddy.storage.getBailianApiKey()]);
 
         if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
             const mainView = this.shadowRoot.querySelector('main-view');

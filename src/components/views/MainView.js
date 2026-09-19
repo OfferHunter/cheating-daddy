@@ -2,7 +2,6 @@ import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_CHAT_MODEL = 'deepseek-flash';
-const DEFAULT_SILICONFLOW_MODEL = 'FunAudioLLM/SenseVoiceSmall';
 const DEFAULT_BAILIAN_MODEL = 'paraformer-realtime-v2';
 
 export class MainView extends LitElement {
@@ -223,9 +222,6 @@ export class MainView extends LitElement {
         _chatBaseUrl: { state: true },
         _chatKey: { state: true },
         _chatModel: { state: true },
-        _siliconflowKey: { state: true },
-        _siliconflowModel: { state: true },
-        _asrProvider: { state: true },
         _bailianKey: { state: true },
         _bailianModel: { state: true },
         _keyError: { state: true },
@@ -240,9 +236,6 @@ export class MainView extends LitElement {
         this._chatBaseUrl = DEFAULT_CHAT_BASE_URL;
         this._chatKey = '';
         this._chatModel = DEFAULT_CHAT_MODEL;
-        this._siliconflowKey = '';
-        this._siliconflowModel = DEFAULT_SILICONFLOW_MODEL;
-        this._asrProvider = 'bailian';
         this._bailianKey = '';
         this._bailianModel = DEFAULT_BAILIAN_MODEL;
         this._keyError = false;
@@ -257,11 +250,8 @@ export class MainView extends LitElement {
 
             this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
             this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
-            this._siliconflowModel = config.siliconflowModel || DEFAULT_SILICONFLOW_MODEL;
-            this._asrProvider = config.asrProvider || 'bailian';
             this._bailianModel = config.bailianModel || DEFAULT_BAILIAN_MODEL;
             this._chatKey = creds.deepseekApiKey || '';
-            this._siliconflowKey = creds.siliconflowApiKey || '';
             this._bailianKey = creds.bailianApiKey || '';
 
             this.requestUpdate();
@@ -311,26 +301,6 @@ export class MainView extends LitElement {
         this.requestUpdate();
     }
 
-    async _saveSiliconflowKey(val) {
-        this._siliconflowKey = val;
-        this._keyError = false;
-        await cheatingDaddy.storage.setSiliconflowApiKey(val);
-        this.requestUpdate();
-    }
-
-    async _saveSiliconflowModel(val) {
-        this._siliconflowModel = val;
-        await cheatingDaddy.storage.updateConfig('siliconflowModel', val);
-        this.requestUpdate();
-    }
-
-    async _saveAsrProvider(val) {
-        this._asrProvider = val;
-        this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('asrProvider', val);
-        this.requestUpdate();
-    }
-
     async _saveBailianKey(val) {
         this._bailianKey = val;
         this._keyError = false;
@@ -350,9 +320,7 @@ export class MainView extends LitElement {
     _handleStart() {
         if (this.isInitializing) return;
 
-        const providerKey = this._asrProvider === 'siliconflow' ? this._siliconflowKey : this._bailianKey;
-
-        if (!this._chatBaseUrl.trim() || !this._chatKey.trim() || !this._chatModel.trim() || !providerKey.trim()) {
+        if (!this._chatBaseUrl.trim() || !this._chatKey.trim() || !this._chatModel.trim() || !this._bailianKey.trim()) {
             this._keyError = true;
             this.requestUpdate();
             return;
@@ -501,84 +469,42 @@ export class MainView extends LitElement {
 
     _renderTranscriptionSection() {
         const hasError = this._keyError ? 'error' : '';
-        const isBailian = this._asrProvider !== 'siliconflow';
 
         return html`
             <details class="config-section">
                 <summary class="config-summary">
                     <span class="config-summary-text">
                         <span class="config-summary-title">Transcription</span>
-                        <span class="config-summary-description">${isBailian ? 'Aliyun Bailian streaming' : 'SiliconFlow batch upload'}</span>
+                        <span class="config-summary-description">Aliyun Bailian streaming</span>
                     </span>
                     ${this._renderConfigChevron()}
                 </summary>
                 <div class="config-content">
                     <div class="form-group">
-                        <label class="form-label">Speech-to-text Provider</label>
-                        <select .value=${this._asrProvider} @change=${e => this._saveAsrProvider(e.target.value)}>
-                            <option value="bailian">Aliyun Bailian (streaming)</option>
-                            <option value="siliconflow">SiliconFlow (batch upload)</option>
-                        </select>
+                        <label class="form-label">Bailian API Key</label>
+                        <input
+                            type="password"
+                            placeholder="Required"
+                            .value=${this._bailianKey}
+                            @input=${e => this._saveBailianKey(e.target.value)}
+                            class=${hasError}
+                        />
+                        <div class="form-hint">
+                            <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get Bailian key</span>
+                            <span> (Beijing region)</span>
+                        </div>
                     </div>
 
-                    ${isBailian
-                        ? html`
-                              <div class="form-group">
-                                  <label class="form-label">Bailian API Key</label>
-                                  <input
-                                      type="password"
-                                      placeholder="Required"
-                                      .value=${this._bailianKey}
-                                      @input=${e => this._saveBailianKey(e.target.value)}
-                                      class=${hasError}
-                                  />
-                                  <div class="form-hint">
-                                      <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}
-                                          >Get Bailian key</span
-                                      >
-                                      <span> (Beijing region)</span>
-                                  </div>
-                              </div>
-
-                              <div class="form-group">
-                                  <label class="form-label">Bailian Model</label>
-                                  <input
-                                      type="text"
-                                      placeholder=${DEFAULT_BAILIAN_MODEL}
-                                      .value=${this._bailianModel}
-                                      @input=${e => this._saveBailianModel(e.target.value)}
-                                  />
-                                  <div class="form-hint">Speech is streamed live to Aliyun and transcribed as you talk.</div>
-                              </div>
-                          `
-                        : html`
-                              <div class="form-group">
-                                  <label class="form-label">SiliconFlow API Key</label>
-                                  <input
-                                      type="password"
-                                      placeholder="Required"
-                                      .value=${this._siliconflowKey}
-                                      @input=${e => this._saveSiliconflowKey(e.target.value)}
-                                      class=${hasError}
-                                  />
-                                  <div class="form-hint">
-                                      <span class="link" @click=${() => this.onExternalLink('https://cloud.siliconflow.cn/account/ak')}
-                                          >Get SiliconFlow key</span
-                                      >
-                                  </div>
-                              </div>
-
-                              <div class="form-group">
-                                  <label class="form-label">SiliconFlow Model</label>
-                                  <input
-                                      type="text"
-                                      placeholder=${DEFAULT_SILICONFLOW_MODEL}
-                                      .value=${this._siliconflowModel}
-                                      @input=${e => this._saveSiliconflowModel(e.target.value)}
-                                  />
-                                  <div class="form-hint">Recorded speech is uploaded to SiliconFlow for transcription.</div>
-                              </div>
-                          `}
+                    <div class="form-group">
+                        <label class="form-label">Bailian Model</label>
+                        <input
+                            type="text"
+                            placeholder=${DEFAULT_BAILIAN_MODEL}
+                            .value=${this._bailianModel}
+                            @input=${e => this._saveBailianModel(e.target.value)}
+                        />
+                        <div class="form-hint">Speech is streamed live to Aliyun and transcribed as you talk.</div>
+                    </div>
                 </div>
             </details>
         `;

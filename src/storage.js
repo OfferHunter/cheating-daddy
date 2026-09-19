@@ -12,15 +12,11 @@ const DEFAULT_CONFIG = {
     // The chat endpoint is any OpenAI-compatible API. The model and key names are historical.
     chatBaseUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-flash',
-    siliconflowModel: 'FunAudioLLM/SenseVoiceSmall',
-    // 'bailian' streams over a websocket; 'siliconflow' uploads the whole utterance and waits.
-    asrProvider: 'bailian',
     bailianModel: 'paraformer-realtime-v2',
 };
 
 const DEFAULT_CREDENTIALS = {
     deepseekApiKey: '',
-    siliconflowApiKey: '',
     bailianApiKey: '',
 };
 
@@ -34,11 +30,13 @@ const DEFAULT_PREFERENCES = {
     audioMode: 'speaker_only',
     fontSize: 'medium',
     backgroundTransparency: 0.8,
-    // Voice detection tuning.
-    vadSpeechThreshold: 0.02,
-    vadSilenceBeforeCut: 1.5,
-    vadTriggerFrames: 2,
+    // How much silence ends a sentence on the ASR server. It is added to every turn's latency, so
+    // it trades directly against the server splitting one question into fragments.
+    maxSentenceSilenceMs: 1500,
 };
+
+// Legal range for DashScope's max_sentence_silence parameter.
+const MAX_SENTENCE_SILENCE_RANGE = { min: 200, max: 6000 };
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
 
@@ -197,14 +195,6 @@ function setDeepseekApiKey(deepseekApiKey) {
     return setCredentials({ deepseekApiKey });
 }
 
-function getSiliconflowApiKey() {
-    return getCredentials().siliconflowApiKey || '';
-}
-
-function setSiliconflowApiKey(siliconflowApiKey) {
-    return setCredentials({ siliconflowApiKey });
-}
-
 function getBailianApiKey() {
     return getCredentials().bailianApiKey || '';
 }
@@ -230,6 +220,14 @@ function updatePreference(key, value) {
     const preferences = getPreferences();
     preferences[key] = value;
     return writeJsonFile(getPreferencesPath(), preferences);
+}
+
+// Clamped on read so a hand-edited preferences file cannot push the ASR server outside its legal
+// range. Consumers derive their own timeouts from this, so it stays the single source of truth.
+function getMaxSentenceSilenceMs() {
+    const value = Number(getPreferences().maxSentenceSilenceMs);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.maxSentenceSilenceMs;
+    return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
 }
 
 // ============ KEYBINDS ============
@@ -365,8 +363,6 @@ module.exports = {
     setCredentials,
     getDeepseekApiKey,
     setDeepseekApiKey,
-    getSiliconflowApiKey,
-    setSiliconflowApiKey,
     getBailianApiKey,
     setBailianApiKey,
 
@@ -374,6 +370,7 @@ module.exports = {
     getPreferences,
     setPreferences,
     updatePreference,
+    getMaxSentenceSilenceMs,
 
     // Keybinds
     getKeybinds,

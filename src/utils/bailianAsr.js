@@ -6,13 +6,10 @@
 
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
-const { getConfig, getBailianApiKey } = require('../storage');
+const { getConfig, getBailianApiKey, getMaxSentenceSilenceMs } = require('../storage');
 
 const ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 const DEFAULT_MODEL = 'paraformer-realtime-v2';
-// Server-side endpointing: how much silence ends a sentence. This is added to every turn's
-// latency, so it trades directly against the model splitting one question into fragments.
-const MAX_SENTENCE_SILENCE_MS = 1500;
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
@@ -84,7 +81,7 @@ function createRealtimeAsr({ language, onSentence, onState, onError } = {}) {
             format: 'pcm',
             sample_rate: 16000,
             semantic_punctuation_enabled: false,
-            max_sentence_silence: MAX_SENTENCE_SILENCE_MS,
+            max_sentence_silence: getMaxSentenceSilenceMs(),
             punctuation_prediction_enabled: true,
             inverse_text_normalization_enabled: true,
             heartbeat: true,
