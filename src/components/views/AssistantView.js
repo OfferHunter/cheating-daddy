@@ -22,12 +22,14 @@ export class AssistantView extends LitElement {
             display: flex;
         }
 
+        /* No background of its own: the transcript sits directly on the shell that the opacity
+           slider already controls, so live mode is exactly as see-through as every other page. */
         .chat-scroll {
             flex: 1;
             overflow-y: auto;
             font-size: var(--response-font-size, 15px);
             line-height: var(--line-height);
-            background: #ededed;
+            background: transparent;
             scroll-behavior: auto;
             user-select: text;
             cursor: text;
@@ -51,12 +53,12 @@ export class AssistantView extends LitElement {
         }
 
         .chat-scroll::-webkit-scrollbar-thumb {
-            background: #c4c4c4;
+            background: var(--border-strong);
             border-radius: 3px;
         }
 
         .chat-scroll::-webkit-scrollbar-thumb:hover {
-            background: #a8a8a8;
+            background: var(--text-muted);
         }
 
         .chat-list {
@@ -73,7 +75,7 @@ export class AssistantView extends LitElement {
             height: 100%;
             padding: var(--space-md);
             text-align: center;
-            color: #8a8a8a;
+            color: var(--text-muted);
             font-size: var(--font-size-sm);
         }
 
@@ -95,19 +97,41 @@ export class AssistantView extends LitElement {
             max-width: 78%;
             padding: 8px 12px;
             border-radius: 10px;
-            color: #1a1a1a;
+            color: var(--text-primary);
             word-break: break-word;
             overflow-wrap: anywhere;
         }
 
+        /* The two speakers are told apart by outline, not just by a lightness step: in light themes
+           --bg-surface and --bg-elevated are ~12 units apart, which is nearly invisible. The answer
+           gets the theme accent as a soft ring; --border-strong is opaque, hence the color-mix.
+           Inset shadow rather than border: there is no box-sizing reset inside this shadow root, so
+           a real border would grow every bubble by 2px. */
         .message-row.interviewer .message-body {
-            background: #ffffff;
+            background: var(--bg-surface);
+            box-shadow: inset 0 0 0 1px var(--border);
             border-top-left-radius: 2px;
         }
 
         .message-row.assistant .message-body {
-            background: #d3e7ff;
+            background: var(--bg-elevated);
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 55%, transparent);
             border-top-right-radius: 2px;
+        }
+
+        /* The candidate's own speech sits on the answers' side, told apart by a dashed outline and no
+           fill, so the eye still lands on the answer. Only a real border can be dashed, and there is
+           no box-sizing reset inside this shadow root, hence the explicit border-box. */
+        .message-row.user {
+            justify-content: flex-end;
+        }
+
+        .message-row.user .message-body {
+            background: transparent;
+            border: 1px dashed var(--border-strong);
+            box-sizing: border-box;
+            border-top-right-radius: 2px;
+            color: var(--text-secondary);
         }
 
         /* Several answers can stream at once, so each shows its own caret until it settles.
@@ -122,7 +146,8 @@ export class AssistantView extends LitElement {
             50% { opacity: 0; }
         }
 
-        /* ── Markdown (tuned for a light bubble: every colour is inherited or explicit) ── */
+        /* ── Markdown (all colours resolve from theme tokens, so every theme and both alpha
+           sliders apply here without extra rules) ── */
 
         .message-body > :first-child {
             margin-top: 0;
@@ -169,13 +194,13 @@ export class AssistantView extends LitElement {
         .message-body blockquote {
             margin: 0.8em 0;
             padding: 0.5em 1em;
-            border-left: 2px solid #b9b9b9;
-            background: rgba(0, 0, 0, 0.04);
+            border-left: 2px solid var(--border-strong);
+            background: var(--bg-hover);
             border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
         }
 
         .message-body code {
-            background: #e6e6e6;
+            background: var(--bg-hover);
             padding: 0.15em 0.4em;
             border-radius: var(--radius-sm);
             font-family: var(--font-mono);
@@ -183,8 +208,8 @@ export class AssistantView extends LitElement {
         }
 
         .message-body pre {
-            background: #f6f6f6;
-            border: 1px solid #dcdcdc;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
             border-radius: var(--radius-md);
             padding: var(--space-md);
             overflow-x: auto;
@@ -197,7 +222,7 @@ export class AssistantView extends LitElement {
         }
 
         .message-body a {
-            color: #1a56db;
+            color: var(--link-color);
             text-decoration: underline;
             text-underline-offset: 2px;
         }
@@ -209,7 +234,7 @@ export class AssistantView extends LitElement {
 
         .message-body hr {
             border: none;
-            border-top: 1px solid #d0d0d0;
+            border-top: 1px solid var(--border);
             margin: 1.5em 0;
         }
 
@@ -221,13 +246,13 @@ export class AssistantView extends LitElement {
 
         .message-body th,
         .message-body td {
-            border: 1px solid #d0d0d0;
+            border: 1px solid var(--border);
             padding: var(--space-sm);
             text-align: left;
         }
 
         .message-body th {
-            background: rgba(0, 0, 0, 0.04);
+            background: var(--bg-hover);
             font-weight: var(--font-weight-semibold);
         }
 
@@ -242,12 +267,12 @@ export class AssistantView extends LitElement {
             gap: 4px;
             padding: 4px 10px;
             border-radius: 100px;
-            border: 1px solid #d0d0d0;
-            background: #ffffff;
-            color: #1a1a1a;
+            border: 1px solid var(--border);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
             font-size: var(--font-size-xs);
             cursor: pointer;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
         }
 
         .jump-latest[hidden] {
@@ -266,7 +291,7 @@ export class AssistantView extends LitElement {
             align-items: center;
             gap: var(--space-sm);
             padding: var(--space-md);
-            background: var(--bg-app);
+            background: transparent;
         }
 
         .input-bar-inner {
@@ -677,6 +702,15 @@ export class AssistantView extends LitElement {
         if (message.role === 'interviewer') {
             return html`
                 <div class="message-row interviewer">
+                    <div class="message-body plain">${message.text || '…'}</div>
+                </div>
+            `;
+        }
+
+        // Plain text like the interviewer's rows: markdown rendering is only wired for the answers.
+        if (message.role === 'user') {
+            return html`
+                <div class="message-row user">
                     <div class="message-body plain">${message.text || '…'}</div>
                 </div>
             `;

@@ -127,6 +127,7 @@ export class HelpView extends LitElement {
             nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
             scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
             scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
+            quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
         };
     }
 
@@ -149,6 +150,7 @@ export class HelpView extends LitElement {
             ['Ask Next Step', this.keybinds.nextStep],
             ['Scroll Response Up', this.keybinds.scrollUp],
             ['Scroll Response Down', this.keybinds.scrollDown],
+            ['Quit', this.keybinds.quit],
         ];
 
         return html`

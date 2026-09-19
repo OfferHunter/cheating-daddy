@@ -9,17 +9,36 @@ let currentSystemPrompt = null;
 let isLocalActive = false;
 let transcriptionLanguage = null;
 
-let asrClient = null;
-// Only one capture feeds a session. Without headphones the same voice arrives over both the
-// loopback and the microphone, which would transcribe every question twice.
-let activeSource = 'system';
+// Two captures, each with its own recognizer: the speaker path transcribes the interviewer and owns
+// the turns that get answered, the microphone path transcribes the candidate, whose words are only
+// ever context. Same streaming algorithm on both, one socket each.
+const INTERVIEWER = 'system';
+const CANDIDATE = 'mic';
 
 // Text for the turn currently being assembled from streaming sentences. The server rewrites an
 // in-flight sentence as it hears more, so the uncommitted tail is held separately and only folded
 // in when it is committed or rescued by the idle flush.
-let turnText = '';
-let interimText = '';
-let streamSilenceMs = 0;
+//
+// Per stream, not shared: two voices writing one buffer would splice into a single turn. The
+// resampler's leftover half-sample belongs to exactly one stream for the same reason.
+function createStreamState() {
+    return { asr: null, turnText: '', interimText: '', silenceMs: 0, resampleRemainder: Buffer.alloc(0) };
+}
+
+const streams = {
+    [INTERVIEWER]: createStreamState(),
+    [CANDIDATE]: createStreamState(),
+};
+
+function speakerFor(source) {
+    return source === CANDIDATE ? 'user' : 'interviewer';
+}
+
+// What the candidate has said, replayed on the system prompt. The candidate's speech never becomes
+// a request of its own, so this is the only way it reaches the model. Bounded because the prompt is
+// rebuilt from scratch on every request and only the recent turns matter.
+const CANDIDATE_CONTEXT_LIMIT = 6;
+let candidateSpeech = [];
 
 // Every turn is dispatched the moment its question is recognized, even if earlier answers are
 // still streaming: waiting for the previous answer would make the new one arrive too late to be
@@ -47,10 +66,8 @@ const AUDIO_CHUNK_MS = 100; // must match AUDIO_CHUNK_DURATION in renderer.js
 const IDLE_FLUSH_MARGIN_MS = 1000;
 let streamIdleFlushMs = 3000;
 
-let resampleRemainder = Buffer.alloc(0);
-
-function resample24kTo16k(inputBuffer) {
-    const combined = Buffer.concat([resampleRemainder, inputBuffer]);
+function resample24kTo16k(inputBuffer, state) {
+    const combined = Buffer.concat([state.resampleRemainder, inputBuffer]);
     const inputSamples = Math.floor(combined.length / 2);
     const outputSamples = Math.floor((inputSamples * 2) / 3);
     const outputBuffer = Buffer.alloc(outputSamples * 2);
@@ -67,7 +84,7 @@ function resample24kTo16k(inputBuffer) {
 
     const consumedInputSamples = Math.ceil((outputSamples * 3) / 2);
     const remainderStart = consumedInputSamples * 2;
-    resampleRemainder = remainderStart < combined.length ? combined.slice(remainderStart) : Buffer.alloc(0);
+    state.resampleRemainder = remainderStart < combined.length ? combined.slice(remainderStart) : Buffer.alloc(0);
 
     return outputBuffer;
 }
@@ -85,50 +102,76 @@ function toAsrLanguage(locale) {
 // ── Streaming turn assembly ──
 
 // The committed sentences plus whatever tail the server has not confirmed yet.
-function mergeTurnText() {
-    if (turnText && interimText) return `${turnText} ${interimText}`;
-    return turnText || interimText;
+function mergeTurnText(state) {
+    if (state.turnText && state.interimText) return `${state.turnText} ${state.interimText}`;
+    return state.turnText || state.interimText;
 }
 
-function handleAsrSentence(text, sentenceEnd) {
+function handleAsrSentence(text, sentenceEnd, source) {
     if (!isLocalActive || !text) return;
 
     const sentence = text.trim();
     if (!sentence) return;
 
+    const state = streams[source];
+
     // Any event means the server is still hearing speech, so the idle flush must not fire. Interims
     // keep arriving while a long question is spoken, which is what stops it being split in two.
-    streamSilenceMs = 0;
+    state.silenceMs = 0;
 
     if (!sentenceEnd) {
         // Provisional: it replaces the previous interim rather than appending to it.
-        interimText = sentence;
-        sendToRenderer('transcription-update', { text: mergeTurnText() });
+        state.interimText = sentence;
+        sendToRenderer('transcription-update', { text: mergeTurnText(state), speaker: speakerFor(source) });
         return;
     }
 
-    turnText = turnText ? `${turnText} ${sentence}` : sentence;
-    interimText = '';
-    console.log('[Pipeline] ASR sentence:', sentence);
-    logTransportEvent('asr.sentence_final', { text: sentence });
-    sendToRenderer('transcription-update', { text: turnText });
+    state.turnText = state.turnText ? `${state.turnText} ${sentence}` : sentence;
+    state.interimText = '';
+    console.log(`[Pipeline] ASR sentence (${source}):`, sentence);
+    logTransportEvent('asr.sentence_final', { text: sentence, source });
+    sendToRenderer('transcription-update', { text: state.turnText, speaker: speakerFor(source) });
 
-    flushTurn();
+    flushTurn(source);
 }
 
-function flushTurn() {
+function flushTurn(source) {
+    const state = streams[source];
+
     // An uncommitted tail is still better than losing the utterance entirely.
-    const text = mergeTurnText().trim();
-    turnText = '';
-    interimText = '';
-    streamSilenceMs = 0;
+    const text = mergeTurnText(state).trim();
+    state.turnText = '';
+    state.interimText = '';
+    state.silenceMs = 0;
 
     if (!isLocalActive || text.length < 2) return;
 
+    if (source === CANDIDATE) {
+        // The bubble is settled like any other, but nothing is dispatched: what the candidate says
+        // is context for the next answer, not a question to answer.
+        console.log('[Pipeline] Candidate speech:', text);
+        sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
+        candidateSpeech.push(text);
+        if (candidateSpeech.length > CANDIDATE_CONTEXT_LIMIT) {
+            candidateSpeech = candidateSpeech.slice(-CANDIDATE_CONTEXT_LIMIT);
+        }
+        return;
+    }
+
     console.log('[Pipeline] Turn dispatched:', text);
     // The question bubble is settled first, then the answer streams into its own.
-    sendToRenderer('transcription-final', { text });
+    sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
     dispatchTurn(text);
+}
+
+// The candidate's speech rides on the system prompt rather than the turn log: as its own messages it
+// would read as questions aimed at the model, and it would evict real turns from the context window.
+function buildSystemContent() {
+    const base = currentSystemPrompt || '你是一名乐于助人的助手。';
+    if (!candidateSpeech.length) return base;
+
+    const said = candidateSpeech.map(text => `- ${text}`).join('\n');
+    return `${base}\n\n【我在本次对话中已经说过的话，只是背景参考，不是新的提问，不要当成问题回答，也不要重复我已有的说法】\n${said}`;
 }
 
 // Settled turns are kept only as prompt context, so the tail can be dropped once it is longer than
@@ -163,7 +206,7 @@ function createTurn(requestContent, contextText, persistKind) {
 
 function buildChatMessages(currentEntry) {
     const history = turnLog.filter(entry => entry !== currentEntry).slice(-CHAT_CONTEXT_TURNS);
-    const messages = [{ role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' }];
+    const messages = [{ role: 'system', content: buildSystemContent() }];
 
     for (const entry of history) {
         messages.push({ role: 'user', content: entry.contextText || entry.requestContent });
@@ -281,19 +324,25 @@ function dispatchTurn(text) {
 // A safety flush only: the server's VAD owns turn boundaries. Audio arriving proves nothing on its
 // own — only a sentence event does, and those reset the countdown in handleAsrSentence. If the
 // socket goes quiet with text pending, the final sentence it was waiting for is never coming.
-function tickStreamWatchdog() {
-    streamSilenceMs += AUDIO_CHUNK_MS;
+function tickStreamWatchdog(source) {
+    const state = streams[source];
+    state.silenceMs += AUDIO_CHUNK_MS;
 
-    if ((turnText || interimText) && streamSilenceMs >= streamIdleFlushMs) {
-        flushTurn();
+    if ((state.turnText || state.interimText) && state.silenceMs >= streamIdleFlushMs) {
+        flushTurn(source);
     }
 }
 
-function startAsrClient() {
-    asrClient = createRealtimeAsr({
+// The interviewer's recognizer owns the shared status line, since it is the one the session depends
+// on. The candidate's runs alongside it and fails quietly: losing it costs context, not answers.
+function startAsrClient(source) {
+    const isInterviewer = source === INTERVIEWER;
+
+    const client = createRealtimeAsr({
         language: toAsrLanguage(transcriptionLanguage),
-        onSentence: handleAsrSentence,
+        onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
         onState: state => {
+            if (!isInterviewer) return;
             if (state === 'connecting') {
                 sendToRenderer('update-status', 'Connecting...');
             } else if (state === 'ready') {
@@ -303,28 +352,45 @@ function startAsrClient() {
             }
         },
         onError: error => {
-            // The reconnect backoff inside the ASR client is exhausted, so this session has no
+            // The reconnect backoff inside the ASR client is exhausted, so this stream has no
             // recognizer left. The session stays up and the error is surfaced; audio is dropped
-            // rather than sent into a dead socket.
-            console.error('[Pipeline] Streaming ASR failed:', error.message);
-            if (asrClient) {
-                asrClient.close();
-                asrClient = null;
-            }
+            // rather than sent into a dead socket. The socket is already gone at this point.
+            console.error(`[Pipeline] Streaming ASR failed (${source}):`, error.message);
+            streams[source].asr = null;
+
+            if (!isInterviewer) return;
             sendToRenderer('update-status', 'Transcription error: ' + error.message);
             sendToRenderer('reconnect-failed', { message: 'Transcription stopped: ' + error.message });
         },
     });
 
-    asrClient.start();
+    streams[source].asr = client;
+    client.start();
+}
+
+function startAsrClients() {
+    startAsrClient(INTERVIEWER);
+
+    // 'none' is the user's explicit "don't use a microphone" choice from Settings, and it is the only
+    // thing that turns the candidate stream off: the two captures are no longer alternatives, so the
+    // speaker stream keeps running whatever the microphone dropdown says.
+    const { audioInputDeviceId } = getPreferences();
+    if (audioInputDeviceId && audioInputDeviceId !== 'none') {
+        startAsrClient(CANDIDATE);
+    }
 }
 
 function resetAudioState() {
-    resampleRemainder = Buffer.alloc(0);
+    for (const source of [INTERVIEWER, CANDIDATE]) {
+        const state = streams[source];
+        state.asr = null;
+        state.turnText = '';
+        state.interimText = '';
+        state.silenceMs = 0;
+        state.resampleRemainder = Buffer.alloc(0);
+    }
+    candidateSpeech = [];
     transcriptionLanguage = null;
-    turnText = '';
-    interimText = '';
-    streamSilenceMs = 0;
     turnLog = [];
     turnSeq = 0;
     sessionGeneration += 1;
@@ -338,9 +404,6 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
 
     transcriptionLanguage = selectedLanguage;
 
-    const prefs = getPreferences();
-    // In 'both' mode the loopback copy is the clean one; the mic only carries an echo of it.
-    activeSource = prefs.audioMode === 'mic_only' ? 'mic' : 'system';
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
     streamIdleFlushMs = maxSentenceSilenceMs + IDLE_FLUSH_MARGIN_MS;
     console.log('[Pipeline] Initializing chat session:', { profile, selectedLanguage, maxSentenceSilenceMs, streamIdleFlushMs });
@@ -350,7 +413,7 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
 
     // The ASR client's own state owns the status bar from here: Connecting... then Listening....
     sendToRenderer('session-initializing', false);
-    startAsrClient();
+    startAsrClients();
 
     console.log('[Pipeline] Session initialized');
     return true;
@@ -358,25 +421,26 @@ function initializeChatSession(profile, customPrompt, selectedLanguage) {
 
 function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
-    if (source !== activeSource) return;
 
-    const pcm16k = resample24kTo16k(monoChunk24k);
+    // The client is a pipe: audio goes straight to the recognizer. A stream with no client — the
+    // candidate stream when no microphone is configured, or any stream whose recognizer gave up —
+    // is dropped here, before the resampler, so its half-sample state stays untouched.
+    const state = streams[source];
+    if (!state || !state.asr) return;
+
+    const pcm16k = resample24kTo16k(monoChunk24k, state);
     if (pcm16k.length === 0) return;
 
-    // The client is a pipe: audio goes straight to the recognizer. If it is gone, the audio has
-    // nowhere to go, but the session stays up so the user can see why.
-    if (!asrClient) return;
-
-    asrClient.sendAudio(pcm16k);
-    tickStreamWatchdog();
+    state.asr.sendAudio(pcm16k);
+    tickStreamWatchdog(source);
 }
 
 function closeLocalSession() {
     isLocalActive = false;
 
-    if (asrClient) {
-        asrClient.close();
-        asrClient = null;
+    for (const source of [INTERVIEWER, CANDIDATE]) {
+        const client = streams[source].asr;
+        if (client) client.close();
     }
 
     resetAudioState();

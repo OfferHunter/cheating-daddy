@@ -5,6 +5,11 @@
         <title>Screen and Audio Capture</title>
         <style>
             :root {
+                /* Opacity knobs. renderer.js owns these at runtime; the fallbacks here keep every
+                   rgba(..., var(--x-alpha)) declaration valid before the theme has loaded. */
+                --ui-alpha: 0.8;
+                --text-alpha: 1;
+
                 /* Backgrounds */
                 --bg-app: #0a0a0a;
                 --bg-surface: #111111;

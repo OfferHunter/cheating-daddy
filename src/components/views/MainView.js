@@ -159,7 +159,7 @@ export class MainView extends LitElement {
 
         .form-hint a,
         .form-hint span.link {
-            color: var(--accent);
+            color: var(--link-color);
             text-decoration: none;
             cursor: pointer;
         }
@@ -445,7 +445,7 @@ export class MainView extends LitElement {
                             class=${hasError}
                         />
                         <div class="form-hint">
-                            <span class="link" @click=${() => this.onExternalLink('https://platform.deepseek.com/api_keys')}>Get DeepSeek key</span>
+                            <span class="link" @click=${() => this.onExternalLink('https://platform.deepseek.com/api_keys')}>Get API Key</span>
                         </div>
                     </div>
 
@@ -490,7 +490,7 @@ export class MainView extends LitElement {
                             class=${hasError}
                         />
                         <div class="form-hint">
-                            <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get Bailian key</span>
+                            <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get API Key</span>
                             <span> (Beijing region)</span>
                         </div>
                     </div>

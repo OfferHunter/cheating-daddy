@@ -27,9 +27,14 @@ const DEFAULT_PREFERENCES = {
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
     selectedImageQuality: 'medium',
-    audioMode: 'speaker_only',
+    // 'none' captures no microphone at all; any other value is a deviceId from enumerateDevices()
+    // ('default' and 'communications' are Chromium's own pseudo-devices for the system defaults).
+    audioInputDeviceId: 'none',
     fontSize: 'medium',
+    // Legacy key name: this is the component/panel alpha shown as "Component Transparency" in
+    // Settings. Renaming it would silently reset the value of every existing preferences.json.
     backgroundTransparency: 0.8,
+    textTransparency: 1,
     // How much silence ends a sentence on the ASR server. It is added to every turn's latency, so
     // it trades directly against the server splitting one question into fragments.
     maxSentenceSilenceMs: 1500,

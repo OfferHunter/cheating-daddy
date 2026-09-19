@@ -102,6 +102,8 @@ function getDefaultKeybinds() {
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
+        toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
+        quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
     };
 }
 
@@ -255,6 +257,40 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
             console.log(`Registered emergencyErase: ${keybinds.emergencyErase}`);
         } catch (error) {
             console.error(`Failed to register emergencyErase (${keybinds.emergencyErase}):`, error);
+        }
+    }
+
+    // Register light/dark theme toggle shortcut
+    if (keybinds.toggleTheme) {
+        try {
+            globalShortcut.register(keybinds.toggleTheme, async () => {
+                console.log('Toggle theme shortcut triggered');
+                try {
+                    await mainWindow.webContents.executeJavaScript(`
+                        cheatingDaddy.theme.togglePolarity();
+                    `);
+                } catch (error) {
+                    console.error('Error toggling theme:', error);
+                }
+            });
+            console.log(`Registered toggleTheme: ${keybinds.toggleTheme}`);
+        } catch (error) {
+            console.error(`Failed to register toggleTheme (${keybinds.toggleTheme}):`, error);
+        }
+    }
+
+    // Register quit shortcut. Unlike emergencyErase this keeps the data: it is a plain exit.
+    if (keybinds.quit) {
+        try {
+            globalShortcut.register(keybinds.quit, () => {
+                console.log('Quit shortcut triggered');
+                // before-quit in index.js stops the audio capture and closes the session.
+                const { app } = require('electron');
+                app.quit();
+            });
+            console.log(`Registered quit: ${keybinds.quit}`);
+        } catch (error) {
+            console.error(`Failed to register quit (${keybinds.quit}):`, error);
         }
     }
 }

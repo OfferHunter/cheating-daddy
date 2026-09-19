@@ -154,13 +154,33 @@ ipcRenderer.on('update-status', (event, status) => {
     cheatingDaddy.setStatus(status);
 });
 
+// 'none' is the user's explicit "don't use a microphone" choice from Settings, so it never reaches
+// here. A concrete deviceId is passed as 'ideal' rather than 'exact': if that device has since been
+// unplugged we fall back to the system default instead of failing the capture outright.
+function buildMicConstraints(micDeviceId) {
+    const audio = {
+        sampleRate: SAMPLE_RATE,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+    };
+    if (micDeviceId && micDeviceId !== 'none') {
+        audio.deviceId = { ideal: micDeviceId };
+    }
+    return { audio, video: false };
+}
+
 async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'medium') {
     // Store the image quality for manual screenshots
     currentImageQuality = imageQuality;
 
     // Refresh preferences cache
     await loadPreferencesCache();
-    const audioMode = preferencesCache.audioMode || 'speaker_only';
+    const micDeviceId = preferencesCache.audioInputDeviceId || 'none';
+    // The microphone is the candidate's own channel: it runs alongside the speaker path rather than
+    // replacing it, so the only thing that turns it off is an explicit "no microphone" choice.
+    const shouldCaptureMic = micDeviceId !== 'none';
 
     try {
         if (isMacOS) {
@@ -185,19 +205,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 
             console.log('macOS screen capture started - audio handled by SystemAudioDump');
 
-            if (audioMode === 'mic_only' || audioMode === 'both') {
+            if (shouldCaptureMic) {
                 let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            sampleRate: SAMPLE_RATE,
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        },
-                        video: false,
-                    });
+                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('macOS microphone capture started');
                     setupLinuxMicProcessing(micStream);
                 } catch (micError) {
@@ -242,19 +253,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             }
 
             // Additionally get microphone input for Linux based on audio mode
-            if (audioMode === 'mic_only' || audioMode === 'both') {
+            if (shouldCaptureMic) {
                 let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            sampleRate: SAMPLE_RATE,
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        },
-                        video: false,
-                    });
+                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
 
                     console.log('Linux microphone capture started');
 
@@ -266,7 +268,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                 }
             }
 
-            console.log('Linux capture started - system audio:', mediaStream.getAudioTracks().length > 0, 'microphone mode:', audioMode);
+            console.log('Linux capture started - system audio:', mediaStream.getAudioTracks().length > 0, 'microphone:', shouldCaptureMic);
         } else {
             // Windows - use display media with loopback for system audio
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -289,19 +291,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             // Setup audio processing for Windows loopback audio only
             setupWindowsLoopbackProcessing();
 
-            if (audioMode === 'mic_only' || audioMode === 'both') {
+            if (shouldCaptureMic) {
                 let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            sampleRate: SAMPLE_RATE,
-                            channelCount: 1,
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true,
-                        },
-                        video: false,
-                    });
+                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('Windows microphone capture started');
                     setupLinuxMicProcessing(micStream);
                 } catch (micError) {
@@ -665,6 +658,169 @@ function stopCapture() {
     offscreenContext = null;
 }
 
+// ── Settings level meters ──
+// The Settings page shows a live level next to each source, so it opens preview captures of its
+// own. They exist only to be measured: the audio is analysed and dropped, never sent over IPC, so
+// a preview can never reach the transcript. Both are torn down when the page is left.
+const METER_BARS = 4;
+// Everything below this reads as zero, so room tone does not keep a bar lit.
+const METER_FLOOR_DB = -55;
+// Level lost per read while falling. The page reads every ~80 ms, so a bar takes about 300 ms to
+// go out: short enough to follow speech, long enough for a syllable to be seen.
+const METER_RELEASE = 0.12;
+
+let meterAudioContext = null;
+let metersRunning = false;
+// Bumped whenever a capture is stopped, so a capture that resolves afterwards is thrown away
+// instead of being left running with nobody reading it.
+let metersGeneration = 0;
+
+const meterSources = {
+    system: { stream: null, analyser: null, samples: null, nodes: [], display: 0 },
+    mic: { stream: null, analyser: null, samples: null, nodes: [], display: 0 },
+};
+
+function meterContext() {
+    if (!meterAudioContext || meterAudioContext.state === 'closed') {
+        meterAudioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    }
+    meterAudioContext.resume();
+    return meterAudioContext;
+}
+
+function attachMeter(kind, stream) {
+    const context = meterContext();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+
+    // An analyser is only pulled while it leads somewhere, and the meter has to stay silent, so
+    // the signal is routed into a zero gain before the destination.
+    const mute = context.createGain();
+    mute.gain.value = 0;
+    analyser.connect(mute);
+    mute.connect(context.destination);
+
+    const slot = meterSources[kind];
+    slot.stream = stream;
+    slot.analyser = analyser;
+    slot.samples = new Float32Array(analyser.fftSize);
+    slot.nodes = [source, analyser, mute];
+    slot.display = 0;
+}
+
+function releaseMeter(kind) {
+    const slot = meterSources[kind];
+    if (slot.stream) slot.stream.getTracks().forEach(track => track.stop());
+    slot.nodes.forEach(node => node.disconnect());
+    slot.stream = null;
+    slot.analyser = null;
+    slot.samples = null;
+    slot.nodes = [];
+    slot.display = 0;
+}
+
+// RMS in dB, mapped so full scale is 1 and the floor is 0. Loudness is perceived logarithmically,
+// so a linear mapping would leave the bars near the bottom through the whole useful range.
+function meterLevel(slot) {
+    if (!slot.analyser) return 0;
+
+    slot.analyser.getFloatTimeDomainData(slot.samples);
+
+    let sum = 0;
+    for (let i = 0; i < slot.samples.length; i++) sum += slot.samples[i] * slot.samples[i];
+    const db = 20 * Math.log10(Math.sqrt(sum / slot.samples.length) + 1e-8);
+
+    return Math.min(1, Math.max(0, (db - METER_FLOOR_DB) / -METER_FLOOR_DB));
+}
+
+function readMeterLevels() {
+    const levels = {};
+
+    for (const kind of ['system', 'mic']) {
+        const slot = meterSources[kind];
+        const level = meterLevel(slot);
+        // Instant attack, slow release.
+        slot.display = level > slot.display ? level : Math.max(level, slot.display - METER_RELEASE);
+        levels[kind] = slot.analyser ? Math.ceil(slot.display * METER_BARS) : 0;
+    }
+
+    return levels;
+}
+
+async function startMicMeter(deviceId, generation) {
+    releaseMeter('mic');
+    if (!deviceId || deviceId === 'none') return false;
+
+    let stream;
+    try {
+        stream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(deviceId));
+    } catch (error) {
+        console.warn('Microphone level meter unavailable:', error.message);
+        return false;
+    }
+
+    if (generation !== metersGeneration) {
+        stream.getTracks().forEach(track => track.stop());
+        return false;
+    }
+
+    attachMeter('mic', stream);
+    return true;
+}
+
+async function startSystemMeter(generation) {
+    releaseMeter('system');
+
+    let stream;
+    try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: 1, width: { ideal: 320 }, height: { ideal: 180 } },
+            audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        });
+    } catch (error) {
+        console.warn('Speaker level meter unavailable:', error.message);
+        return false;
+    }
+
+    if (generation !== metersGeneration) {
+        stream.getTracks().forEach(track => track.stop());
+        return false;
+    }
+
+    // The main process answers every request with a whole desktop stream; only the loopback audio
+    // is wanted here, so the screen track is dropped straight away.
+    stream.getVideoTracks().forEach(track => track.stop());
+    attachMeter('system', stream);
+    return true;
+}
+
+async function startAudioMeters(micDeviceId) {
+    metersRunning = true;
+    const generation = ++metersGeneration;
+    return Promise.all([startSystemMeter(generation), startMicMeter(micDeviceId, generation)]);
+}
+
+async function restartMicMeter(micDeviceId) {
+    if (!metersRunning) return false;
+    return startMicMeter(micDeviceId, metersGeneration);
+}
+
+function stopAudioMeters() {
+    metersRunning = false;
+    metersGeneration += 1;
+    releaseMeter('system');
+    releaseMeter('mic');
+}
+
+const audioMeter = {
+    start: startAudioMeters,
+    setMic: restartMicMeter,
+    stop: stopAudioMeters,
+    read: readMeterLevels,
+};
+
 // Send text message to the chat endpoint
 async function sendTextMessage(text) {
     if (!text || text.trim().length === 0) {
@@ -912,6 +1068,14 @@ const theme = {
             : { r: 30, g: 30, b: 30 };
     },
 
+    // Same luminance test applyBackgrounds uses, so a theme counts as "light" for the toggle exactly
+    // when it is light enough to have its surfaces darkened. Computed rather than a hardcoded list of
+    // theme names, so themes added later are classified without touching this.
+    isLightTheme(name) {
+        const { r, g, b } = this.hexToRgb(this.get(name).background);
+        return (r + g + b) / 3 > 128;
+    },
+
     lightenColor(rgb, amount) {
         return {
             r: Math.min(255, rgb.r + amount),
@@ -928,7 +1092,9 @@ const theme = {
         };
     },
 
-    applyBackgrounds(backgroundColor, alpha = 0.8) {
+    // Every surface token carries the alpha as a var() instead of a baked number, so dragging the
+    // opacity slider only has to rewrite --ui-alpha and the whole app re-resolves in one frame.
+    applyBackgrounds(backgroundColor) {
         const root = document.documentElement;
         const baseRgb = this.hexToRgb(backgroundColor);
 
@@ -940,10 +1106,10 @@ const theme = {
         const tertiary = adjust(baseRgb, 22);
         const hover = adjust(baseRgb, 28);
 
-        const bgBase = `rgba(${baseRgb.r}, ${baseRgb.g}, ${baseRgb.b}, ${alpha})`;
-        const bgSurface = `rgba(${secondary.r}, ${secondary.g}, ${secondary.b}, ${alpha})`;
-        const bgElevated = `rgba(${tertiary.r}, ${tertiary.g}, ${tertiary.b}, ${alpha})`;
-        const bgHover = `rgba(${hover.r}, ${hover.g}, ${hover.b}, ${alpha})`;
+        const bgBase = `rgba(${baseRgb.r}, ${baseRgb.g}, ${baseRgb.b}, var(--ui-alpha))`;
+        const bgSurface = `rgba(${secondary.r}, ${secondary.g}, ${secondary.b}, var(--ui-alpha))`;
+        const bgElevated = `rgba(${tertiary.r}, ${tertiary.g}, ${tertiary.b}, var(--ui-alpha))`;
+        const bgHover = `rgba(${hover.r}, ${hover.g}, ${hover.b}, var(--ui-alpha))`;
 
         // New design tokens (used by components)
         root.style.setProperty('--bg-app', bgBase);
@@ -963,27 +1129,57 @@ const theme = {
         root.style.setProperty('--scrollbar-background', bgBase);
     },
 
-    apply(themeName, alpha = 0.8) {
+    // The only two numbers that change at runtime. Tokens reference them, so a slider drag is a pair
+    // of setProperty calls rather than a rebuild of every colour string.
+    setAlphas(uiAlpha, textAlpha) {
+        const root = document.documentElement;
+        if (uiAlpha !== undefined) {
+            this.uiAlpha = uiAlpha;
+            root.style.setProperty('--ui-alpha', String(uiAlpha));
+        }
+        if (textAlpha !== undefined) {
+            this.textAlpha = textAlpha;
+            root.style.setProperty('--text-alpha', String(textAlpha));
+        }
+    },
+
+    apply(themeName, uiAlpha = 0.8, textAlpha = 1) {
         const colors = this.get(themeName);
         this.current = themeName;
         const root = document.documentElement;
 
+        this.setAlphas(uiAlpha, textAlpha);
+
+        const rgba = (hex, alphaVar) => {
+            const rgb = this.hexToRgb(hex);
+            return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alphaVar})`;
+        };
+
+        // Text follows the font alpha; borders follow the component alpha. --border-strong is left
+        // opaque on purpose: it is the accent colour and doubles as a focus/highlight outline.
+        const textPrimary = rgba(colors.text, 'var(--text-alpha)');
+        const textSecondary = rgba(colors.textSecondary, 'var(--text-alpha)');
+        const textMuted = rgba(colors.textMuted, 'var(--text-alpha)');
+        const border = rgba(colors.border, 'var(--ui-alpha)');
+
         // New design tokens (used by components)
-        root.style.setProperty('--text-primary', colors.text);
-        root.style.setProperty('--text-secondary', colors.textSecondary);
-        root.style.setProperty('--text-muted', colors.textMuted);
-        root.style.setProperty('--border', colors.border);
+        root.style.setProperty('--text-primary', textPrimary);
+        root.style.setProperty('--text-secondary', textSecondary);
+        root.style.setProperty('--text-muted', textMuted);
+        root.style.setProperty('--border', border);
         root.style.setProperty('--border-strong', colors.accent);
         root.style.setProperty('--accent', colors.btnPrimaryBg);
         root.style.setProperty('--accent-hover', colors.btnPrimaryHover);
+        // Links are text, so unlike --accent they have to follow the font alpha.
+        root.style.setProperty('--link-color', rgba(colors.btnPrimaryBg, 'var(--text-alpha)'));
 
         // Legacy aliases
-        root.style.setProperty('--text-color', colors.text);
-        root.style.setProperty('--border-color', colors.border);
+        root.style.setProperty('--text-color', textPrimary);
+        root.style.setProperty('--border-color', border);
         root.style.setProperty('--border-default', colors.accent);
-        root.style.setProperty('--placeholder-color', colors.textMuted);
-        root.style.setProperty('--scrollbar-thumb', colors.border);
-        root.style.setProperty('--scrollbar-thumb-hover', colors.textMuted);
+        root.style.setProperty('--placeholder-color', textMuted);
+        root.style.setProperty('--scrollbar-thumb', border);
+        root.style.setProperty('--scrollbar-thumb-hover', textMuted);
         root.style.setProperty('--key-background', colors.keyBg);
         // Primary button
         root.style.setProperty('--btn-primary-bg', colors.btnPrimaryBg);
@@ -1001,7 +1197,7 @@ const theme = {
         root.style.setProperty('--success-color', '#4caf50');
 
         // Also apply background colors from theme
-        this.applyBackgrounds(colors.background, alpha);
+        this.applyBackgrounds(colors.background);
     },
 
     async load() {
@@ -1009,7 +1205,8 @@ const theme = {
             const prefs = await storage.getPreferences();
             const themeName = prefs.theme || 'dark';
             const alpha = prefs.backgroundTransparency ?? 0.8;
-            this.apply(themeName, alpha);
+            const textAlpha = prefs.textTransparency ?? 1;
+            this.apply(themeName, alpha, textAlpha);
             return themeName;
         } catch (err) {
             this.apply('dark');
@@ -1017,9 +1214,27 @@ const theme = {
         }
     },
 
-    async save(themeName) {
+    // Both alphas are passed in: applying a theme must not silently reset the user's opacity.
+    async save(themeName, uiAlpha, textAlpha) {
         await storage.updatePreference('theme', themeName);
-        this.apply(themeName);
+        this.apply(themeName, uiAlpha, textAlpha);
+    },
+
+    // Flips to the other half of the palette so the overlay stays readable whatever is behind it.
+    // The last theme of each polarity is remembered in memory, so toggling back returns to the
+    // user's real theme instead of a fixed default.
+    async togglePolarity() {
+        const current = this.current;
+        const isLight = this.isLightTheme(current);
+
+        if (isLight) {
+            this.lastLightTheme = current;
+        } else {
+            this.lastDarkTheme = current;
+        }
+
+        const target = isLight ? this.lastDarkTheme || 'dark' : this.lastLightTheme || 'light';
+        await this.save(target, this.uiAlpha, this.textAlpha);
     },
 };
 
@@ -1053,6 +1268,9 @@ const cheatingDaddy = {
 
     // Theme API
     theme,
+
+    // Settings level meters
+    audioMeter,
 
     // Refresh preferences cache (call after updating preferences)
     refreshPreferencesCache: loadPreferencesCache,

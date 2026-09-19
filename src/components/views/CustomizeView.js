@@ -1,37 +1,16 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
 
+// Fast enough to follow speech, slow enough that the page is not repainting constantly.
+const METER_POLL_MS = 80;
+const METER_BAR_COUNT = [0, 1, 2, 3];
+
 export class CustomizeView extends LitElement {
     static styles = [
         unifiedPageStyles,
         css`
             .danger-surface {
                 border-color: var(--danger);
-            }
-
-            .warning-callout {
-                position: relative;
-                margin-top: 4px;
-                padding: 8px 12px;
-                border: 1px solid var(--danger);
-                border-radius: var(--radius-sm);
-                color: var(--danger);
-                font-size: var(--font-size-xs);
-                line-height: 1.4;
-                background: rgba(239, 68, 68, 0.06);
-            }
-
-            .warning-callout::before {
-                content: '';
-                position: absolute;
-                top: -6px;
-                left: 16px;
-                width: 10px;
-                height: 10px;
-                background: var(--bg-surface);
-                border-top: 1px solid var(--danger);
-                border-left: 1px solid var(--danger);
-                transform: rotate(45deg);
             }
 
             .toggle-row {
@@ -123,6 +102,43 @@ export class CustomizeView extends LitElement {
                 border-bottom: none;
             }
 
+            /* Label plus its level meter, kept as one left-hand cluster so the meter sits next to
+               the text instead of being pushed against the control on the right. */
+            .audio-source {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            /* Four bars growing left to right, like a signal strength indicator. */
+            .meter {
+                display: flex;
+                align-items: flex-end;
+                gap: 2px;
+                height: 14px;
+            }
+
+            .meter-bar {
+                width: 3px;
+                border-radius: 1px;
+                background: var(--text-muted);
+                opacity: 0.25;
+                transition: opacity 120ms linear;
+            }
+
+            .meter-bar:nth-child(1) { height: 5px; }
+
+            .meter-bar:nth-child(2) { height: 8px; }
+
+            .meter-bar:nth-child(3) { height: 11px; }
+
+            .meter-bar:nth-child(4) { height: 14px; }
+
+            .meter-bar.on {
+                background: var(--text-primary);
+                opacity: 1;
+            }
+
             .keybind-name {
                 color: var(--text-secondary);
                 font-size: var(--font-size-sm);
@@ -182,6 +198,7 @@ export class CustomizeView extends LitElement {
         layoutMode: { type: String },
         keybinds: { type: Object },
         backgroundTransparency: { type: Number },
+        textTransparency: { type: Number },
         fontSize: { type: Number },
         theme: { type: String },
         onProfileChange: { type: Function },
@@ -193,6 +210,8 @@ export class CustomizeView extends LitElement {
         clearStatusMessage: { type: String },
         clearStatusType: { type: String },
         maxSentenceSilenceMs: { type: Number },
+        audioInputDeviceId: { type: String },
+        audioInputDevices: { state: true },
     };
 
     constructor() {
@@ -211,12 +230,58 @@ export class CustomizeView extends LitElement {
         this.clearStatusMessage = '';
         this.clearStatusType = '';
         this.backgroundTransparency = 0.8;
+        this.textTransparency = 1;
         this.fontSize = 20;
-        this.audioMode = 'speaker_only';
+        this.audioInputDeviceId = 'none';
+        this.audioInputDevices = [];
         this.customPrompt = '';
         this.theme = 'dark';
         this.maxSentenceSilenceMs = 1500;
         this._loadFromStorage();
+    }
+
+    // The meters only run while this page is on screen: the preview captures are opened here and
+    // closed on the way out, so nothing is recorded while the user is looking at something else.
+    connectedCallback() {
+        super.connectedCallback();
+        this._isConnected = true;
+        this._startAudioMeters();
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        this._isConnected = false;
+        clearInterval(this._meterTimer);
+        this._meterTimer = null;
+        if (cheatingDaddy.audioMeter) cheatingDaddy.audioMeter.stop();
+    }
+
+    async _startAudioMeters() {
+        if (!cheatingDaddy.audioMeter) return;
+
+        // Bars are painted straight into the DOM rather than through a reactive property: this
+        // would otherwise re-render the whole settings page several times a second.
+        clearInterval(this._meterTimer);
+        this._meterTimer = setInterval(() => this._paintAudioMeters(), METER_POLL_MS);
+
+        await cheatingDaddy.audioMeter.start(this.audioInputDeviceId);
+    }
+
+    // Called again after the device list loads, which is usually later than the page mount.
+    _refreshMicMeter() {
+        if (!this._isConnected || !cheatingDaddy.audioMeter) return;
+        cheatingDaddy.audioMeter.setMic(this.audioInputDeviceId);
+    }
+
+    _paintAudioMeters() {
+        if (!this.renderRoot) return;
+
+        const levels = cheatingDaddy.audioMeter.read();
+
+        for (const kind of ['system', 'mic']) {
+            const bars = this.renderRoot.querySelectorAll(`[data-meter="${kind}"] .meter-bar`);
+            bars.forEach((bar, index) => bar.classList.toggle('on', index < levels[kind]));
+        }
     }
 
     getThemes() {
@@ -227,16 +292,19 @@ export class CustomizeView extends LitElement {
         try {
             const [prefs, keybinds] = await Promise.all([cheatingDaddy.storage.getPreferences(), cheatingDaddy.storage.getKeybinds()]);
             this.backgroundTransparency = prefs.backgroundTransparency ?? 0.8;
+            this.textTransparency = prefs.textTransparency ?? 1;
             this.fontSize = prefs.fontSize ?? 20;
-            this.audioMode = prefs.audioMode ?? 'speaker_only';
+            this.audioInputDeviceId = prefs.audioInputDeviceId ?? 'none';
             this.customPrompt = prefs.customPrompt ?? '';
             this.theme = prefs.theme ?? 'dark';
             this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
-            this.updateBackgroundAppearance();
+            this.updateAppearance();
             this.updateFontSize();
+            this.loadAudioDevices();
+            this._refreshMicMeter();
             this.requestUpdate();
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -301,6 +369,8 @@ export class CustomizeView extends LitElement {
             nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
             scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
             scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
+            toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
+            quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
         };
     }
 
@@ -315,6 +385,12 @@ export class CustomizeView extends LitElement {
             { key: 'nextStep', name: 'Ask Next Step', description: 'Take screenshot and ask for next step' },
             { key: 'scrollUp', name: 'Scroll Response Up', description: 'Scroll response content upward' },
             { key: 'scrollDown', name: 'Scroll Response Down', description: 'Scroll response content downward' },
+            {
+                key: 'toggleTheme',
+                name: 'Toggle Light/Dark Theme',
+                description: 'Switch between the light and dark colour schemes',
+            },
+            { key: 'quit', name: 'Quit', description: 'Exit the app without clearing any data' },
         ];
     }
 
@@ -351,9 +427,30 @@ export class CustomizeView extends LitElement {
         await cheatingDaddy.storage.updatePreference('customPrompt', this.customPrompt);
     }
 
-    async handleAudioModeSelect(e) {
-        this.audioMode = e.target.value;
-        await cheatingDaddy.storage.updatePreference('audioMode', this.audioMode);
+    // Chromium already exposes the system defaults as entries with deviceId 'default' and
+    // 'communications', so they are kept as-is and only their labels are tidied up.
+    async loadAudioDevices() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            this.audioInputDevices = devices
+                .filter(d => d.kind === 'audioinput')
+                .map(d => ({
+                    deviceId: d.deviceId,
+                    label: d.deviceId === 'default' ? 'System default' : d.label || 'Microphone',
+                }));
+        } catch (error) {
+            console.error('Error enumerating audio devices:', error);
+            this.audioInputDevices = [];
+        }
+        this.requestUpdate();
+    }
+
+    async handleAudioInputDeviceChange(e) {
+        this.audioInputDeviceId = e.target.value;
+        // The dropdown only controls the candidate's own channel: "Don't use Microphone" leaves the
+        // speaker path alone, and any concrete device adds the microphone alongside it.
+        await cheatingDaddy.storage.updatePreference('audioInputDeviceId', this.audioInputDeviceId);
+        this._refreshMicMeter();
         this.requestUpdate();
     }
 
@@ -370,21 +467,28 @@ export class CustomizeView extends LitElement {
 
     async handleThemeChange(e) {
         this.theme = e.target.value;
-        await cheatingDaddy.theme.save(this.theme);
-        this.updateBackgroundAppearance();
+        await cheatingDaddy.theme.save(this.theme, this.backgroundTransparency, this.textTransparency);
         this.requestUpdate();
     }
 
+    // Dragging only rewrites the two alpha variables; every token references them, so the change
+    // lands in one frame without rebuilding colour strings.
     async handleBackgroundTransparencyChange(e) {
         this.backgroundTransparency = parseFloat(e.target.value);
         await cheatingDaddy.storage.updatePreference('backgroundTransparency', this.backgroundTransparency);
-        this.updateBackgroundAppearance();
+        cheatingDaddy.theme.setAlphas(this.backgroundTransparency, undefined);
         this.requestUpdate();
     }
 
-    updateBackgroundAppearance() {
-        const colors = cheatingDaddy.theme.get(this.theme);
-        cheatingDaddy.theme.applyBackgrounds(colors.background, this.backgroundTransparency);
+    async handleTextTransparencyChange(e) {
+        this.textTransparency = parseFloat(e.target.value);
+        await cheatingDaddy.storage.updatePreference('textTransparency', this.textTransparency);
+        cheatingDaddy.theme.setAlphas(undefined, this.textTransparency);
+        this.requestUpdate();
+    }
+
+    updateAppearance() {
+        cheatingDaddy.theme.apply(this.theme, this.backgroundTransparency, this.textTransparency);
     }
 
     async handleFontSizeChange(e) {
@@ -478,9 +582,10 @@ export class CustomizeView extends LitElement {
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
                 selectedImageQuality: 'medium',
-                audioMode: 'speaker_only',
+                audioInputDeviceId: 'none',
                 fontSize: 20,
                 backgroundTransparency: 0.8,
+                textTransparency: 1,
                 theme: 'dark',
                 maxSentenceSilenceMs: 1500,
             };
@@ -500,9 +605,10 @@ export class CustomizeView extends LitElement {
             this.selectedProfile = defaults.selectedProfile;
             this.selectedLanguage = defaults.selectedLanguage;
             this.selectedImageQuality = defaults.selectedImageQuality;
-            this.audioMode = defaults.audioMode;
+            this.audioInputDeviceId = defaults.audioInputDeviceId;
             this.fontSize = defaults.fontSize;
             this.backgroundTransparency = defaults.backgroundTransparency;
+            this.textTransparency = defaults.textTransparency;
             this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
             this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
@@ -513,9 +619,8 @@ export class CustomizeView extends LitElement {
             this.onImageQualityChange(defaults.selectedImageQuality);
 
             // Apply visual changes
-            this.updateBackgroundAppearance();
             this.updateFontSize();
-            await cheatingDaddy.theme.save(defaults.theme);
+            await cheatingDaddy.theme.save(defaults.theme, defaults.backgroundTransparency, defaults.textTransparency);
 
             this.clearStatusMessage = 'All settings restored to defaults';
             this.clearStatusType = 'success';
@@ -560,22 +665,39 @@ export class CustomizeView extends LitElement {
         }
     }
 
+    // Bars are lit by class, not by a binding, so the per-frame update can skip Lit entirely.
+    renderMeter(kind) {
+        return html`
+            <div class="meter" data-meter=${kind}>${METER_BAR_COUNT.map(() => html`<span class="meter-bar"></span>`)}</div>
+        `;
+    }
+
     renderAudioSection() {
         return html`
             <section class="surface">
                 <div class="surface-title">Audio Input</div>
                 <div class="form-grid">
                     <div class="form-group">
-                        <label class="form-label">Audio Mode</label>
-                        <select class="control" .value=${this.audioMode} @change=${this.handleAudioModeSelect}>
-                            <option value="speaker_only">Speaker Only (Interviewer)</option>
-                            <option value="mic_only">Microphone Only (Me)</option>
-                            <option value="both">Both Speaker and Microphone</option>
-                        </select>
+                        <div class="audio-source">
+                            <span class="form-label">Speaker (interviewer)</span>
+                            ${this.renderMeter('system')}
+                        </div>
                     </div>
-                    ${this.audioMode !== 'speaker_only' ? html`
-                        <div class="warning-callout">May cause unexpected behavior. Only change this if you know what you're doing.</div>
-                    ` : ''}
+                    <div class="form-group vertical">
+                        <div class="form-group">
+                            <div class="audio-source">
+                                <label class="form-label">Microphone (Me)</label>
+                                ${this.renderMeter('mic')}
+                            </div>
+                            <select class="control" .value=${this.audioInputDeviceId} @change=${this.handleAudioInputDeviceChange}>
+                                <option value="none">Don't use Microphone</option>
+                                ${this.audioInputDevices.map(
+                                    d => html`<option value=${d.deviceId}>${d.label}</option>`
+                                )}
+                            </select>
+                        </div>
+                        <div class="form-help">Speaker audio always follows the Windows default playback device. A microphone here adds your own voice as a second, right-hand column: it never triggers an answer on its own, it only tells the assistant what you have already said.</div>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">Image Quality</label>
                         <select class="control" .value=${this.selectedImageQuality} @change=${this.handleImageQualitySelect}>
@@ -631,7 +753,7 @@ export class CustomizeView extends LitElement {
                     </div>
                     <div class="form-group slider-wrap">
                         <div class="slider-header">
-                            <label class="form-label">Background Transparency</label>
+                            <label class="form-label">Component Transparency</label>
                             <span class="slider-value">${Math.round(this.backgroundTransparency * 100)}%</span>
                         </div>
                         <input
@@ -643,6 +765,23 @@ export class CustomizeView extends LitElement {
                             .value=${this.backgroundTransparency}
                             @input=${this.handleBackgroundTransparencyChange}
                         />
+                        <div class="form-help">Panels, bubbles, inputs and borders. Lower means more of what is behind the window shows through.</div>
+                    </div>
+                    <div class="form-group slider-wrap">
+                        <div class="slider-header">
+                            <label class="form-label">Text Transparency</label>
+                            <span class="slider-value">${Math.round(this.textTransparency * 100)}%</span>
+                        </div>
+                        <input
+                            class="slider-input"
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            .value=${this.textTransparency}
+                            @input=${this.handleTextTransparencyChange}
+                        />
+                        <div class="form-help">All text, including the answers in the live transcript. Independent of the panels.</div>
                     </div>
                     <div class="form-group slider-wrap">
                         <div class="slider-header">

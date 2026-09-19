@@ -461,8 +461,8 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
             ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
-            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false));
-            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true));
+            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker));
+            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker));
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
             ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
                 this._isClickThrough = isEnabled;
@@ -520,15 +520,26 @@ export class CheatingDaddyApp extends LitElement {
         this.statusText = text;
     }
 
-    // The transcript arrives as a whole-turn snapshot: rewrite the interview bubble that is still
-    // open, or start a new one. A settled bubble is never touched again.
-    upsertTranscription(text, final) {
-        const last = this.messages[this.messages.length - 1];
-        if (last && last.role === 'interviewer' && !last.final) {
-            this.messages = [...this.messages.slice(0, -1), { ...last, text, final }];
-        } else {
-            this.messages = [...this.messages, { id: ++this._msgSeq, role: 'interviewer', text, ts: Date.now(), final }];
+    // The transcript arrives as a whole-turn snapshot: rewrite the bubble that is still open, or
+    // start a new one. A settled bubble is never touched again. Both speakers stream at once, so the
+    // search runs from the end for the matching role — an open bubble of one speaker is never
+    // rewritten by the other, and a bubble keeps the position where its speaker started talking.
+    upsertTranscription(text, final, speaker = 'interviewer') {
+        const role = speaker === 'user' ? 'user' : 'interviewer';
+
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+            const message = this.messages[i];
+            if (message.role !== role) continue;
+            if (message.final) break;
+
+            const next = [...this.messages];
+            next[i] = { ...message, text, final };
+            this.messages = next;
+            this.requestUpdate();
+            return;
         }
+
+        this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final }];
         this.requestUpdate();
     }
 

@@ -93,3 +93,6 @@ typings/
 out/
 .specstory
 .specstory/
+
+# build settings
+.npmrc
