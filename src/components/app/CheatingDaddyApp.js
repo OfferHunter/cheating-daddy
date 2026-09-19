@@ -460,6 +460,7 @@ export class CheatingDaddyApp extends LitElement {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
+            ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
             ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false));
             ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true));
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
@@ -477,6 +478,7 @@ export class CheatingDaddyApp extends LitElement {
             const { ipcRenderer } = window.require('electron');
             ipcRenderer.removeAllListeners('new-response');
             ipcRenderer.removeAllListeners('update-response');
+            ipcRenderer.removeAllListeners('response-complete');
             ipcRenderer.removeAllListeners('transcription-update');
             ipcRenderer.removeAllListeners('transcription-final');
             ipcRenderer.removeAllListeners('update-status');
@@ -530,20 +532,51 @@ export class CheatingDaddyApp extends LitElement {
         this.requestUpdate();
     }
 
-    addNewResponse(response) {
-        this.messages = [...this.messages, { id: ++this._msgSeq, role: 'assistant', text: response, ts: Date.now(), final: true }];
+    _assistantIndex(turnId) {
+        return this.messages.findIndex(m => m.role === 'assistant' && m.turnId === turnId);
+    }
+
+    _replaceMessage(index, changes) {
+        const next = [...this.messages];
+        next[index] = { ...next[index], ...changes };
+        this.messages = next;
         this.requestUpdate();
     }
 
-    updateCurrentResponse(response) {
-        const last = this.messages[this.messages.length - 1];
-        if (last && last.role === 'assistant') {
-            this.messages = [...this.messages.slice(0, -1), { ...last, text: response }];
-        } else {
-            this.addNewResponse(response);
+    // Turns stream concurrently, so a bubble can no longer be located by being the last one: an
+    // interviewer bubble is appended between two live answers. `turnId` is what routes a token to
+    // its own bubble. Bare strings still arrive from the screenshot failure path.
+    addNewResponse(data) {
+        const { turnId = null, text = '', final = false } = typeof data === 'string' ? { text: data, final: true } : data;
+        this.messages = [...this.messages, { id: ++this._msgSeq, turnId, role: 'assistant', text, ts: Date.now(), final }];
+        this.requestUpdate();
+    }
+
+    updateCurrentResponse(data) {
+        const { turnId = null, text = '' } = typeof data === 'string' ? { text: data } : data || {};
+        // Without an id there is no bubble to target, so fall back to appending a finished one.
+        if (turnId === null) {
+            this.addNewResponse({ text, final: true });
             return;
         }
-        this.requestUpdate();
+
+        const index = this._assistantIndex(turnId);
+        if (index === -1) {
+            this.addNewResponse({ turnId, text });
+            return;
+        }
+
+        this._replaceMessage(index, { text });
+    }
+
+    completeResponse(data) {
+        const { turnId = null } = data || {};
+        if (turnId === null) return;
+
+        const index = this._assistantIndex(turnId);
+        if (index === -1) return;
+
+        this._replaceMessage(index, { final: true });
     }
 
     // ── Navigation ──

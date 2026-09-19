@@ -110,6 +110,18 @@ export class AssistantView extends LitElement {
             border-top-right-radius: 2px;
         }
 
+        /* Several answers can stream at once, so each shows its own caret until it settles.
+           Bound to the row: the markdown body has no child bindings and must stay untouched. */
+        .message-row.assistant.streaming .message-body::after {
+            content: '▍';
+            margin-left: 1px;
+            animation: caret-blink 1s step-end infinite;
+        }
+
+        @keyframes caret-blink {
+            50% { opacity: 0; }
+        }
+
         /* ── Markdown (tuned for a light bubble: every colour is inherited or explicit) ── */
 
         .message-body > :first-child {
@@ -671,7 +683,7 @@ export class AssistantView extends LitElement {
         }
 
         return html`
-            <div class="message-row assistant">
+            <div class="message-row assistant ${message.final ? '' : 'streaming'}">
                 <div class="message-body markdown" data-msg-id=${message.id}></div>
             </div>
         `;

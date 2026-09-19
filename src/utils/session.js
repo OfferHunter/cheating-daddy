@@ -49,7 +49,10 @@ function initializeNewSession(profile = null, customPrompt = null) {
     }
 }
 
-function saveConversationTurn(transcription, aiResponse) {
+// Turns now complete out of order: a question asked mid-stream is answered before the answer it
+// interrupted. The caller passes its turn sequence as `order` so the recorded history still reads
+// in the order the questions were asked.
+function saveConversationTurn(transcription, aiResponse, order = 0) {
     if (!currentSessionId) {
         initializeNewSession();
     }
@@ -58,9 +61,10 @@ function saveConversationTurn(transcription, aiResponse) {
         timestamp: Date.now(),
         transcription: transcription.trim(),
         ai_response: aiResponse.trim(),
+        order,
     };
 
-    conversationHistory.push(conversationTurn);
+    conversationHistory = [...conversationHistory, conversationTurn].sort((a, b) => a.order - b.order);
     console.log('Saved conversation turn:', conversationTurn);
 
     // Send to renderer to save in IndexedDB
@@ -71,7 +75,7 @@ function saveConversationTurn(transcription, aiResponse) {
     });
 }
 
-function saveScreenAnalysis(prompt, response, model) {
+function saveScreenAnalysis(prompt, response, model, order = 0) {
     if (!currentSessionId) {
         initializeNewSession();
     }
@@ -81,9 +85,10 @@ function saveScreenAnalysis(prompt, response, model) {
         prompt: prompt,
         response: response.trim(),
         model: model,
+        order,
     };
 
-    screenAnalysisHistory.push(analysisEntry);
+    screenAnalysisHistory = [...screenAnalysisHistory, analysisEntry].sort((a, b) => a.order - b.order);
     console.log('Saved screen analysis:', analysisEntry);
 
     // Send to renderer to save
