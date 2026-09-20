@@ -74,6 +74,11 @@ const DEFAULT_PREFERENCES = {
     // it before emitting one visible token — which reaches the app as an empty answer. The endpoint
     // accepts up to 393216, so a high number here means the model stops on its own. Read per request.
     chatMaxTokens: 128000,
+    // How much of the live split the detailed-answer pane takes, as a fraction rather than a pixel count
+    // so that resizing the window keeps the proportion the user chose. Written by the divider between the
+    // transcript and the pane when a drag ends. A fraction, so the value is inherently bounded by the
+    // pane's own clamps; a stored one outside them is treated as absent, not clamped.
+    detailPaneWidth: 0.38,
     // Written by the theme picker in Settings, which is why it lives here and not in config.json.
     theme: 'gruvbox',
 };

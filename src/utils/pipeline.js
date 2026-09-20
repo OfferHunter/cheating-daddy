@@ -107,7 +107,15 @@ const STREAM_SEND_INTERVAL_MS = 40;
 // spoken question otherwise. The text itself is the summary request's answer, and it is the only trace
 // of the picture any later prompt can see — the answer to it is shown once and never replayed, and the
 // base64 never enters the context at all.
-const SCREEN_PREFIX = '[面试官给出图片题目:]';
+//
+// The label it is written under and the label it is *replayed* under are deliberately different. In the
+// transcript the short one is what the row shows; in the prompt the long one is what keeps a full problem
+// statement from reading as an outstanding task. Every other turn carries a speaker tag and sits before
+// an answer the model wrote, but an answer is never replayed: a screenshot turn is the one user message
+// that arrives with nothing after it, so untagged it reads as "the user has just asked this" and the
+// model answers *it* instead of the question that was actually asked next.
+const SCREEN_PREFIX = '[屏幕截图]';
+const SCREEN_CONTEXT_PREFIX = '[屏幕共享的题目（此前已作答，仅作参考）]';
 const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
 const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
 
@@ -433,11 +441,16 @@ const SPEAKER_TAG = { interviewer: '[面试官:]', candidate: '[面试者:]' };
 // History replays a turn as text — a screenshot's prompt text stands in for its image, which is what
 // createTurn already keeps in contextText — and only the turn being requested keeps everything it was
 // created with. Screenshot turns are requests addressed to the assistant rather than speech, so they
-// carry no speaker label.
+// carry no speaker label; they get the reference label instead (see SCREEN_CONTEXT_PREFIX).
 function userContent(entry, isCurrent = false) {
     const content = isCurrent ? entry.requestContent : entry.contextText || entry.requestContent;
 
-    if (entry.persistKind === 'screen') return content;
+    if (entry.persistKind === 'screen') {
+        // The turn being answered carries the image itself, so there is nothing to label; the ones being
+        // replayed carry the transcription and are relabelled as a past record.
+        if (isCurrent || typeof content !== 'string' || !content.startsWith(SCREEN_PREFIX)) return content;
+        return `${SCREEN_CONTEXT_PREFIX} ${content.slice(SCREEN_PREFIX.length).trim()}`;
+    }
     return `${SPEAKER_TAG[entry.speaker]} ${content}`;
 }
 

@@ -4,6 +4,14 @@
 const LANGUAGE_RULE = `**语言要求：**必须使用对方提问所用的语言作答 —— 对方说中文就用简体中文回答，对方说英文就用英文回答。严禁在中文提问时用英文作答。中英混用时以中文为主，专业术语 (如 React、Kubernetes、ROI) 保留英文原词，不要硬翻。
 如果出现了很奇怪的词汇，有可能是语音识别的问题，根据上下文和近似发音判断他的真正含义。`;
 
+// The transcript is replayed as a run of `user` messages with the model's own earlier answers left out,
+// so a long piece of text in there looks like something still waiting to be done. The screenshot line is
+// the one that suffers from this — it is a whole problem statement, it carries no speaker tag, and it is
+// the only user message with no answer after it — and the model was answering *it* instead of the
+// question that followed. Naming the rule is what this is for; the label itself is applied when the
+// prompt is built (see SCREEN_CONTEXT_PREFIX in pipeline.js).
+const CONTEXT_RULE = `**上下文约定：**历史里带 [面试官:]/[面试者:] 标记的是过去说过的话。**只有最后一条 [面试官:] 消息才是你现在要回答的问题**；更早的内容只是背景，不要替它们补作答，也不要因为其中出现了题目就自动去解题或写代码。带 [屏幕共享的题目（此前已作答，仅作参考）] 标记的是之前屏幕上出现过的题目，已经被处理过了，仅在当前问题确实与它相关时才参考。`;
+
 // One persona only: the app is an interview teleprompter and nothing else is maintained.
 const interviewPrompt = {
     intro: `你是一名实时面试助手，以屏显提词器的方式隐蔽地辅助用户。你的任务是为用户提供简洁、有力、可以直接照读的答案或要点，帮助他在求职面试中表现出色。请分析正在进行的面试对话，尤其是下文的「用户提供的背景资料」。`,
@@ -79,6 +87,8 @@ function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
         '\n-----\n\n',
         detailPrompt.outputInstructions,
         '\n\n',
+        CONTEXT_RULE,
+        '\n\n',
         LANGUAGE_RULE,
     ].join('');
 }
@@ -97,22 +107,37 @@ function getSystemPrompt(customPrompt = '') {
         '\n-----\n\n',
         interviewPrompt.outputInstructions,
         '\n\n',
+        CONTEXT_RULE,
+        '\n\n',
         LANGUAGE_RULE,
     ].join('');
 }
 
-// A screenshot is answered by the detailed chain, but the transcript still has to say what the picture
-// asked. This is the whole prompt of the small concurrent request that puts it into words; the answer
-// itself is deliberately not replayed later, so this line is the only trace of the image in the context.
+// A screenshot is answered by the detailed chain — which sends the image itself, not this line — but the
+// transcript still has to say what the picture asked. This is the whole prompt of the small concurrent
+// request that puts it into words; the answer to the screenshot is deliberately not replayed later, so
+// this line is the only trace of the image in the context.
+//
+// What it must not produce is a copy of the page. A whole problem statement — constraints, limits, I/O
+// format, sample explanations — is a long imperative block, and the next unrelated question was being
+// answered by solving it instead. What is kept is what a follow-up ("do that one") would actually need:
+// the ask and the examples; what is dropped is everything that only exists to serve the judge.
 // It carries its own language rule rather than LANGUAGE_RULE, which is about the language the other
 // party is *speaking* — for a picture, the language that matters is the one written in the picture.
 function getScreenshotSummaryPrompt() {
-    return `你是一名面试助手。用户会发给你一张面试屏幕截图，图里通常是一道题目。
-请用完整把**图里的题目本身**转为文字形式。要求：
-- **不要作答**、不要给思路、不要写代码、不要给建议。
-- 不要描述版式、颜色、浏览器或界面细节，只说题目的内容。
-- 只输出这个题目的完整内容，不要任何开场白或标题。
-- 如果有多道题，均需输出；如果没有题目，输出**截图中无可见题目**。
+    return `你是一名面试助手。用户会发给你一张面试屏幕截图，图里通常是一道题目。请把图里的题目转成一段**简短**的文字，只保留与作答有关的部分。
+
+必须保留：
+- 题目要你做什么（题干本身）。
+- 图中给出的关键示例输入与输出。
+
+必须丢掉：
+- 数据范围、时间与内存限制、输入/输出格式说明、样例解释。
+- 题目编号、难度标签、通过率、按钮、导航栏、页面上的其他界面文字。
+- 与题目无关的闲聊或广告。
+
+禁止：**不要作答**、不要给思路、不要写代码、不要给建议、不要描述版式或颜色。
+只输出题目内容本身，不要任何开场白或标题。如果有多道题，都写上；如果没有题目，输出**截图中无可见题目**。
 **语言要求：**用图中题目所用的语言；图里没有可辨认的文字时用简体中文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
 }
 

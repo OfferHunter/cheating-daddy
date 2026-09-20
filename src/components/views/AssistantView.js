@@ -1,6 +1,39 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { conversationStyles, renderMarkdown } from './conversationStyles.js';
 
+// How wide the detailed-answer pane is, as a fraction of the split, and the bounds a drag is clamped to.
+// The pane is a fixed-width flex item beside a flexible one, so both bounds are real: below the minimum
+// the pane is a column of single characters, and above the maximum the transcript has no room left.
+const PANE_DEFAULT_FRACTION = 0.38;
+const PANE_MIN_FRACTION = 0.18;
+const PANE_MAX_FRACTION = 0.72;
+
+// Read once per app run rather than per mount: this view is rebuilt on every navigation, and a per-mount
+// read would show the default width for the frame between the render and the read resolving. A stored
+// value outside the clamps is treated as absent rather than clamped, so a hand-edited file cannot pin the
+// pane at a size no drag could have produced.
+let paneFraction = PANE_DEFAULT_FRACTION;
+let paneFractionLoading = null;
+
+function loadPaneFraction() {
+    if (!paneFractionLoading) {
+        paneFractionLoading = (async () => {
+            try {
+                const prefs = await cheatingDaddy.storage.getPreferences();
+                const stored = Number(prefs.detailPaneWidth);
+                if (Number.isFinite(stored) && stored >= PANE_MIN_FRACTION && stored <= PANE_MAX_FRACTION) {
+                    paneFraction = stored;
+                }
+            } catch (error) {
+                console.warn('Could not read the detail pane width:', error);
+            }
+        })();
+    }
+    return paneFractionLoading;
+}
+
+const clampPaneFraction = value => Math.min(PANE_MAX_FRACTION, Math.max(PANE_MIN_FRACTION, value));
+
 export class AssistantView extends LitElement {
     // Three parts, in this order, so the rules keep the cascade they had as one template.
     static styles = [
@@ -227,13 +260,55 @@ export class AssistantView extends LitElement {
 
         /* ── Detailed answer pane ── */
 
+        /* The divider between the transcript and the pane, and the thing that resizes them. Six pixels of
+           hit area with the visible line drawn inside it, so the line the eye sees is the line the pointer
+           has to land on; the line itself moves from the pane's border to here, or the two would double up.
+           touch-action keeps the drag from being read as a scroll, and the pointer is captured on press so
+           the drag survives leaving this six-pixel strip. */
+        .split-handle {
+            flex: none;
+            width: 6px;
+            cursor: col-resize;
+            position: relative;
+            touch-action: none;
+        }
+
+        .split-handle::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 2px;
+            width: 2px;
+            border-radius: 1px;
+            background: var(--border);
+            transition: background var(--transition);
+        }
+
+        .split-handle:hover::before,
+        .split-handle.dragging::before {
+            background: var(--accent);
+        }
+
+        .split-handle[hidden] {
+            display: none;
+        }
+
         .detail-pane {
             flex: none;
+            /* Border-box because the width is also set from a drag, and the drag reads the pane's box back
+               with getBoundingClientRect: on the default content box the padding would be counted on one
+               side of that round trip only, and every drag would push the divider past the pointer by it. */
+            box-sizing: border-box;
             width: 38%;
-            min-width: 0;
+            /* Both bounds are load-bearing: the pane is a fixed-width flex item, so without the minimum a
+               drag to the left edge leaves a column too narrow to read, and without the maximum a drag on a
+               wide window can push the transcript — and its bubbles — off the left of the view. They are CSS
+               rather than JS clamps so that resizing the window keeps them without a resize listener. */
+            min-width: 180px;
+            max-width: 72%;
             display: flex;
             flex-direction: column;
-            border-left: 1px solid var(--border);
             padding: 12px var(--chat-gutter);
         }
 
@@ -508,6 +583,72 @@ export class AssistantView extends LitElement {
             if (this.handleScrollUp) ipcRenderer.removeListener('scroll-response-up', this.handleScrollUp);
             if (this.handleScrollDown) ipcRenderer.removeListener('scroll-response-down', this.handleScrollDown);
         }
+    }
+
+    // Unconditional, not guarded on the pane being visible: the first answer of a session is what makes the
+    // pane appear, and by then the stored width has to be in memory already or the pane would open at the
+    // default and stay there.
+    async firstUpdated() {
+        await loadPaneFraction();
+        this.requestUpdate();
+    }
+
+    // Dragging writes the pane's width straight onto the element and only commits to reactive state on
+    // release. A pointermove per frame through render() would re-render the whole transcript — bubbles,
+    // markdown and scroll position — to move one divider.
+    _onSplitPointerDown(event) {
+        if (event.button !== 0) return;
+        const live = this.renderRoot.querySelector('.live-split');
+        const pane = this.renderRoot.querySelector('.detail-pane');
+        if (!live || !pane) return;
+
+        // The pointer is captured by the handle so the drag keeps working after it leaves the 6px strip —
+        // without it a fast drag loses the pointer the moment it outruns the divider.
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.currentTarget.classList.add('dragging');
+        event.preventDefault();
+        this._splitDrag = {
+            live,
+            pane,
+            handle: event.currentTarget,
+            startX: event.clientX,
+            startFraction: pane.getBoundingClientRect().width / live.getBoundingClientRect().width,
+            // null until the pointer actually moves, so a plain click on the divider changes nothing.
+            fraction: null,
+        };
+    }
+
+    _onSplitPointerMove(event) {
+        const drag = this._splitDrag;
+        if (!drag) return;
+
+        const width = drag.live.getBoundingClientRect().width;
+        if (!width) return;
+        // The pane is on the right, so dragging the divider left widens it. The width is written both to
+        // the element and to the drag record: an answer streaming in mid-drag re-renders the split, and
+        // that render has to repaint the divider where the pointer left it rather than where it started.
+        drag.fraction = clampPaneFraction(drag.startFraction - (event.clientX - drag.startX) / width);
+        drag.pane.style.width = `${drag.fraction * 100}%`;
+    }
+
+    _onSplitPointerUp(event) {
+        const drag = this._splitDrag;
+        if (!drag) return;
+        this._splitDrag = null;
+        drag.handle.classList.remove('dragging');
+        if (drag.handle.hasPointerCapture(event.pointerId)) drag.handle.releasePointerCapture(event.pointerId);
+
+        // A click with no movement is a no-op: it must not rewrite the preference, and it must not leave
+        // the pane carrying an inline width the next render would have to agree with.
+        if (drag.fraction === null) return;
+
+        paneFraction = drag.fraction;
+        // Rounded to three places: the fraction only has to survive a round trip through the config file,
+        // and a raw ratio would write a meaningless amount of digits into it.
+        cheatingDaddy.storage.updatePreference('detailPaneWidth', Math.round(paneFraction * 1000) / 1000).catch(error => {
+            console.warn('Could not save the detail pane width:', error);
+        });
+        this.requestUpdate();
     }
 
     async handleSendText() {
@@ -796,6 +937,10 @@ export class AssistantView extends LitElement {
     }
 
     render() {
+        // A drag in progress owns the width until it is released, so a re-render driven by a streaming
+        // answer cannot fight the pointer.
+        const paneWidth = `${((this._splitDrag?.fraction ?? paneFraction) * 100).toFixed(1)}%`;
+
         return html`
             <div class="live-split">
                 <div class="chat-wrap">
@@ -812,7 +957,21 @@ export class AssistantView extends LitElement {
                     </button>
                 </div>
 
-                <div class="detail-pane" ?hidden=${this.detailMessages.length === 0}>${this.renderDetailPane()}</div>
+                <div
+                    class="split-handle"
+                    ?hidden=${this.detailMessages.length === 0}
+                    role="separator"
+                    aria-orientation="vertical"
+                    title="Drag to resize the detailed answers"
+                    @pointerdown=${this._onSplitPointerDown}
+                    @pointermove=${this._onSplitPointerMove}
+                    @pointerup=${this._onSplitPointerUp}
+                    @pointercancel=${this._onSplitPointerUp}
+                ></div>
+
+                <div class="detail-pane" style="width:${paneWidth}" ?hidden=${this.detailMessages.length === 0}>
+                    ${this.renderDetailPane()}
+                </div>
             </div>
 
             <div class="input-bar">
