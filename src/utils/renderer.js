@@ -103,6 +103,28 @@ const storage = {
     },
 };
 
+// The knowledge directory is the user's folder and is owned by the main process. The renderer only ever
+// names an entry by id — it never holds or sends a path.
+const knowledge = {
+    async chooseDirectory() {
+        return ipcRenderer.invoke('knowledge:choose-directory');
+    },
+    // Raw result, not a defaulted shape: the page has to tell "no folder chosen" apart from "the folder
+    // is set but nothing in it could be read", and only this carries that distinction.
+    async list() {
+        return ipcRenderer.invoke('knowledge:get-list');
+    },
+    async preview(id) {
+        return ipcRenderer.invoke('knowledge:preview', id);
+    },
+    async clearDirectory() {
+        return ipcRenderer.invoke('knowledge:clear-directory');
+    },
+    async reveal(id) {
+        return ipcRenderer.invoke('knowledge:reveal', id);
+    },
+};
+
 // Cache for preferences to avoid async calls in hot paths
 let preferencesCache = null;
 
@@ -879,6 +901,16 @@ ipcRenderer.on('save-screen-analysis', async (event, data) => {
     }
 });
 
+// Listen for detailed answers, which are stored alongside the conversation but as their own list.
+ipcRenderer.on('save-detail-turn', async (event, data) => {
+    try {
+        await storage.saveSession(data.sessionId, { detailHistory: data.fullHistory });
+        console.log('Detail turn saved:', data.sessionId);
+    } catch (error) {
+        console.error('Error saving detail turn:', error);
+    }
+});
+
 // Listen for emergency erase command from main process
 ipcRenderer.on('clear-sensitive-data', async () => {
     console.log('Clearing all data...');
@@ -1265,6 +1297,9 @@ const cheatingDaddy = {
 
     // Storage API
     storage,
+
+    // Knowledge directory API
+    knowledge,
 
     // Theme API
     theme,

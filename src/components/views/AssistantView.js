@@ -6,6 +6,11 @@ export class AssistantView extends LitElement {
             height: 100%;
             display: flex;
             flex-direction: column;
+
+            /* The transcript's side inset, and the only knob for it: the shell around this view
+               contributes a single 3px line, so everything visible on the left is this value. The
+               input bar shares it, which is what lines the pill up with the bubbles above it. */
+            --chat-gutter: 8px;
         }
 
         * {
@@ -15,9 +20,20 @@ export class AssistantView extends LitElement {
 
         /* ── Chat transcript ── */
 
+        /* ── Live split: the transcript and the detailed answers side by side ── */
+
+        .live-split {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+        }
+
         .chat-wrap {
             position: relative;
             flex: 1;
+            /* Without this the column refuses to shrink below the width of its own content and pushes the
+               pane off the right edge instead of sharing the row with it. */
+            min-width: 0;
             min-height: 0;
             display: flex;
         }
@@ -65,7 +81,7 @@ export class AssistantView extends LitElement {
             display: flex;
             flex-direction: column;
             gap: 10px;
-            padding: 12px;
+            padding: 12px var(--chat-gutter);
         }
 
         .chat-empty {
@@ -93,8 +109,11 @@ export class AssistantView extends LitElement {
             justify-content: flex-end;
         }
 
+        /* Well above the 78% this used to be: that cap, not the gutter, is what decided where an answer
+           wrapped, and a long answer reached the cap on almost every line. Kept under 100% so a bubble
+           still reads as one side of a conversation. */
         .message-body {
-            max-width: 78%;
+            max-width: 92%;
             padding: 8px 12px;
             border-radius: 10px;
             color: var(--text-primary);
@@ -290,7 +309,7 @@ export class AssistantView extends LitElement {
             display: flex;
             align-items: center;
             gap: var(--space-sm);
-            padding: var(--space-md);
+            padding: var(--space-md) var(--chat-gutter);
             background: transparent;
         }
 
@@ -376,12 +395,136 @@ export class AssistantView extends LitElement {
             height: calc(100% + 2px);
             pointer-events: none;
         }
+
+        /* ── Detailed answer pane ── */
+
+        .detail-pane {
+            flex: none;
+            width: 38%;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border);
+            padding: 12px var(--chat-gutter);
+        }
+
+        .detail-pane[hidden] {
+            display: none;
+        }
+
+        .detail-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-sm);
+            padding-bottom: var(--space-xs);
+            color: var(--text-muted);
+            font-size: var(--font-size-xs);
+        }
+
+        /* Quoted, not repeated as a heading: it is there to say which question the answer belongs to when
+           the user has paged back, not to compete with the answer itself. */
+        .detail-question {
+            margin-bottom: var(--space-sm);
+            padding-left: var(--space-sm);
+            border-left: 2px solid var(--border);
+            color: var(--text-muted);
+            font-size: var(--font-size-xs);
+            word-break: break-word;
+        }
+
+        .detail-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            font-size: var(--response-font-size, 15px);
+            line-height: var(--line-height);
+            user-select: text;
+            cursor: text;
+        }
+
+        .detail-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .detail-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .detail-scroll::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: 3px;
+        }
+
+        /* The pane body carries the transcript's markdown class so there is exactly one set of markdown
+           rules to keep in step; only the bubble chrome is undone, a panel not being a bubble. */
+        .detail-body.message-body {
+            max-width: none;
+            padding: 0;
+            border-radius: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .detail-body.streaming::after {
+            content: '▍';
+            margin-left: 1px;
+            animation: caret-blink 1s step-end infinite;
+        }
+
+        .detail-note {
+            margin-top: var(--space-sm);
+            color: var(--text-muted);
+            font-size: var(--font-size-xs);
+        }
+
+        .detail-note.danger {
+            color: var(--danger);
+        }
+
+        .detail-nav {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: var(--space-xs);
+            padding-top: var(--space-sm);
+        }
+
+        .detail-nav button {
+            width: 26px;
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            font-size: var(--font-size-sm);
+            cursor: pointer;
+        }
+
+        .detail-nav button:hover:not(:disabled) {
+            border-color: var(--accent);
+        }
+
+        .detail-nav button:disabled {
+            opacity: 0.45;
+            cursor: default;
+        }
     `;
 
     static properties = {
         messages: { type: Array },
         onSendText: { type: Function },
         isAnalyzing: { type: Boolean, state: true },
+        // The detailed answers and which one is showing. Both are owned by the app element rather than
+        // this view, because this view is torn down and rebuilt on every navigation while the answers
+        // have to survive it — the same reason `messages` lives up there.
+        detailMessages: { type: Array },
+        detailCurrent: { type: Number },
+        onDetailPrev: { type: Function },
+        onDetailNext: { type: Function },
     };
 
     constructor() {
@@ -389,8 +532,13 @@ export class AssistantView extends LitElement {
         this.messages = [];
         this.onSendText = () => {};
         this.isAnalyzing = false;
+        this.detailMessages = [];
+        this.detailCurrent = null;
+        this.onDetailPrev = () => {};
+        this.onDetailNext = () => {};
         this._animFrame = null;
         this._pinned = true;
+        this._detailAtBottom = true;
         this._responseCountWhenStarted = 0;
     }
 
@@ -429,6 +577,33 @@ export class AssistantView extends LitElement {
         }
     }
 
+    // The pane shows one answer at a time, so this cannot ride on _syncMarkdown above: that one walks
+    // this.messages, which holds no detailed answers at all. Keyed on the row id as well as the text,
+    // because paging between two answers has to re-render even when their text happens to match.
+    _syncDetailMarkdown() {
+        const el = this.shadowRoot.querySelector('[data-detail-id]');
+        if (!el) return;
+
+        const row = this._currentDetail();
+        const key = `${row ? row.detailId : 0}:${row ? row.text : ''}`;
+        if (el._renderedKey === key) return;
+
+        el.innerHTML = this.renderMarkdown(row ? row.text : '');
+        el._renderedKey = key;
+    }
+
+    // The row being shown, or the newest one when the selection is stale — an answer that has been
+    // dropped by the cap on retained turns must not blank the pane.
+    _currentDetail() {
+        if (!this.detailMessages.length) return null;
+        return this.detailMessages.find(row => row.detailId === this.detailCurrent) || this.detailMessages[this.detailMessages.length - 1];
+    }
+
+    _detailPosition() {
+        const row = this._currentDetail();
+        return row ? this.detailMessages.indexOf(row) : -1;
+    }
+
     // ── Scrolling ──
 
     handleScroll() {
@@ -453,6 +628,19 @@ export class AssistantView extends LitElement {
         this._pinned = true;
         this._scrollToBottom();
         this.requestUpdate();
+    }
+
+    // The pane has no jump button — a single answer is nothing to lose your place in — so this only
+    // decides whether streaming text should drag the view down with it.
+    handleDetailScroll() {
+        const container = this.shadowRoot.querySelector('.detail-scroll');
+        if (!container) return;
+        this._detailAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+    }
+
+    _scrollDetailToBottom() {
+        const container = this.shadowRoot.querySelector('.detail-scroll');
+        if (container) container.scrollTop = container.scrollHeight;
     }
 
     scrollResponseUp() {
@@ -662,10 +850,27 @@ export class AssistantView extends LitElement {
         super.updated(changedProperties);
 
         this._syncMarkdown();
+        this._syncDetailMarkdown();
 
         // Instant, not smooth: a per-token smooth scroll never catches up and fights itself.
         if (this._pinned) {
             this._scrollToBottom();
+        }
+
+        const detail = this._currentDetail();
+        if (detail) {
+            if (this._lastDetailId !== detail.detailId) {
+                // Landing on a different answer starts from one end of it: the bottom while it is still
+                // arriving, the top once it is finished and there is something to read in order.
+                this._lastDetailId = detail.detailId;
+                this._detailAtBottom = !detail.final;
+                const container = this.shadowRoot.querySelector('.detail-scroll');
+                if (container) container.scrollTop = detail.final ? 0 : container.scrollHeight;
+            } else if (!detail.final && this._detailAtBottom) {
+                // Only a growing answer drags the view down with it, and only while the user has not
+                // scrolled away from the end of it.
+                this._scrollDetailToBottom();
+            }
         }
 
         if (changedProperties.has('isAnalyzing')) {
@@ -710,20 +915,66 @@ export class AssistantView extends LitElement {
         `;
     }
 
+    renderDetailPane() {
+        const detail = this._currentDetail();
+        if (!detail) return html``;
+
+        const position = this._detailPosition();
+        const notes = [];
+        if (detail.usedKnowledge && detail.usedKnowledge.length) {
+            notes.push(html`<div class="detail-note">Reference: ${detail.usedKnowledge.join(', ')}</div>`);
+        }
+        if (detail.truncated) {
+            notes.push(html`<div class="detail-note">Answer cut off at the length limit</div>`);
+        }
+        if (detail.error) {
+            notes.push(html`<div class="detail-note danger">${detail.error}</div>`);
+        }
+
+        return html`
+            <div class="detail-head">
+                <span>Detailed</span>
+                <span>${position + 1} / ${this.detailMessages.length}</span>
+            </div>
+
+            <div class="detail-scroll" @scroll=${this.handleDetailScroll}>
+                ${detail.question ? html`<div class="detail-question">${detail.question}</div>` : ''}
+                <div
+                    class="detail-body message-body markdown ${detail.final ? '' : 'streaming'}"
+                    data-detail-id=${detail.detailId}
+                ></div>
+                ${notes}
+            </div>
+
+            <div class="detail-nav">
+                <button ?disabled=${position <= 0} @click=${() => this.onDetailPrev()} title="Previous detailed answer">‹</button>
+                <button
+                    ?disabled=${position >= this.detailMessages.length - 1}
+                    @click=${() => this.onDetailNext()}
+                    title="Next detailed answer"
+                >›</button>
+            </div>
+        `;
+    }
+
     render() {
         return html`
-            <div class="chat-wrap">
-                <div class="chat-scroll" @scroll=${this.handleScroll}>
-                    ${this.messages.length === 0
-                        ? html`<div class="chat-empty">Listening to the interview...</div>`
-                        : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`}
+            <div class="live-split">
+                <div class="chat-wrap">
+                    <div class="chat-scroll" @scroll=${this.handleScroll}>
+                        ${this.messages.length === 0
+                            ? html`<div class="chat-empty">Listening to the interview...</div>`
+                            : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`}
+                    </div>
+                    <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 5v14M19 12l-7 7-7-7" />
+                        </svg>
+                        Latest
+                    </button>
                 </div>
-                <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 5v14M19 12l-7 7-7-7" />
-                    </svg>
-                    Latest
-                </button>
+
+                <div class="detail-pane" ?hidden=${this.detailMessages.length === 0}>${this.renderDetailPane()}</div>
             </div>
 
             <div class="input-bar">

@@ -213,6 +213,7 @@ export class CustomizeView extends LitElement {
         micGateDwellMs: { type: Number },
         audioInputDeviceId: { type: String },
         audioInputDevices: { state: true },
+        detailMode: { type: Boolean },
     };
 
     constructor() {
@@ -239,6 +240,7 @@ export class CustomizeView extends LitElement {
         this.micMaxSentenceSilenceMs = 2000;
         this.micGateDb = -45;
         this.micGateDwellMs = 300;
+        this.detailMode = true;
         this._loadFromStorage();
     }
 
@@ -303,6 +305,7 @@ export class CustomizeView extends LitElement {
             this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? 2000;
             this.micGateDb = prefs.micGateDb ?? -45;
             this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
+            this.detailMode = prefs.detailMode !== false;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
@@ -364,6 +367,9 @@ export class CustomizeView extends LitElement {
             nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
             scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
             scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
+            detailPrev: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+[',
+            detailNext: isMac ? 'Cmd+Shift+]' : 'Ctrl+Shift+]',
+            emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
             toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
             quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
         };
@@ -381,10 +387,21 @@ export class CustomizeView extends LitElement {
             { key: 'scrollUp', name: 'Scroll Response Up', description: 'Scroll response content upward' },
             { key: 'scrollDown', name: 'Scroll Response Down', description: 'Scroll response content downward' },
             {
+                key: 'detailPrev',
+                name: 'Previous Detailed Answer',
+                description: 'Show the previous detailed answer in the side pane',
+            },
+            {
+                key: 'detailNext',
+                name: 'Next Detailed Answer',
+                description: 'Show the next detailed answer in the side pane',
+            },
+            {
                 key: 'toggleTheme',
                 name: 'Toggle Light/Dark Theme',
                 description: 'Switch between the light and dark colour schemes',
             },
+            { key: 'emergencyErase', name: 'Emergency Erase', description: 'Hide the window, clear all data and quit' },
             { key: 'quit', name: 'Quit', description: 'Exit the app without clearing any data' },
         ];
     }
@@ -415,6 +432,11 @@ export class CustomizeView extends LitElement {
     async handleCustomPromptInput(e) {
         this.customPrompt = e.target.value;
         await cheatingDaddy.storage.updatePreference('customPrompt', this.customPrompt);
+    }
+
+    async handleDetailModeChange(checked) {
+        this.detailMode = checked;
+        await cheatingDaddy.storage.updatePreference('detailMode', checked);
     }
 
     // Chromium already exposes the system defaults as entries with deviceId 'default' and
@@ -534,6 +556,14 @@ export class CustomizeView extends LitElement {
             case 'Backslash':
                 mainKey = '\\';
                 break;
+            // Taken from e.code, not e.key: with Shift held these produce '{' and '}', which is a
+            // different string from the default 'Ctrl+Shift+[' and would never register.
+            case 'BracketLeft':
+                mainKey = '[';
+                break;
+            case 'BracketRight':
+                mainKey = ']';
+                break;
             default:
                 if (e.key.length === 1) mainKey = e.key.toUpperCase();
                 break;
@@ -565,9 +595,10 @@ export class CustomizeView extends LitElement {
         this.clearStatusType = '';
         this.requestUpdate();
         try {
-            // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt is
-            // deliberately absent: it is the one preference that is content rather than a knob, so a
-            // reset leaves whatever the user has written in it alone.
+            // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt and
+            // knowledgeDir are deliberately absent: they are the preferences that hold content the user
+            // supplied — instructions and a pointer to their own files — rather than knobs, so a reset
+            // leaves them alone. detailMode is a knob, so it is reset with the rest.
             const defaults = {
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
@@ -581,6 +612,7 @@ export class CustomizeView extends LitElement {
                 micMaxSentenceSilenceMs: 2000,
                 micGateDb: -45,
                 micGateDwellMs: 300,
+                detailMode: true,
             };
             for (const [key, value] of Object.entries(defaults)) {
                 await cheatingDaddy.storage.updatePreference(key, value);
@@ -606,6 +638,7 @@ export class CustomizeView extends LitElement {
             this.micMaxSentenceSilenceMs = defaults.micMaxSentenceSilenceMs;
             this.micGateDb = defaults.micGateDb;
             this.micGateDwellMs = defaults.micGateDwellMs;
+            this.detailMode = defaults.detailMode;
 
             // Notify parent callbacks
             this.onLanguageChange(defaults.selectedLanguage);
@@ -772,6 +805,29 @@ export class CustomizeView extends LitElement {
         `;
     }
 
+    renderAnswerSection() {
+        return html`
+            <section class="surface">
+                <div class="surface-title">Answers</div>
+                <div class="form-grid">
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.detailMode}
+                            @change=${e => this.handleDetailModeChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Detailed side answer</span>
+                    </label>
+                    <div class="form-help">
+                        Answer each question twice: a short line for the transcript, and a longer one in the side pane that
+                        may consult the knowledge folder. Takes effect on the next session.
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
     renderAppearanceSection() {
         return html`
             <section class="surface">
@@ -886,6 +942,7 @@ export class CustomizeView extends LitElement {
                     <div class="page-title">Settings</div>
                     ${this.renderAudioSection()}
                     ${this.renderLanguageSection()}
+                    ${this.renderAnswerSection()}
                     ${this.renderAppearanceSection()}
                     ${this.renderKeyboardSection()}
                     ${this.renderPrivacySection()}

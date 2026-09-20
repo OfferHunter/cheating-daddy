@@ -101,6 +101,10 @@ function getDefaultKeybinds() {
         nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
+        // Brackets rather than Up/Down: those already scroll the transcript, and Ctrl+Alt+Up/Down is
+        // grabbed by the graphics driver on Windows for screen rotation.
+        detailPrev: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+[',
+        detailNext: isMac ? 'Cmd+Shift+]' : 'Ctrl+Shift+]',
         emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
         toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
         quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
@@ -108,6 +112,12 @@ function getDefaultKeybinds() {
 }
 
 function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
+    // Merged over the defaults rather than trusted as given. The renderer's settings page keeps its own
+    // copy of the default table, and when the two drift the missing key is not neutral: everything below
+    // is guarded by `if (keybinds.X)`, so an absent one is silently never registered. That is exactly how
+    // a shortcut the user never touched — emergencyErase — stopped working until a restart.
+    keybinds = { ...getDefaultKeybinds(), ...(keybinds || {}) };
+
     console.log('Updating global shortcuts with:', keybinds);
 
     // Unregister all existing shortcuts
@@ -235,6 +245,30 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
             console.log(`Registered scrollDown: ${keybinds.scrollDown}`);
         } catch (error) {
             console.error(`Failed to register scrollDown (${keybinds.scrollDown}):`, error);
+        }
+    }
+
+    // Register step-back through the detailed answers. A one-way accelerator only: the pane's own ‹ ›
+    // buttons are the way in, so a shortcut the OS refuses to hand over costs nothing.
+    if (keybinds.detailPrev) {
+        try {
+            globalShortcut.register(keybinds.detailPrev, () => {
+                sendToRenderer('detail-prev');
+            });
+            console.log(`Registered detailPrev: ${keybinds.detailPrev}`);
+        } catch (error) {
+            console.error(`Failed to register detailPrev (${keybinds.detailPrev}):`, error);
+        }
+    }
+
+    if (keybinds.detailNext) {
+        try {
+            globalShortcut.register(keybinds.detailNext, () => {
+                sendToRenderer('detail-next');
+            });
+            console.log(`Registered detailNext: ${keybinds.detailNext}`);
+        } catch (error) {
+            console.error(`Failed to register detailNext (${keybinds.detailNext}):`, error);
         }
     }
 

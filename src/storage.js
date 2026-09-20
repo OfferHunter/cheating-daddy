@@ -25,6 +25,14 @@ const DEFAULT_CREDENTIALS = {
 // the value means, not why it is this one.
 const DEFAULT_PREFERENCES = {
     customPrompt: ``,
+    // A directory the user owns, holding one .md per knowledge entry. The model sees only the summaries;
+    // the content is read on demand. Empty means the feature is off, and nothing else reads it — which
+    // is why it is a preference the "restore defaults" action deliberately skips, like customPrompt.
+    knowledgeDir: '',
+    // Answer each question twice: a short speakable one in the transcript, and a fuller one in the side
+    // pane that may consult the knowledge directory. A knob, not content, so restoring defaults does
+    // reset it.
+    detailMode: true,
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
@@ -303,6 +311,7 @@ function saveSession(sessionId, data) {
         // Conversation data
         conversationHistory: data.conversationHistory || existingSession?.conversationHistory || [],
         screenAnalysisHistory: data.screenAnalysisHistory || existingSession?.screenAnalysisHistory || [],
+        detailHistory: data.detailHistory || existingSession?.detailHistory || [],
     };
     return writeJsonFile(sessionPath, sessionData);
 }
@@ -340,6 +349,7 @@ function getAllSessions() {
                         lastUpdated: data.lastUpdated,
                         messageCount: data.conversationHistory?.length || 0,
                         screenAnalysisCount: data.screenAnalysisHistory?.length || 0,
+                        detailCount: data.detailHistory?.length || 0,
                         profile: data.profile || null,
                         customPrompt: data.customPrompt || null,
                     };

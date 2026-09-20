@@ -5,7 +5,8 @@ if (require('electron-squirrel-startup')) {
 // First, before anything can log: a GBK console renders our UTF-8 Chinese as mojibake.
 require('./utils/consoleEncoding').enableUtf8Console();
 
-const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const path = require('path');
+const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');
 const storage = require('./storage');
@@ -30,6 +31,7 @@ app.whenReady().then(async () => {
     createMainWindow();
     setupIpcHandlers();
     setupStorageIpcHandlers();
+    setupKnowledgeIpcHandlers();
     setupGeneralIpcHandlers();
 });
 
@@ -246,6 +248,88 @@ function setupStorageIpcHandlers() {
             return { success: true };
         } catch (error) {
             console.error('Error clearing all data:', error);
+            return { success: false, error: error.message };
+        }
+    });
+}
+
+// The knowledge directory is the user's own folder, so every path decision stays here: the renderer
+// names an entry by id and never sees or sends a path.
+function setupKnowledgeIpcHandlers() {
+    const knowledge = require('./utils/knowledge');
+
+    // The folder picker lives in the main process because the renderer has no dialog module of its own,
+    // and the result is saved here rather than handed back to be written: one round trip, and no state
+    // that exists only in a view that is about to be torn down.
+    ipcMain.handle('knowledge:choose-directory', async () => {
+        try {
+            const result = await dialog.showOpenDialog(mainWindow, {
+                title: '选择知识目录',
+                properties: ['openDirectory'],
+            });
+
+            if (result.canceled || !result.filePaths.length) {
+                return { success: false, canceled: true };
+            }
+
+            const dir = result.filePaths[0];
+            storage.updatePreference('knowledgeDir', dir);
+            return { success: true, dir };
+        } catch (error) {
+            console.error('Error choosing knowledge directory:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('knowledge:get-list', async () => {
+        try {
+            const dir = storage.getPreferences().knowledgeDir || '';
+            const entries = knowledge.listKnowledgeEntries(dir).map(({ id, name, description }) => ({ id, name, description }));
+            return { success: true, dir, entries };
+        } catch (error) {
+            console.error('Error listing knowledge entries:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('knowledge:preview', async (event, id) => {
+        try {
+            const dir = storage.getPreferences().knowledgeDir || '';
+            const entry = knowledge.readKnowledgeById(dir, id);
+
+            return entry.ok
+                ? { success: true, name: entry.name, description: entry.description, body: entry.body }
+                : { success: false, error: entry.error };
+        } catch (error) {
+            console.error('Error reading knowledge entry:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('knowledge:clear-directory', async () => {
+        try {
+            storage.updatePreference('knowledgeDir', '');
+            return { success: true };
+        } catch (error) {
+            console.error('Error clearing knowledge directory:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // Deleting an entry would mean writing inside a directory the user owns, outside this app's config
+    // dir. Showing the file in the file manager costs one line and leaves the folder the user's own.
+    ipcMain.handle('knowledge:reveal', async (event, id) => {
+        try {
+            const dir = storage.getPreferences().knowledgeDir || '';
+            const entry = knowledge.listKnowledgeEntries(dir).find(candidate => candidate.id === id);
+            if (!entry) {
+                return { success: false, error: '条目不存在' };
+            }
+
+            shell.showItemInFolder(path.join(dir, entry.file));
+            return { success: true };
+        } catch (error) {
+            console.error('Error revealing knowledge entry:', error);
             return { success: false, error: error.message };
         }
     });

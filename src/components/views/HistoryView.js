@@ -352,6 +352,7 @@ export class HistoryView extends LitElement {
     getSessionPreview(session) {
         const parts = [];
         if (session.messageCount > 0) parts.push(`${session.messageCount} messages`);
+        if (session.detailCount > 0) parts.push(`${session.detailCount} detailed`);
         if (session.screenAnalysisCount > 0) parts.push(`${session.screenAnalysisCount} screen`);
         if (session.profile) {
             const profileNames = this.getProfileNames();
@@ -380,8 +381,44 @@ export class HistoryView extends LitElement {
         return messages;
     }
 
+    // Reuses the conversation rows: a detailed answer is stored as a question and its answer, with the
+    // knowledge entries it consulted carried alongside so a later reading can tell what it leaned on.
+    collectDetail() {
+        const messages = [];
+        const history = this.selectedSession?.detailHistory || [];
+        history.forEach(turn => {
+            if (turn.question) messages.push({ type: 'user', content: turn.question, timestamp: turn.timestamp });
+            if (turn.ai_response) {
+                messages.push({
+                    type: 'ai',
+                    content: turn.ai_response,
+                    timestamp: turn.timestamp,
+                    usedKnowledge: turn.used_knowledge || [],
+                });
+            }
+        });
+        return messages;
+    }
+
     renderTabContent() {
         if (!this.selectedSession) return html`<div class="empty">Select a session.</div>`;
+
+        if (this.activeTab === 'detail') {
+            const messages = this.collectDetail();
+            if (!messages.length) return html`<div class="empty">No detailed answers in this session.</div>`;
+            return messages.map(msg => html`
+                <div class="message-row ${msg.type}">
+                    <div class="message">
+                        <div class="message-body">${msg.content}</div>
+                        <div class="message-meta">
+                            ${this.formatTime(msg.timestamp)}${msg.usedKnowledge?.length
+                                ? ` · ${msg.usedKnowledge.join(', ')}`
+                                : ''}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
 
         if (this.activeTab === 'conversation') {
             const messages = this.collectConversation(this.selectedSession);
@@ -469,6 +506,7 @@ export class HistoryView extends LitElement {
     renderDetailView() {
         const conversationCount = this.collectConversation(this.selectedSession).length;
         const screenCount = this.selectedSession?.screenAnalysisHistory?.length || 0;
+        const detailCount = this.selectedSession?.detailHistory?.length || 0;
 
         return html`
             <div class="page-title">Session Detail</div>
@@ -483,6 +521,9 @@ export class HistoryView extends LitElement {
             <div class="tab-row">
                 <button class="tab-btn ${this.activeTab === 'conversation' ? 'active' : ''}" @click=${() => { this.activeTab = 'conversation'; }}>
                     Conversation (${conversationCount})
+                </button>
+                <button class="tab-btn ${this.activeTab === 'detail' ? 'active' : ''}" @click=${() => { this.activeTab = 'detail'; }}>
+                    Detailed (${detailCount})
                 </button>
                 <button class="tab-btn ${this.activeTab === 'screen' ? 'active' : ''}" @click=${() => { this.activeTab = 'screen'; }}>
                     Screen (${screenCount})

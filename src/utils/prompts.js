@@ -32,6 +32,57 @@ const interviewPrompt = {
 只给出可以直接照读的那段话，用 **Markdown 格式**。不要教练式点评、不要「你应该……」、不要解释 —— 就是候选人能马上说出口的原话。保持**简短有力**。`,
 };
 
+// The second answer to the same question, shown beside the first. Same persona and same language rule,
+// but the opposite brief: the short one is a line to read aloud right now, this one is what the user
+// reads in the gap before the next question, to have the whole topic in hand. It may use the knowledge
+// directory, so both the framing and the closing instruction are written for it rather than reused.
+const detailPrompt = {
+    intro: `你是一名实时面试助手。除了屏幕上那份可以立刻照读的精简回答之外，你还要为同一次提问额外准备一份**详细回答**，显示在侧边的独立面板里。用户会在面试官继续追问之前、或者两次提问之间的空档里读它，用它把这道题彻底答透、答准。
+
+这份回答的读者是「马上可能被追问的同一个人」，所以目标是让他理解原理、边界条件和取舍，而不是提供一句可以照念的话。`,
+
+    formatRequirements: `**回答格式要求：**
+- 用 **Markdown 格式**组织：小标题、短横线列表、必要的代码块都可以用
+- 先给结论，再展开理由；关键结论用**加粗**
+- 篇幅服从题目本身：简单问题两三句即可，复杂问题可以写成结构完整的一小节
+- 不要复述问题，不要写「好的，我来回答」这类开场话`,
+
+    content: `在「用户提供的背景资料」的基础上作答，并遵守以下要求：
+1. 比精简回答更充分、更准确：补充背后的原理、适用与不适用的场景，以及对方最可能追问的点。
+2. 有依据地给出取舍。存在多种做法时，说明各自的代价与适用条件，再明确推荐一种并讲清为什么。
+3. 不要编造用户的经历、数字或项目细节。背景资料里没有的事实，就作为通用的技术或方法论述，不要安到用户头上。`,
+
+    // Only present when there is an index to go with it: a rule about a directory that does not exist
+    // would spend prompt space teaching the model about a mechanism it cannot use this session.
+    knowledgeRule: `4. 你可以调用 load_knowledge 读取「知识库」索引里某个条目的正文。当且仅当某个条目的摘要与当前问题直接相关时才调用，并且每次回答最多调用一次。光看摘要判断不了相关性就不要调用，也绝不为了凑内容而调用。`,
+
+    outputInstructions: `**输出要求：**
+直接输出这份详细回答本身。不要教练式点评、不要「你应该……」、不要解释你在做什么，也不要提到「精要」「详细」「知识库」「load_knowledge」这些机制 —— 用户看到的只是一份答案。这份回答同样必须遵守开头的语言要求。`,
+};
+
+// `knowledgeSummary` is the index produced by knowledge.formatKnowledgeSummary: an empty string means
+// there is no directory to consult, and the whole topic is left out of the prompt rather than shown as
+// an empty list.
+function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
+    return [
+        detailPrompt.intro,
+        '\n\n',
+        LANGUAGE_RULE,
+        '\n\n',
+        detailPrompt.formatRequirements,
+        '\n\n',
+        detailPrompt.content,
+        knowledgeSummary ? `\n${detailPrompt.knowledgeRule}` : '',
+        knowledgeSummary ? `\n\n${knowledgeSummary}\n` : '',
+        '\n\n用户提供的背景资料\n-----\n',
+        customPrompt,
+        '\n-----\n\n',
+        detailPrompt.outputInstructions,
+        '\n\n',
+        LANGUAGE_RULE,
+    ].join('');
+}
+
 function getSystemPrompt(customPrompt = '') {
     return [
         interviewPrompt.intro,
@@ -52,4 +103,5 @@ function getSystemPrompt(customPrompt = '') {
 
 module.exports = {
     getSystemPrompt,
+    getDetailSystemPrompt,
 };

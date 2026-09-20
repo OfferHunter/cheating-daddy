@@ -375,6 +375,10 @@ export class CheatingDaddyApp extends LitElement {
         sessionActive: { type: Boolean },
         selectedLanguage: { type: String },
         messages: { type: Array },
+        // Held here rather than in the assistant view, which is rebuilt on every navigation: the
+        // detailed answers have to outlive a trip to another page, exactly like the transcript does.
+        detailMessages: { type: Array },
+        detailCurrent: { type: Number },
         selectedScreenshotInterval: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
@@ -397,6 +401,11 @@ export class CheatingDaddyApp extends LitElement {
         this.layoutMode = 'normal';
         this.messages = [];
         this._msgSeq = 0;
+        this.detailMessages = [];
+        this.detailCurrent = null;
+        // Follow the newest detailed answer until the user pages back to an older one, at which point a
+        // new one must not yank the pane away from what they are reading.
+        this._detailFollowing = true;
         this._viewInstances = new Map();
         this._isClickThrough = false;
         this._storageLoaded = false;
@@ -465,6 +474,14 @@ export class CheatingDaddyApp extends LitElement {
                 this._isClickThrough = isEnabled;
             });
             ipcRenderer.on('reconnect-failed', (_, data) => this.addNewResponse(data.message));
+            ipcRenderer.on('new-detail-response', (_, data) => this.addDetailResponse(data));
+            ipcRenderer.on('update-detail-response', (_, data) => this.updateDetailResponse(data));
+            ipcRenderer.on('detail-response-complete', (_, data) => this.completeDetailResponse(data));
+            ipcRenderer.on('detail-tool-used', (_, data) => this.handleDetailToolUsed(data));
+            // Registered here rather than in the assistant view: the shortcuts have to be caught while
+            // another page is showing too, and only the app element is around for the whole session.
+            ipcRenderer.on('detail-prev', () => this.stepDetail(-1));
+            ipcRenderer.on('detail-next', () => this.stepDetail(1));
         }
     }
 
@@ -481,6 +498,12 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.removeAllListeners('update-status');
             ipcRenderer.removeAllListeners('click-through-toggled');
             ipcRenderer.removeAllListeners('reconnect-failed');
+            ipcRenderer.removeAllListeners('new-detail-response');
+            ipcRenderer.removeAllListeners('update-detail-response');
+            ipcRenderer.removeAllListeners('detail-response-complete');
+            ipcRenderer.removeAllListeners('detail-tool-used');
+            ipcRenderer.removeAllListeners('detail-prev');
+            ipcRenderer.removeAllListeners('detail-next');
         }
     }
 
@@ -609,6 +632,96 @@ export class CheatingDaddyApp extends LitElement {
         this._replaceMessage(index, { final: true });
     }
 
+    // ── Detailed answers ──
+
+    _detailIndex(detailId) {
+        return this.detailMessages.findIndex(m => m.detailId === detailId);
+    }
+
+    // Detailed answers are keyed by their own id, never by position: the main process drops all but the
+    // last few, and a position that shifts under the pane would silently show the wrong answer.
+    _ensureDetailRow(detailId, turnSeq, question) {
+        const index = this._detailIndex(detailId);
+        if (index !== -1) return index;
+
+        this.detailMessages = [
+            ...this.detailMessages,
+            {
+                detailId,
+                turnSeq,
+                question: question || '',
+                text: '',
+                ts: Date.now(),
+                final: false,
+                usedKnowledge: [],
+                truncated: false,
+                error: '',
+            },
+        ];
+        if (this._detailFollowing) this.detailCurrent = detailId;
+        return this.detailMessages.length - 1;
+    }
+
+    _replaceDetail(index, changes) {
+        const next = [...this.detailMessages];
+        next[index] = { ...next[index], ...changes };
+        this.detailMessages = next;
+        this.requestUpdate();
+    }
+
+    addDetailResponse(data) {
+        const { detailId = null, turnSeq = null, question = '', text = '' } = data || {};
+        if (detailId === null) return;
+
+        this._ensureDetailRow(detailId, turnSeq, question);
+        this._replaceDetail(this._detailIndex(detailId), { text });
+    }
+
+    updateDetailResponse(data) {
+        const { detailId = null, text = '' } = data || {};
+        const index = this._detailIndex(detailId);
+        if (index === -1) return;
+
+        this._replaceDetail(index, { text });
+    }
+
+    completeDetailResponse(data) {
+        const { detailId = null, turnSeq = null, question = '', ok = true, error = '', usedKnowledge = [], truncated = false } = data || {};
+        if (detailId === null) return;
+
+        // A request that failed before its first token never opened a row, so the completion is what has
+        // to bring the failure into view rather than being dropped for want of somewhere to land.
+        const index = this._ensureDetailRow(detailId, turnSeq, question);
+        this._replaceDetail(index, { final: true, ok, error, usedKnowledge, truncated });
+    }
+
+    handleDetailToolUsed(data) {
+        const { detailId = null, id } = data || {};
+        const index = this._detailIndex(detailId);
+        if (index === -1 || !id) return;
+
+        const row = this.detailMessages[index];
+        if (row.usedKnowledge.includes(id)) return;
+
+        this._replaceDetail(index, { usedKnowledge: [...row.usedKnowledge, id] });
+    }
+
+    // The pane's ‹ › buttons and their shortcuts land here. One step per press, clamped at both ends.
+    stepDetail(delta) {
+        if (!this.detailMessages.length) return;
+
+        const ids = this.detailMessages.map(row => row.detailId);
+        const current = this.detailCurrent === null ? ids.length - 1 : ids.indexOf(this.detailCurrent);
+        const from = current === -1 ? ids.length - 1 : current;
+        const next = Math.max(0, Math.min(ids.length - 1, from + delta));
+
+        this.detailCurrent = ids[next];
+        // Stepping back stops the pane following new answers; stepping forward to the newest resumes it,
+        // since that is the same bargain as scrolling the transcript back to its bottom by hand.
+        this._detailFollowing = next === ids.length - 1;
+        this.requestUpdate();
+    }
+
     // ── Navigation ──
 
     navigate(view) {
@@ -673,6 +786,11 @@ export class CheatingDaddyApp extends LitElement {
 
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
         this.messages = [];
+        // Cleared with the transcript: the main process drops its own detail log when the session
+        // restarts, so keeping these would page into answers that no longer exist.
+        this.detailMessages = [];
+        this.detailCurrent = null;
+        this._detailFollowing = true;
         this.startTime = Date.now();
         this.sessionActive = true;
         this.currentView = 'assistant';
@@ -782,7 +900,14 @@ export class CheatingDaddyApp extends LitElement {
 
             case 'assistant':
                 return html`
-                    <assistant-view .messages=${this.messages} .onSendText=${msg => this.handleSendText(msg)}></assistant-view>
+                    <assistant-view
+                        .messages=${this.messages}
+                        .detailMessages=${this.detailMessages}
+                        .detailCurrent=${this.detailCurrent}
+                        .onSendText=${msg => this.handleSendText(msg)}
+                        .onDetailPrev=${() => this.stepDetail(-1)}
+                        .onDetailNext=${() => this.stepDetail(1)}
+                    ></assistant-view>
                 `;
 
             default:

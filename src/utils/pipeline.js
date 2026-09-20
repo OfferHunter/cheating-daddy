@@ -1,6 +1,14 @@
-const { getSystemPrompt } = require('./prompts');
-const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis } = require('./session');
+const { getSystemPrompt, getDetailSystemPrompt } = require('./prompts');
+const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis, saveDetailTurn } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
+const {
+    KNOWLEDGE_TOOL_NAME,
+    KNOWLEDGE_TOOL_SPEC,
+    listKnowledgeEntries,
+    formatKnowledgeSummary,
+    readKnowledgeById,
+    executeKnowledgeTool,
+} = require('./knowledge');
 const { createRealtimeAsr } = require('./bailianAsr');
 const { logTransportEvent } = require('./transportLogger');
 const {
@@ -12,6 +20,14 @@ const {
 } = require('../storage');
 
 let currentSystemPrompt = null;
+// The detail chain's own prompt and switch, snapshotted at session start for the same reason as the
+// prompt above: reading a preference per turn would put a disk read in front of every answer.
+let currentDetailSystemPrompt = null;
+let detailModeEnabled = false;
+// The entries the session started with, used both for the prompt index and to decide whether the tool is
+// worth declaring at all. Only the *index* is a snapshot — the executor reads the directory live, so a
+// stale entry here can never turn into a wrong fact, only into a failed lookup.
+let detailKnowledgeEntries = [];
 let isLocalActive = false;
 let transcriptionLanguage = null;
 
@@ -80,6 +96,18 @@ let turnSeq = 0;
 // Bumped whenever the session resets. A turn that outlives its session must not write into the
 // next one, and requests are never aborted.
 let sessionGeneration = 0;
+
+// The detailed answers, tracked completely apart from turnLog. Every later feature reads one of these
+// two logs and they must not see each other's entries: a detail entry in turnLog would be replayed into
+// the chat context, counted by the status line as another pending answer, cropped early by pruneTurnLog,
+// and given a bubble of its own by the renderer. Kept only so the pane can page back through the session.
+let detailLog = [];
+let detailSeq = 0;
+const MAX_DETAIL_TURNS = 30;
+
+function getKnowledgeDir() {
+    return getPreferences().knowledgeDir || '';
+}
 
 // Turns are assembled from the server's sentence events; the client analyses no audio. A final
 // sentence ends the turn on the spot, so there is no client-side settle window — a window armed on
@@ -375,29 +403,48 @@ function userContent(entry, isCurrent = false) {
     return `${SPEAKER_TAG[entry.speaker]} ${content}`;
 }
 
+// The user side of the transcript only: the interviewer's questions and the candidate's own words, in
+// order. Past answers are deliberately left out. The model can already see what it was asked, and
+// replaying its own previous answers pulled every later one toward the phrasing of the last — most
+// visibly on a follow-up, which came back as a rewording of the answer above it.
+//
+// The result is a run of consecutive `user` messages, which the API accepts; the last one is always
+// the question being answered now.
+function buildUserSideHistory(excludeEntry) {
+    return turnLog
+        .filter(entry => entry !== excludeEntry)
+        .slice(-CHAT_CONTEXT_TURNS)
+        .map(entry => ({ role: 'user', content: userContent(entry) }));
+}
+
 function buildChatMessages(currentEntry) {
-    const history = turnLog.filter(entry => entry !== currentEntry).slice(-CHAT_CONTEXT_TURNS);
-    const messages = [{ role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' }];
+    return [
+        { role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' },
+        ...buildUserSideHistory(currentEntry),
+        { role: 'user', content: userContent(currentEntry, true) },
+    ];
+}
 
-    for (const entry of history) {
-        messages.push({ role: 'user', content: userContent(entry) });
+// Identical to buildChatMessages but for the system line, which is the whole difference between the two
+// answers: the same transcript, the same current question, a different set of instructions. Both read
+// buildUserSideHistory, so the interviewer/candidate turns each one sees stay in step.
+function buildDetailMessages(currentEntry) {
+    return [
+        { role: 'system', content: currentDetailSystemPrompt || '你是一名乐于助人的助手。' },
+        ...buildUserSideHistory(currentEntry),
+        { role: 'user', content: userContent(currentEntry, true) },
+    ];
+}
 
-        if (entry.status === 'done') {
-            // An empty answer is dropped rather than sent as a blank assistant turn.
-            if (entry.assistant) messages.push({ role: 'assistant', content: entry.assistant });
-            continue;
-        }
-
-        // Still streaming, or failed part way: show what the model actually produced and mark it
-        // truncated, so the new answer knows the previous one was cut off mid-sentence.
-        messages.push({
-            role: 'assistant',
-            content: entry.partial.trim() ? `${entry.partial.trim()} (...)` : '(...)',
-        });
+// The id the model asked for, or '' if there is nothing usable. Kept separate from executeKnowledgeTool
+// because the success path below has to know *which* entry was read in order to name it in the pane.
+function parseKnowledgeId(argsJson) {
+    try {
+        const id = JSON.parse(argsJson || '{}')?.id;
+        return typeof id === 'string' ? id.trim() : '';
+    } catch {
+        return '';
     }
-
-    messages.push({ role: 'user', content: userContent(currentEntry, true) });
-    return messages;
 }
 
 function pendingTurnCount() {
@@ -428,10 +475,13 @@ function persistTurn(entry) {
 async function runTurn(entry) {
     // Snapshot synchronously: turns dispatched while this one streams must not mutate its prompt.
     const messages = buildChatMessages(entry);
+    // Roles only, never the text: the transcript is already reconstructible from the ASR events in the
+    // same log, and this is the one line that says what actually went to the model.
+    logTransportEvent('chat.request', { turnId: entry.seq, roles: messages.map(message => message.role) });
 
     try {
         let isFirst = true;
-        const fullText = await requestChat(messages, text => {
+        const { text: fullText } = await requestChat(messages, text => {
             entry.partial = text;
 
             if (isFirst) {
@@ -480,6 +530,145 @@ async function runTurn(entry) {
     updateStreamingStatus();
 }
 
+// The second, longer answer to a question the short chain just took. It streams into the side pane
+// instead of a bubble, and nothing about it is visible to the short chain: it reports only its own
+// completion, so the status line keeps claiming the one response it always did.
+//
+// Deliberately not an async function: the prompt has to be built before the caller returns, exactly as
+// in runTurn, so that two turns dispatched back to back both see a transcript that does not yet contain
+// the other's answer. Calling an async function would do the same, but nothing here can be awaited.
+function runDetailTurn(shortEntry) {
+    if (!detailModeEnabled) return;
+    // A screenshot turn is a one-off question about an image: there is no interview topic to expand, and
+    // the pane would spend a second request to restate the same picture.
+    if (shortEntry.persistKind === 'screen') return;
+
+    const entry = {
+        detailId: ++detailSeq,
+        turnSeq: shortEntry.seq,
+        generation: shortEntry.generation,
+        question: shortEntry.contextText,
+        partial: '',
+        assistant: null,
+        status: 'pending',
+        usedKnowledge: [],
+        lastSentAt: 0,
+        lastSentText: '',
+    };
+
+    const messages = buildDetailMessages(shortEntry);
+    logTransportEvent('chat.request', { turnId: entry.turnSeq, detail: true, roles: messages.map(message => message.role) });
+
+    detailLog.push(entry);
+    if (detailLog.length > MAX_DETAIL_TURNS) detailLog = detailLog.slice(-MAX_DETAIL_TURNS);
+
+    const hasKnowledge = detailKnowledgeEntries.length > 0;
+
+    (async () => {
+        try {
+            let isFirst = true;
+            const { text, finishReason, rounds } = await requestChat(
+                messages,
+                partial => {
+                    entry.partial = partial;
+
+                    if (isFirst) {
+                        entry.lastSentText = partial;
+                        entry.lastSentAt = Date.now();
+                        sendToRenderer('new-detail-response', {
+                            detailId: entry.detailId,
+                            turnSeq: entry.turnSeq,
+                            question: entry.question,
+                            text: partial,
+                        });
+                        isFirst = false;
+                        return;
+                    }
+
+                    const now = Date.now();
+                    if (now - entry.lastSentAt < STREAM_SEND_INTERVAL_MS) return;
+                    entry.lastSentText = partial;
+                    entry.lastSentAt = now;
+                    sendToRenderer('update-detail-response', { detailId: entry.detailId, text: partial });
+                },
+                {
+                    // No directory means no tool is declared at all, so the request is the plain one it
+                    // has always been — an endpoint that does not support tools cannot even notice.
+                    tools: hasKnowledge ? [KNOWLEDGE_TOOL_SPEC] : null,
+                    maxToolRounds: hasKnowledge ? 1 : 0,
+                    executeTool: (name, argsJson) => {
+                        const dir = getKnowledgeDir();
+
+                        if (name === KNOWLEDGE_TOOL_NAME) {
+                            const requested = parseKnowledgeId(argsJson);
+                            if (requested) {
+                                // Read here rather than through executeKnowledgeTool so that only a lookup
+                                // that actually resolved is named in the pane as knowledge the answer rests
+                                // on; the failures fall through to the same error text a bad call gets.
+                                const result = readKnowledgeById(dir, requested);
+                                if (!result.ok) return result.error;
+
+                                if (!entry.usedKnowledge.includes(requested)) {
+                                    entry.usedKnowledge.push(requested);
+                                    sendToRenderer('detail-tool-used', { detailId: entry.detailId, id: requested });
+                                }
+                                return result.body;
+                            }
+                        }
+
+                        return executeKnowledgeTool(name, argsJson, dir);
+                    },
+                }
+            );
+
+            entry.assistant = text.trim();
+            entry.status = 'done';
+            // The session may have been restarted, or replaced by another one, while this streamed. It
+            // still has to finish quietly: sendToRenderer targets the first window whatever session it is
+            // showing, so an unguarded completion would land in the next session's pane.
+            if (entry.generation !== sessionGeneration) return;
+
+            logTransportEvent('chat.completed', { turnId: entry.turnSeq, detail: true, rounds, finishReason });
+            console.log('[Pipeline] detail response completed:', entry.turnSeq);
+
+            // The last tokens may have been swallowed by the throttle window.
+            if (text !== entry.lastSentText) {
+                sendToRenderer('update-detail-response', { detailId: entry.detailId, text });
+            }
+
+            sendToRenderer('detail-response-complete', {
+                detailId: entry.detailId,
+                turnSeq: entry.turnSeq,
+                question: entry.question,
+                ok: true,
+                error: '',
+                usedKnowledge: entry.usedKnowledge,
+                // A long answer is far likelier to reach the token cap than a short one, and the pane has
+                // to be able to say so: silently cut-off text is worse than text that admits it was cut.
+                truncated: finishReason === 'length',
+            });
+
+            if (entry.assistant) saveDetailTurn(entry.question, entry.assistant, entry.turnSeq, entry.usedKnowledge);
+        } catch (error) {
+            entry.status = 'failed';
+            console.error('[Pipeline] detail error:', error);
+            if (entry.generation !== sessionGeneration) return;
+
+            // Carries the question as well: a request that failed before its first token never opened a
+            // row in the pane, so the completion is what brings the failure into view.
+            sendToRenderer('detail-response-complete', {
+                detailId: entry.detailId,
+                turnSeq: entry.turnSeq,
+                question: entry.question,
+                ok: false,
+                error: error.message,
+                usedKnowledge: [],
+                truncated: false,
+            });
+        }
+    })();
+}
+
 // Never awaited and never queued: the caller is the ASR callback and must stay responsive.
 function dispatchTurn(text) {
     const trimmed = (text || '').trim();
@@ -491,6 +680,10 @@ function dispatchTurn(text) {
     commitCandidateSpeech();
     const entry = createTurn(trimmed, trimmed, 'conversation');
     runTurn(entry);
+    // A sibling of runTurn, not a step inside it: runTurn builds its prompt synchronously, so by the time
+    // this line runs both chains have snapshotted the same transcript. Keeping them siblings is also what
+    // lets a screenshot turn skip the detail chain with a single guard.
+    runDetailTurn(entry);
     updateStreamingStatus();
     return entry;
 }
@@ -581,6 +774,10 @@ function resetAudioState() {
     transcriptionLanguage = null;
     turnLog = [];
     turnSeq = 0;
+    // Cleared with the turn log, or a session opened after this one would start with the previous
+    // session's detailed answers still pageable in the pane.
+    detailLog = [];
+    detailSeq = 0;
     sessionGeneration += 1;
 }
 
@@ -589,6 +786,15 @@ function initializeChatSession(customPrompt, selectedLanguage) {
 
     closeLocalSession();
     currentSystemPrompt = getSystemPrompt(customPrompt);
+
+    // Both the switch and the knowledge index are read once, here. The index is deliberately a snapshot
+    // rather than a per-turn rebuild: it would cost a directory walk in front of every answer, and the
+    // stale window is nil in practice, because the settings page that changes either one cannot be
+    // reached from a live session. A stale id still cannot produce a wrong answer — the executor below
+    // validates against the directory as it is at call time.
+    detailModeEnabled = getPreferences().detailMode !== false;
+    detailKnowledgeEntries = detailModeEnabled ? listKnowledgeEntries(getKnowledgeDir()) : [];
+    currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries));
 
     transcriptionLanguage = selectedLanguage;
 
@@ -655,6 +861,9 @@ function closeLocalSession() {
 
     resetAudioState();
     currentSystemPrompt = null;
+    currentDetailSystemPrompt = null;
+    detailModeEnabled = false;
+    detailKnowledgeEntries = [];
 }
 
 function isLocalSessionActive() {
@@ -704,6 +913,7 @@ async function sendLocalImage(base64Data, prompt) {
     commitCandidateSpeech();
     const entry = createTurn(requestContent, prompt, 'screen');
     runTurn(entry);
+    runDetailTurn(entry);
 
     return { success: true, model: getChatModel(), turnId: entry.seq };
 }

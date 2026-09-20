@@ -16,6 +16,10 @@ let chatSessionActive = false;
 let currentSessionId = null;
 let conversationHistory = [];
 let screenAnalysisHistory = [];
+// The detailed answers, kept as their own list rather than folded into conversationHistory: they are a
+// second answer to the same question, so the History page shows them under their own tab and the short
+// transcript stays exactly as long as it was.
+let detailHistory = [];
 // The app is an interview teleprompter, so every recorded session carries the same label. It is still
 // written out because the history view reads it, and sessions saved before had other profiles.
 const SESSION_PROFILE = 'interview';
@@ -38,6 +42,7 @@ function initializeNewSession(customPrompt = null) {
     startTransportLog(currentSessionId);
     conversationHistory = [];
     screenAnalysisHistory = [];
+    detailHistory = [];
     currentProfile = SESSION_PROFILE;
     currentCustomPrompt = customPrompt;
     console.log('New conversation session started:', currentSessionId);
@@ -73,6 +78,33 @@ function saveConversationTurn(transcription, aiResponse, order = 0) {
         sessionId: currentSessionId,
         turn: conversationTurn,
         fullHistory: conversationHistory,
+    });
+}
+
+// `order` is the sequence number of the short turn this answers, so the two tabs of the History page
+// list the session in the same order even though the detailed answer lands seconds later.
+function saveDetailTurn(question, response, order = 0, usedKnowledge = []) {
+    if (!currentSessionId) {
+        initializeNewSession();
+    }
+
+    const detailTurn = {
+        timestamp: Date.now(),
+        question: (question || '').trim(),
+        ai_response: response.trim(),
+        used_knowledge: usedKnowledge,
+        order,
+    };
+
+    detailHistory = [...detailHistory, detailTurn].sort((a, b) => a.order - b.order);
+    console.log('Saved detail turn:', detailTurn);
+
+    // Sent to the renderer, which persists it; the reply is the whole array, not this turn, so that any
+    // number of them arriving in any order leave the stored file identical.
+    sendToRenderer('save-detail-turn', {
+        sessionId: currentSessionId,
+        turn: detailTurn,
+        fullHistory: detailHistory,
     });
 }
 
@@ -383,6 +415,7 @@ module.exports = {
     initializeNewSession,
     saveConversationTurn,
     saveScreenAnalysis,
+    saveDetailTurn,
     stopMacOSAudioCapture,
     setupIpcHandlers,
 };
