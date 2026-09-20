@@ -60,7 +60,6 @@ export class HistoryView extends LitElement {
                 transition: background var(--transition);
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
                 gap: var(--space-sm);
             }
 
@@ -68,7 +67,11 @@ export class HistoryView extends LitElement {
                 background: var(--bg-hover);
             }
 
+            /* Takes the free space so the label sits next to the checkbox and the badge is pushed to the
+               far edge; space-between alone would centre the label between the two. */
             .session-left {
+                flex: 1;
+                min-width: 0;
                 display: flex;
                 flex-direction: column;
                 gap: 2px;
@@ -124,28 +127,74 @@ export class HistoryView extends LitElement {
                 font-size: var(--font-size-sm);
             }
 
-            .tab-row {
-                display: flex;
-                gap: 6px;
+            .session-card.selected {
+                background: var(--bg-hover);
             }
 
-            .tab-btn {
+            .session-check {
+                width: 15px;
+                height: 15px;
+                margin: 0;
+                flex-shrink: 0;
+                accent-color: var(--accent);
+                cursor: pointer;
+            }
+
+            .selection-bar {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                padding: var(--space-sm) var(--space-md);
+                border-bottom: 1px solid var(--border);
+                background: var(--bg-elevated);
+            }
+
+            .selection-count {
+                flex: 1;
+                color: var(--text-secondary);
+                font-size: var(--font-size-sm);
+            }
+
+            .bar-btn {
                 border: 1px solid var(--border);
                 border-radius: var(--radius-sm);
                 background: transparent;
-                color: var(--text-muted);
-                padding: 6px 10px;
-                cursor: pointer;
-                font-size: var(--font-size-xs);
-            }
-
-            .tab-btn:hover {
                 color: var(--text-secondary);
+                padding: 5px 10px;
+                font-size: var(--font-size-xs);
+                cursor: pointer;
+                transition: background var(--transition);
+                white-space: nowrap;
             }
 
-            .tab-btn.active {
+            .bar-btn:hover:not(:disabled) {
+                background: var(--bg-hover);
                 color: var(--text-primary);
-                border-color: var(--text-secondary);
+            }
+
+            .bar-btn.danger {
+                border-color: var(--danger);
+                color: var(--danger);
+            }
+
+            .bar-btn.danger:hover:not(:disabled) {
+                background: rgba(241, 76, 76, 0.11);
+                color: var(--danger);
+            }
+
+            .selection-note {
+                padding: var(--space-sm) var(--space-md);
+                border-bottom: 1px solid var(--border);
+                font-size: var(--font-size-xs);
+                color: var(--text-muted);
+            }
+
+            .selection-note.success {
+                color: var(--success);
+            }
+
+            .selection-note.error {
+                color: var(--danger);
             }
 
             .details-scroll {
@@ -190,6 +239,50 @@ export class HistoryView extends LitElement {
                 font-size: 10px;
                 margin-top: 4px;
                 opacity: 0.5;
+            }
+
+            .message-label {
+                font-size: 10px;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                opacity: 0.55;
+                margin-bottom: 4px;
+            }
+
+            .context-strip {
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                background: var(--bg-elevated);
+                /* overflow:hidden drops the automatic content-based minimum, so without flex-shrink:0 this
+                   collapses to its 1px border in the timeline's flex column and clips the toggle away. */
+                overflow: hidden;
+                flex-shrink: 0;
+            }
+
+            .context-toggle {
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: var(--space-sm);
+                border: none;
+                background: transparent;
+                color: var(--text-secondary);
+                font-size: var(--font-size-xs);
+                padding: 6px var(--space-sm);
+                cursor: pointer;
+            }
+
+            .context-toggle:hover {
+                color: var(--text-primary);
+            }
+
+            .context-body {
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-sm);
+                padding: var(--space-sm);
+                border-top: 1px solid var(--border);
             }
 
             .message-row.user .message {
@@ -263,8 +356,12 @@ export class HistoryView extends LitElement {
         selectedSession: { type: Object },
         selectedSessionId: { type: String },
         loading: { type: Boolean },
-        activeTab: { type: String },
         searchQuery: { type: String },
+        selectedIds: { type: Array },
+        confirmingDelete: { type: Boolean },
+        statusMessage: { type: String },
+        statusType: { type: String },
+        showContext: { type: Boolean },
     };
 
     constructor() {
@@ -273,8 +370,12 @@ export class HistoryView extends LitElement {
         this.selectedSession = null;
         this.selectedSessionId = null;
         this.loading = true;
-        this.activeTab = 'conversation';
         this.searchQuery = '';
+        this.selectedIds = [];
+        this.confirmingDelete = false;
+        this.statusMessage = '';
+        this.statusType = '';
+        this.showContext = false;
         this.loadSessions();
     }
 
@@ -282,6 +383,9 @@ export class HistoryView extends LitElement {
         try {
             this.loading = true;
             this.sessions = await cheatingDaddy.storage.getAllSessions();
+            // A deleted session must not keep counting towards the toolbar, and a selection built before
+            // a reload must never refer to an id the list no longer shows.
+            this.selectedIds = this.selectedIds.filter(id => this.sessions.some(session => session.sessionId === id));
         } catch (error) {
             console.error('Error loading sessions:', error);
             this.sessions = [];
@@ -297,7 +401,7 @@ export class HistoryView extends LitElement {
             if (session) {
                 this.selectedSession = session;
                 this.selectedSessionId = sessionId;
-                this.activeTab = 'conversation';
+                this.showContext = false;
                 this.requestUpdate();
             }
         } catch (error) {
@@ -308,11 +412,90 @@ export class HistoryView extends LitElement {
     closeSession() {
         this.selectedSession = null;
         this.selectedSessionId = null;
-        this.activeTab = 'conversation';
+        this.showContext = false;
     }
 
     handleSearchInput(e) {
         this.searchQuery = e.target.value;
+    }
+
+    isSelected(sessionId) {
+        return this.selectedIds.includes(sessionId);
+    }
+
+    toggleSelect(sessionId) {
+        this.selectedIds = this.isSelected(sessionId)
+            ? this.selectedIds.filter(id => id !== sessionId)
+            : [...this.selectedIds, sessionId];
+        this.confirmingDelete = false;
+        this.statusMessage = '';
+    }
+
+    // Applies to the rows the search is currently showing, so "all" means what the user can see rather
+    // than every session on disk.
+    toggleSelectAll(visibleSessions) {
+        const visibleIds = visibleSessions.map(session => session.sessionId);
+        const allSelected = visibleIds.length > 0 && visibleIds.every(id => this.isSelected(id));
+        this.selectedIds = allSelected
+            ? this.selectedIds.filter(id => !visibleIds.includes(id))
+            : [...new Set([...this.selectedIds, ...visibleIds])];
+        this.confirmingDelete = false;
+        this.statusMessage = '';
+    }
+
+    clearSelection() {
+        this.selectedIds = [];
+        this.confirmingDelete = false;
+        this.statusMessage = '';
+    }
+
+    // The row body opens the session; the checkbox inside it is the one click that must not.
+    handleCardClick(event, sessionId) {
+        if (event.target.closest('.session-check')) return;
+        this.openSession(sessionId);
+    }
+
+    async deleteSelected() {
+        if (!this.selectedIds.length) return;
+        const count = this.selectedIds.length;
+        try {
+            const results = await Promise.all(this.selectedIds.map(id => cheatingDaddy.storage.deleteSession(id)));
+            const failed = results.filter(result => !result?.success).length;
+            await this.loadSessions();
+            this.selectedIds = [];
+            this.confirmingDelete = false;
+            this.statusType = failed ? 'error' : 'success';
+            this.statusMessage = failed
+                ? `${failed} of ${count} sessions could not be deleted.`
+                : `Deleted ${count} session${count === 1 ? '' : 's'}.`;
+        } catch (error) {
+            console.error('Error deleting sessions:', error);
+            this.confirmingDelete = false;
+            this.statusType = 'error';
+            this.statusMessage = `Error deleting sessions: ${error.message}`;
+        } finally {
+            this.requestUpdate();
+        }
+    }
+
+    async exportSelected() {
+        if (!this.selectedIds.length) return;
+        try {
+            const result = await cheatingDaddy.storage.exportSessions(this.selectedIds);
+            // A cancelled dialog is not an outcome worth reporting; the selection stays as it was.
+            if (result.canceled) return;
+            this.statusType = result.success ? 'success' : 'error';
+            this.statusMessage = result.success
+                ? `Exported ${result.count} session${result.count === 1 ? '' : 's'} to ${result.dir}`
+                : `Export failed: ${result.error || 'unknown error'}`;
+        } catch (error) {
+            console.error('Error exporting sessions:', error);
+            this.statusType = 'error';
+            this.statusMessage = `Export failed: ${error.message}`;
+        } finally {
+            this.confirmingDelete = false;
+            this.requestUpdate();
+        }
     }
 
     formatDate(timestamp) {
@@ -371,98 +554,167 @@ export class HistoryView extends LitElement {
         });
     }
 
-    collectConversation(session) {
-        const messages = [];
-        const history = session.conversationHistory || [];
-        history.forEach(turn => {
-            if (turn.transcription) messages.push({ type: 'user', content: turn.transcription, timestamp: turn.timestamp });
-            if (turn.ai_response) messages.push({ type: 'ai', content: turn.ai_response, timestamp: turn.timestamp });
-        });
-        return messages;
-    }
-
-    // Reuses the conversation rows: a detailed answer is stored as a question and its answer, with the
-    // knowledge entries it consulted carried alongside so a later reading can tell what it leaned on.
-    collectDetail() {
-        const messages = [];
-        const history = this.selectedSession?.detailHistory || [];
-        history.forEach(turn => {
-            if (turn.question) messages.push({ type: 'user', content: turn.question, timestamp: turn.timestamp });
-            if (turn.ai_response) {
-                messages.push({
-                    type: 'ai',
-                    content: turn.ai_response,
-                    timestamp: turn.timestamp,
-                    usedKnowledge: turn.used_knowledge || [],
-                });
+    // The three stored lists are two answers to one question, not two conversations: a brief turn, its
+    // detailed twin and the screenshot summary of an image question all carry that question's sequence
+    // number as `order`. So rows are grouped by `order` and read as one timeline.
+    //
+    // Ordering the rows by `order` rather than by timestamp is deliberate. Answers stream concurrently and
+    // finish out of order, so a timestamp sort would replay the interview in the order the model happened
+    // to finish answering rather than the order the questions were asked — orders 3 and 5 in one recorded
+    // session are a real instance of the two disagreeing.
+    collectTimeline(session) {
+        const groups = new Map();
+        const groupFor = (order, timestamp) => {
+            // `order` is absent or zero only in sessions written before it existed. Those fall back to
+            // being keyed by their own timestamp, so they stay separate rows instead of collapsing into
+            // one, and they sort last rather than jumping to the front.
+            const numbered = Number.isFinite(order) && order > 0;
+            const key = numbered ? `o${order}` : `t${timestamp}`;
+            if (!groups.has(key)) {
+                groups.set(key, { order: numbered ? order : Infinity, parts: [] });
             }
+            return groups.get(key);
+        };
+
+        // The transcript and the detail turn both store the same question text for the same `order`, so
+        // only the first one seen is kept: the alternative is the page showing every question twice.
+        const parts = [
+            ...(session.conversationHistory || []).map(turn => ({
+                role: 'question',
+                content: turn.transcription,
+                timestamp: turn.timestamp,
+                order: turn.order,
+            })),
+            ...(session.conversationHistory || []).map(turn => ({
+                role: 'brief',
+                content: turn.ai_response,
+                timestamp: turn.timestamp,
+                order: turn.order,
+            })),
+            ...(session.detailHistory || []).map(turn => ({
+                role: 'question',
+                content: turn.question,
+                timestamp: turn.timestamp,
+                order: turn.order,
+            })),
+            ...(session.detailHistory || []).map(turn => ({
+                role: 'detail',
+                content: turn.ai_response,
+                timestamp: turn.timestamp,
+                order: turn.order,
+                usedKnowledge: turn.used_knowledge || [],
+            })),
+            ...(session.screenAnalysisHistory || []).map(entry => ({
+                role: 'screen',
+                content: entry.response,
+                timestamp: entry.timestamp,
+                order: entry.order,
+            })),
+        ];
+
+        parts.forEach(part => {
+            if (!part.content) return;
+            const group = groupFor(part.order, part.timestamp);
+            if (part.role === 'question' && group.parts.some(existing => existing.role === 'question')) return;
+            group.parts.push(part);
         });
-        return messages;
+
+        // The question opens its row; the answers follow in the order they were actually produced, which
+        // is why the screenshot summary can sit ahead of the detailed answer for the same image.
+        const rank = part => (part.role === 'question' ? 0 : 1);
+        return [...groups.values()]
+            .map(group => this._dropRepeatedQuestion(group))
+            .filter(group => group.parts.length > 0)
+            .sort((a, b) => a.order - b.order || this._firstTimestamp(a) - this._firstTimestamp(b))
+            .map(group => {
+                group.parts.sort((a, b) => rank(a) - rank(b) || a.timestamp - b.timestamp);
+                return group;
+            });
     }
 
-    renderTabContent() {
-        if (!this.selectedSession) return html`<div class="empty">Select a session.</div>`;
-
-        if (this.activeTab === 'detail') {
-            const messages = this.collectDetail();
-            if (!messages.length) return html`<div class="empty">No detailed answers in this session.</div>`;
-            return messages.map(msg => html`
-                <div class="message-row ${msg.type}">
-                    <div class="message">
-                        <div class="message-body">${msg.content}</div>
-                        <div class="message-meta">
-                            ${this.formatTime(msg.timestamp)}${msg.usedKnowledge?.length
-                                ? ` · ${msg.usedKnowledge.join(', ')}`
-                                : ''}
-                        </div>
-                    </div>
-                </div>
-            `);
+    // An image question is stored twice over: the detail turn's `question` is the screenshot summary line
+    // verbatim, and the same line is what the screen entry holds. Once the question is there to carry it,
+    // the screen copy is dropped — otherwise the row prints one identical line twice.
+    _dropRepeatedQuestion(group) {
+        const question = group.parts.find(part => part.role === 'question');
+        if (question) {
+            const text = question.content.trim();
+            group.parts = group.parts.filter(part => part.role === 'question' || part.content.trim() !== text);
         }
+        return group;
+    }
 
-        if (this.activeTab === 'conversation') {
-            const messages = this.collectConversation(this.selectedSession);
-            if (!messages.length) return html`<div class="empty">No conversation data.</div>`;
-            return messages.map(msg => html`
-                <div class="message-row ${msg.type}">
-                    <div class="message">
-                        <div class="message-body">${msg.content}</div>
-                        <div class="message-meta">${this.formatTime(msg.timestamp)}</div>
-                    </div>
-                </div>
-            `);
-        }
+    _firstTimestamp(group) {
+        return Math.min(...group.parts.map(part => part.timestamp || 0));
+    }
 
-        if (this.activeTab === 'screen') {
-            const screen = this.selectedSession.screenAnalysisHistory || [];
-            if (!screen.length) return html`<div class="empty">No screen analysis data.</div>`;
-            return screen.map(entry => html`
-                <div class="message-row screen">
-                    <div class="message">
-                        <div class="message-body">${entry.response || ''}</div>
-                        <div class="message-meta">${this.formatTime(entry.timestamp)}</div>
-                    </div>
-                </div>
-            `);
-        }
-
+    // Folded away by default: the profile and prompt are what the session was set up with, not part of
+    // what was said in it, and every session of this app carries the same profile anyway.
+    renderContextStrip() {
         const profile = this.selectedSession.profile;
         const prompt = this.selectedSession.customPrompt;
-        if (!profile && !prompt) return html`<div class="empty">No context saved for this session.</div>`;
+        if (!profile && !prompt) return '';
 
+        const hint = [profile && 'profile', prompt && 'prompt'].filter(Boolean).join(' · ');
         return html`
-            ${profile ? html`
-                <div class="context-row">
-                    <span class="context-key">Profile</span>
-                    <span class="context-value">${this.getProfileNames()[profile] || profile}</span>
+            <div class="context-strip">
+                <button class="context-toggle" @click=${() => { this.showContext = !this.showContext; }}>
+                    <span>${this.showContext ? '▾' : '▸'} Context</span>
+                    <span>${hint}</span>
+                </button>
+                ${this.showContext ? html`
+                    <div class="context-body">
+                        ${profile ? html`
+                            <div class="context-row">
+                                <span class="context-key">Profile</span>
+                                <span class="context-value">${this.getProfileNames()[profile] || profile}</span>
+                            </div>
+                        ` : ''}
+                        ${prompt ? html`
+                            <div class="context-row">
+                                <span class="context-key">Prompt</span>
+                                <span class="context-value">${prompt}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    renderTimeline() {
+        const rows = this.collectTimeline(this.selectedSession);
+        if (!rows.length) return html`<div class="empty">No conversation data.</div>`;
+        return rows.map(group => group.parts.map(part => this.renderPart(part)));
+    }
+
+    // The question reads as the user's own bubble, the two answers as the assistant's; without the label
+    // the pair would look like one answer interrupted, since they are two replies to the same question.
+    renderPart(part) {
+        const time = this.formatTime(part.timestamp);
+
+        if (part.role === 'question') {
+            return html`
+                <div class="message-row user">
+                    <div class="message">
+                        <div class="message-body">${part.content}</div>
+                        <div class="message-meta">${time}</div>
+                    </div>
                 </div>
-            ` : ''}
-            ${prompt ? html`
-                <div class="context-row">
-                    <span class="context-key">Prompt</span>
-                    <span class="context-value">${prompt}</span>
+            `;
+        }
+
+        const labels = { brief: 'Brief answer', detail: 'Detailed answer', screen: 'Screen' };
+        return html`
+            <div class="message-row ${part.role === 'screen' ? 'screen' : 'ai'}">
+                <div class="message">
+                    <div class="message-label">${labels[part.role] || part.role}</div>
+                    <div class="message-body">${part.content}</div>
+                    <div class="message-meta">
+                        ${time}${part.usedKnowledge?.length ? ` · ${part.usedKnowledge.join(', ')}` : ''}
+                    </div>
                 </div>
-            ` : ''}
+            </div>
         `;
     }
 
@@ -486,28 +738,69 @@ export class HistoryView extends LitElement {
             </div>
 
             <section class="list-shell">
+                ${this.renderSelectionBar(filteredSessions)}
                 <div class="sessions-list">
                     ${this.loading ? html`<div class="empty" style="margin:var(--space-md);">Loading sessions...</div>` : ''}
                     ${!this.loading && filteredSessions.length === 0 ? html`<div class="empty" style="margin:var(--space-md);">No matching sessions.</div>` : ''}
                     ${!this.loading ? filteredSessions.map(session => html`
-                        <button class="session-card" @click=${() => this.openSession(session.sessionId)}>
+                        <div
+                            class="session-card ${this.isSelected(session.sessionId) ? 'selected' : ''}"
+                            @click=${event => this.handleCardClick(event, session.sessionId)}
+                        >
+                            <input
+                                class="session-check"
+                                type="checkbox"
+                                .checked=${this.isSelected(session.sessionId)}
+                                @change=${() => this.toggleSelect(session.sessionId)}
+                            />
                             <div class="session-left">
                                 <span class="session-profile">${this._getProfileLabel(session)}</span>
                                 <span class="session-date">${this.formatDate(session.createdAt)} · ${this.formatTime(session.createdAt)}</span>
                             </div>
                             ${session.messageCount > 0 ? html`<span class="session-badge">${session.messageCount}</span>` : ''}
-                        </button>
+                        </div>
                     `) : ''}
                 </div>
             </section>
         `;
     }
 
-    renderDetailView() {
-        const conversationCount = this.collectConversation(this.selectedSession).length;
-        const screenCount = this.selectedSession?.screenAnalysisHistory?.length || 0;
-        const detailCount = this.selectedSession?.detailHistory?.length || 0;
+    // Only there once something is selected, and the delete button's first click only arms it: the second
+    // click is the confirmation. There is no separate dialog to escape from, which matters in a window
+    // that floats above everything else.
+    renderSelectionBar(filteredSessions) {
+        if (this.statusMessage && !this.selectedIds.length) {
+            return html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>`;
+        }
+        if (!this.selectedIds.length) return '';
 
+        const count = this.selectedIds.length;
+        const allSelected = filteredSessions.length > 0 && filteredSessions.every(session => this.isSelected(session.sessionId));
+
+        return html`
+            <div class="selection-bar">
+                ${this.confirmingDelete
+                    ? html`<span class="selection-count danger">Delete ${count} session${count === 1 ? '' : 's'}? This cannot be undone.</span>`
+                    : html`<span class="selection-count">${count} selected</span>`}
+                ${this.confirmingDelete
+                    ? html`
+                        <button class="bar-btn" @click=${() => { this.confirmingDelete = false; }}>Cancel</button>
+                        <button class="bar-btn danger" @click=${this.deleteSelected}>Delete</button>
+                    `
+                    : html`
+                        <button class="bar-btn" @click=${() => this.toggleSelectAll(filteredSessions)}>
+                            ${allSelected ? 'Deselect all' : 'Select all'}
+                        </button>
+                        <button class="bar-btn" @click=${this.clearSelection}>Clear</button>
+                        <button class="bar-btn" @click=${this.exportSelected}>Export JSON</button>
+                        <button class="bar-btn danger" @click=${() => { this.confirmingDelete = true; }}>Delete</button>
+                    `}
+            </div>
+            ${this.statusMessage ? html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>` : ''}
+        `;
+    }
+
+    renderDetailView() {
         return html`
             <div class="page-title">Session Detail</div>
             <div class="detail-top">
@@ -518,22 +811,9 @@ export class HistoryView extends LitElement {
                 </button>
                 <span class="detail-info">${this._getProfileLabel(this.selectedSession)} · ${this.formatDate(this.selectedSession.createdAt)} · ${this.formatTime(this.selectedSession.createdAt)}</span>
             </div>
-            <div class="tab-row">
-                <button class="tab-btn ${this.activeTab === 'conversation' ? 'active' : ''}" @click=${() => { this.activeTab = 'conversation'; }}>
-                    Conversation (${conversationCount})
-                </button>
-                <button class="tab-btn ${this.activeTab === 'detail' ? 'active' : ''}" @click=${() => { this.activeTab = 'detail'; }}>
-                    Detailed (${detailCount})
-                </button>
-                <button class="tab-btn ${this.activeTab === 'screen' ? 'active' : ''}" @click=${() => { this.activeTab = 'screen'; }}>
-                    Screen (${screenCount})
-                </button>
-                <button class="tab-btn ${this.activeTab === 'context' ? 'active' : ''}" @click=${() => { this.activeTab = 'context'; }}>
-                    Context
-                </button>
-            </div>
             <section class="details-scroll">
-                ${this.renderTabContent()}
+                ${this.renderContextStrip()}
+                ${this.renderTimeline()}
             </section>
         `;
     }

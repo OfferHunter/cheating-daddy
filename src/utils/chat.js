@@ -1,7 +1,6 @@
-const { getConfig, getDeepseekApiKey } = require('../storage');
+const { getConfig, getDeepseekApiKey, getChatMaxTokens } = require('../storage');
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
-const CHAT_MAX_TOKENS = 8192;
 // Covers the whole streamed response, not just the headers. Without it a stalled stream would
 // leave the caller's in-flight guard latched forever and silently eat every later turn.
 const CHAT_TIMEOUT_MS = 120000;
@@ -106,8 +105,9 @@ async function streamOnce(body, onText) {
 // `onText` receives the whole text so far on every token, never a delta — including the text of any
 // rounds that already finished, since the returned `text` accumulates across tool rounds too.
 //
-// tools/maxToolRounds/executeTool/thinking/followUpSystem are all optional. With none of them this is
-// a single plain request, byte for byte the same body as before the knowledge feature existed.
+// tools/maxToolRounds/executeTool/maxTokens/thinking/forceThinking/followUpSystem are all optional.
+// With none of them this is a single plain request, byte for byte the same body as before the
+// knowledge feature existed, save for the token cap coming from Settings rather than a constant.
 //
 // `maxToolRounds` counts *tool* rounds, not requests: 1 means the model may call a tool once and is
 // then given one more request to answer in, with tools still declared but `tool_choice: 'none'`.
@@ -118,8 +118,13 @@ async function requestChat(messages, onText, options = {}) {
         tools = null,
         maxToolRounds = 0,
         executeTool = null,
-        maxTokens = CHAT_MAX_TOKENS,
+        // Read per call rather than captured once, so a change in Settings reaches the very next turn.
+        // It caps the answer and the reasoning behind it together: a thinking request is charged for
+        // its reasoning from this same budget, and on a hard question the reasoning alone can spend
+        // all of it, which reaches the caller as a response with no text in it at all.
+        maxTokens = getChatMaxTokens(),
         thinking,
+        forceThinking = false,
         followUpSystem = null,
     } = options;
 
@@ -132,9 +137,14 @@ async function requestChat(messages, onText, options = {}) {
     // Two separate questions: whether the request declares `tools` at all, and whether the model is
     // allowed to call one. They part ways on the last round.
     let declareTools = Boolean(tools && tools.length);
-    // Only `false` is ever sent, so an endpoint that has never heard of the field is never bothered
-    // by a default-on switch — and an endpoint that rejects it stays quiet for the rest of the turn.
-    let disableThinking = thinking === false;
+    // `thinking` names the switch in the app's own terms and only ever turns it *off* (`true` sends
+    // nothing, which is what every chain did before the field existed); `forceThinking` is the explicit
+    // request for the other direction, and only the screenshot makes it, because it needs the scratchpad
+    // even when the user has turned thinking off for the detail pane. `null` means the request does not
+    // mention thinking at all — byte for byte the body it had before any of this existed.
+    let thinkingBody = forceThinking ? { type: 'enabled' } : thinking === false ? { type: 'disabled' } : null;
+    // Dropped for the rest of the call once an endpoint has refused the value.
+    let sendMaxTokens = true;
     let rounds = 0;
     // Text from every round that has already finished, joined by a blank line.
     let committed = '';
@@ -159,31 +169,37 @@ async function requestChat(messages, onText, options = {}) {
             model: getChatModel(),
             messages: convo,
             stream: true,
-            max_tokens: maxTokens,
         };
+
+        if (sendMaxTokens) body.max_tokens = maxTokens;
 
         if (declareTools) {
             body.tools = tools;
             body.tool_choice = rounds < maxToolRounds ? 'auto' : 'none';
         }
 
-        if (disableThinking) body.thinking = { type: 'disabled' };
+        if (thinkingBody) body.thinking = thinkingBody;
 
         let round;
         try {
             round = await streamOnce(body, partial => onText(prefix + partial));
         } catch (error) {
-            // `tools` and `thinking` are both additions the app can live without, and a 400 that
-            // names one of them says exactly which. Strip every field the message complains about
+            // `tools`, `thinking` and the token cap are all things the app can live without, and a 400
+            // that names one of them says exactly which. Strip every field the message complains about
             // and retry once — together, not as nested retries, or a body rejected for both would
-            // only shed whichever field the inner handler happened to look at.
+            // only shed whichever field the inner handler happened to look at. The cap is the one the
+            // user can set higher than an endpoint allows, and without this a number typed into
+            // Settings would break every request until it was changed back.
             const errorBody = error.body || '';
             const rejected = error.status === 400 && errorBody;
             const dropTools = rejected && declareTools && /tools|tool_choice/i.test(errorBody);
-            const dropThinking = rejected && disableThinking && /thinking/i.test(errorBody);
-            if (!dropTools && !dropThinking) throw error;
+            const dropThinking = rejected && thinkingBody && /thinking/i.test(errorBody);
+            const dropMaxTokens = rejected && sendMaxTokens && /max_tokens/i.test(errorBody);
+            if (!dropTools && !dropThinking && !dropMaxTokens) throw error;
 
-            const dropped = [dropTools ? 'tools' : '', dropThinking ? 'thinking' : ''].filter(Boolean).join('+');
+            const dropped = [dropTools ? 'tools' : '', dropThinking ? 'thinking' : '', dropMaxTokens ? 'max_tokens' : '']
+                .filter(Boolean)
+                .join('+');
             console.warn(`Chat endpoint rejected ${dropped}, retrying without: ${errorBody}`);
 
             if (dropTools) {
@@ -192,8 +208,12 @@ async function requestChat(messages, onText, options = {}) {
                 delete body.tool_choice;
             }
             if (dropThinking) {
-                disableThinking = false;
+                thinkingBody = null;
                 delete body.thinking;
+            }
+            if (dropMaxTokens) {
+                sendMaxTokens = false;
+                delete body.max_tokens;
             }
 
             round = await streamOnce(body, partial => onText(prefix + partial));

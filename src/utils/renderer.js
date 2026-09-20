@@ -16,6 +16,12 @@ let offscreenCanvas = null;
 let offscreenContext = null;
 let currentImageQuality = 'medium'; // Store current image quality for manual screenshots
 
+// Paused: the captures keep running and the chunks keep coming at the same 100 ms cadence, but they
+// carry silence. Stopping the sends instead would starve the recognizer's task, which the endpoint
+// ends after hearing nothing for long enough — and every frame it does send is discarded before it
+// reaches the socket, so the audio never leaves this process as speech.
+let capturePaused = false;
+
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
 
@@ -95,6 +101,11 @@ const storage = {
     },
     async deleteAllSessions() {
         return ipcRenderer.invoke('storage:delete-all-sessions');
+    },
+    // Raw result, not a defaulted shape: the page has to tell a cancelled dialog apart from a failed
+    // write, and only this carries that distinction.
+    async exportSessions(sessionIds) {
+        return ipcRenderer.invoke('storage:export-sessions', sessionIds);
     },
 
     // Clear all
@@ -355,7 +366,7 @@ function setupLinuxMicProcessing(micStream) {
         // Process audio in chunks
         while (audioBuffer.length >= samplesPerChunk) {
             const chunk = audioBuffer.splice(0, samplesPerChunk);
-            const pcmData16 = convertFloat32ToInt16(chunk);
+            const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
             const base64Data = arrayBufferToBase64(pcmData16.buffer);
 
             await ipcRenderer.invoke('send-mic-audio-content', {
@@ -388,7 +399,7 @@ function setupLinuxSystemAudioProcessing() {
         // Process audio in chunks
         while (audioBuffer.length >= samplesPerChunk) {
             const chunk = audioBuffer.splice(0, samplesPerChunk);
-            const pcmData16 = convertFloat32ToInt16(chunk);
+            const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
             const base64Data = arrayBufferToBase64(pcmData16.buffer);
 
             await ipcRenderer.invoke('send-audio-content', {
@@ -418,7 +429,7 @@ function setupWindowsLoopbackProcessing() {
         // Process audio in chunks
         while (audioBuffer.length >= samplesPerChunk) {
             const chunk = audioBuffer.splice(0, samplesPerChunk);
-            const pcmData16 = convertFloat32ToInt16(chunk);
+            const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
             const base64Data = arrayBufferToBase64(pcmData16.buffer);
 
             await ipcRenderer.invoke('send-audio-content', {
@@ -525,18 +536,20 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
 }
 
 const MANUAL_SCREENSHOT_PROMPT = `帮我看下这个页面，直接给答案，别说废话，要完整。
-如果是代码题，先用几个要点讲思路，再给出完整代码；如果有别的需要我知道的，也一并说明。
-如果是关于这个网站的问题，直接给答案，别说废话，要完整。
-如果是选择题，直接给答案，别说废话，要完整。
+如果是代码题，先用几个要点讲思路，再给出完整、能跑通的代码；如果有别的需要我知道的，也一并说明。
+如果是选择题，直接给答案，再用几个要点讲思路。
 使用页面/题目所用的语言作答：中文内容就用简体中文，英文内容就用英文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
 
+// Resolves with the main process's reply, or null when nothing was sent at all. The caller drives its
+// busy state from that reply, so every path that declines to send has to be able to say so — silently
+// returning would leave a button spinning until the next session.
 async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');
     const quality = imageQuality || currentImageQuality;
 
     if (!mediaStream) {
-        console.error('No media stream available');
-        return;
+        console.warn('No media stream available, skipping screenshot');
+        return null;
     }
 
     // Lazy init of video element
@@ -545,7 +558,9 @@ async function captureManualScreenshot(imageQuality = null) {
         hiddenVideo.srcObject = mediaStream;
         hiddenVideo.muted = true;
         hiddenVideo.playsInline = true;
-        await hiddenVideo.play();
+        // A playback that fails leaves the element with no frames, which the readyState check below turns
+        // into the same "nothing was sent" as a video that has not produced a frame yet.
+        await hiddenVideo.play().catch(() => {});
 
         await new Promise(resolve => {
             if (hiddenVideo.readyState >= 2) return resolve();
@@ -562,7 +577,7 @@ async function captureManualScreenshot(imageQuality = null) {
     // Check if video is ready
     if (hiddenVideo.readyState < 2) {
         console.warn('Video not ready yet, skipping screenshot');
-        return;
+        return null;
     }
 
     // Downscale to max 1280px wide for faster transfer — vision models don't need 4K
@@ -594,49 +609,55 @@ async function captureManualScreenshot(imageQuality = null) {
             qualityValue = 0.6;
     }
 
-    offscreenCanvas.toBlob(
-        async blob => {
-            if (!blob) {
-                console.error('Failed to create blob from canvas');
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                const base64data = reader.result.split(',')[1];
-
-                if (!base64data || base64data.length < 100) {
-                    console.error('Invalid base64 data generated');
+    return new Promise(resolve => {
+        offscreenCanvas.toBlob(
+            async blob => {
+                if (!blob) {
+                    console.error('Failed to create blob from canvas');
+                    resolve(null);
                     return;
                 }
 
-                console.log(`Sending image: ${destW}x${destH}, ~${Math.round(base64data.length / 1024)}KB`);
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    const base64data = reader.result.split(',')[1];
 
-                // Send image with prompt to HTTP API (response streams via IPC events)
-                const result = await ipcRenderer.invoke('send-image-content', {
-                    data: base64data,
-                    prompt: MANUAL_SCREENSHOT_PROMPT,
-                });
+                    if (!base64data || base64data.length < 100) {
+                        console.error('Invalid base64 data generated');
+                        resolve(null);
+                        return;
+                    }
 
-                if (result.success) {
-                    console.log(`Image response completed from ${result.model}`);
-                    // Response already displayed via streaming events (new-response/update-response)
-                } else {
-                    console.error('Failed to get image response:', result.error);
-                    cheatingDaddy.addNewResponse(`Error: ${result.error}`);
-                }
-            };
-            reader.readAsDataURL(blob);
-        },
-        'image/jpeg',
-        qualityValue
-    );
+                    console.log(`Sending image: ${destW}x${destH}, ~${Math.round(base64data.length / 1024)}KB`);
+
+                    // The answer streams back as pane events; this reply only says that the request
+                    // started, what model it went to, and which turn it opened.
+                    try {
+                        resolve(
+                            await ipcRenderer.invoke('send-image-content', {
+                                data: base64data,
+                                prompt: MANUAL_SCREENSHOT_PROMPT,
+                            })
+                        );
+                    } catch (error) {
+                        console.error('Failed to send screenshot:', error);
+                        resolve(null);
+                    }
+                };
+                reader.readAsDataURL(blob);
+            },
+            'image/jpeg',
+            qualityValue
+        );
+    });
 }
 
 // Expose functions to global scope for external access
 window.captureManualScreenshot = captureManualScreenshot;
 
 function stopCapture() {
+    capturePaused = false;
+
     if (screenshotInterval) {
         clearInterval(screenshotInterval);
         screenshotInterval = null;
@@ -1294,6 +1315,14 @@ const cheatingDaddy = {
     stopCapture,
     sendTextMessage,
     handleShortcut,
+
+    // Session controls. Pausing leaves both captures running and stops feeding the recognizer;
+    // clearing resets what the model has seen without touching the transcript on disk.
+    setPaused: async value => {
+        capturePaused = Boolean(value);
+        return ipcRenderer.invoke('set-audio-paused', Boolean(value));
+    },
+    clearContext: () => ipcRenderer.invoke('clear-context'),
 
     // Storage API
     storage,

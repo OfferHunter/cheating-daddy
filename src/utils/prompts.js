@@ -101,7 +101,23 @@ function getSystemPrompt(customPrompt = '') {
     ].join('');
 }
 
+// A screenshot is answered by the detailed chain, but the transcript still has to say what the picture
+// asked. This is the whole prompt of the small concurrent request that puts it into words; the answer
+// itself is deliberately not replayed later, so this line is the only trace of the image in the context.
+// It carries its own language rule rather than LANGUAGE_RULE, which is about the language the other
+// party is *speaking* — for a picture, the language that matters is the one written in the picture.
+function getScreenshotSummaryPrompt() {
+    return `你是一名面试助手。用户会发给你一张面试屏幕截图，图里通常是一道题目。
+请用完整把**图里的题目本身**转为文字形式。要求：
+- **不要作答**、不要给思路、不要写代码、不要给建议。
+- 不要描述版式、颜色、浏览器或界面细节，只说题目的内容。
+- 只输出这个题目的完整内容，不要任何开场白或标题。
+- 如果有多道题，均需输出；如果没有题目，输出**截图中无可见题目**。
+**语言要求：**用图中题目所用的语言；图里没有可辨认的文字时用简体中文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
+}
+
 module.exports = {
     getSystemPrompt,
     getDetailSystemPrompt,
+    getScreenshotSummaryPrompt,
 };

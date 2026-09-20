@@ -49,6 +49,7 @@ export class CheatingDaddyApp extends LitElement {
             display: flex;
             align-items: center;
             height: 38px;
+            padding-right: var(--space-md);
             background: transparent;
         }
 
@@ -62,39 +63,53 @@ export class CheatingDaddyApp extends LitElement {
             display: none;
         }
 
-        .traffic-lights {
+        /* Hide / quit, at the top right of every page. The drag region takes the space in front of them. */
+        .window-controls {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 0 var(--space-md);
+            gap: var(--space-sm);
             height: 100%;
             -webkit-app-region: no-drag;
         }
 
-        .traffic-light {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            border: none;
-            cursor: pointer;
+        /* The one button shape in the header: circular, quiet until hovered. Used for the session
+           controls on the left of the live bar and the window controls on the right. */
+        .icon-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
             padding: 0;
-            transition: opacity 0.15s ease;
+            border: 1px solid transparent;
+            border-radius: 50%;
+            background: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: var(--transition);
         }
 
-        .traffic-light:hover {
-            opacity: 0.8;
+        .icon-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border);
+            color: var(--text-primary);
         }
 
-        .traffic-light.close {
-            background: #ff5f57;
+        .icon-btn svg {
+            width: 14px;
+            height: 14px;
         }
 
-        .traffic-light.minimize {
-            background: #febc2e;
+        .icon-btn.danger:hover {
+            background: var(--danger);
+            border-color: transparent;
+            color: #fff;
         }
 
-        .traffic-light.maximize {
-            background: #28c840;
+        /* Paused: the ring is the whole indicator, since the mic light stays on through a soft pause. */
+        .icon-btn.active {
+            color: var(--accent);
+            border-color: var(--accent);
         }
 
         .sidebar {
@@ -266,30 +281,9 @@ export class CheatingDaddyApp extends LitElement {
         .live-bar-left {
             display: flex;
             align-items: center;
+            gap: var(--space-sm);
             -webkit-app-region: no-drag;
             z-index: 1;
-        }
-
-        .live-bar-back {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-            cursor: pointer;
-            background: none;
-            border: none;
-            padding: var(--space-xs);
-            border-radius: var(--radius-sm);
-            transition: color var(--transition);
-        }
-
-        .live-bar-back:hover {
-            color: var(--text-primary);
-        }
-
-        .live-bar-back svg {
-            width: 14px;
-            height: 14px;
         }
 
         .live-bar-center {
@@ -401,6 +395,14 @@ export class CheatingDaddyApp extends LitElement {
         this.layoutMode = 'normal';
         this.messages = [];
         this._msgSeq = 0;
+        // Soft pause: the main process keeps feeding the recognizer silence, so resuming is instant and
+        // nothing has to be reconnected.
+        this._paused = false;
+        // Sequence numbers below which the main process has forgotten. Only ever used to refuse opening a
+        // new bubble for a turn dispatched before the clear — a bubble that already exists keeps updating,
+        // because it may be mid-stream and freezing it is exactly the truncation to avoid.
+        this._turnFloorId = 0;
+        this._detailFloorId = 0;
         this.detailMessages = [];
         this.detailCurrent = null;
         // Follow the newest detailed answer until the user pages back to an older one, at which point a
@@ -468,7 +470,12 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
             ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
             ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
-            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
+            ipcRenderer.on('transcription-final', (_, data) => {
+                this.upsertTranscription(data.text, true, data.speaker, data.blockId);
+                // A screenshot's line is the written-up question of the pane row opened by the same turn,
+                // which was created with a placeholder: this is where the two halves are joined.
+                if (data.speaker === 'screen') this._setDetailQuestion(data.blockId, data.text);
+            });
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
             ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
                 this._isClickThrough = isEnabled;
@@ -546,25 +553,28 @@ export class CheatingDaddyApp extends LitElement {
     // rewritten by the other, and a bubble keeps the position where its speaker started talking.
     upsertTranscription(text, final, speaker = 'interviewer', blockId = null) {
         const role = speaker === 'user' ? 'user' : 'interviewer';
+        // `final` settles a row for the walk below. It means that for a screenshot's question line, but
+        // not for the candidate's plain text: the next fragment continues the same bubble, so the flag
+        // has no meaning there and is held down whatever the event says.
+        const settled = role === 'user' ? false : final;
 
-        // The candidate's block is a single bubble that grows: every update already carries everything
-        // said since the last question, so it is rewritten in place instead of opening one bubble per
-        // fragment. The row is found by the block id the pipeline stamped on it, not by being the last
-        // one: a question recognized while this sentence was still being finalized is appended below
-        // it, and the final has to rewrite the bubble the provisional text opened, above the question.
-        // The pipeline hands out a new id once a question closes the block, so the next thing the
-        // candidate says still starts a new bubble. `final` is inert on these rows — only the
-        // assistant's caret and the interviewer's open-row latch below use it.
-        if (role === 'user') {
+        // A row that arrived with a block id belongs to that block and is rewritten in place, never by
+        // position: a question recognized while the block was still open is appended below it, and the
+        // block's own final has to find its row again, above that question. The pipeline hands out a new
+        // id when a question closes the block, so the next thing said still starts a new bubble. Two
+        // kinds of row work this way — the candidate's own speech, and the line a screenshot's question
+        // is written up as, which is found by its id rather than by role since it is shown as the
+        // interviewer's.
+        if (role === 'user' || blockId !== null) {
             for (let i = this.messages.length - 1; i >= 0; i--) {
                 const message = this.messages[i];
-                if (message.role === 'user' && message.blockId === blockId) {
-                    this._replaceMessage(i, { text });
+                if (message.role === role && message.blockId === blockId) {
+                    this._replaceMessage(i, { text, final: settled });
                     return;
                 }
             }
 
-            this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final: false, blockId }];
+            this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final: settled, blockId }];
             this.requestUpdate();
             return;
         }
@@ -573,6 +583,9 @@ export class CheatingDaddyApp extends LitElement {
             const message = this.messages[i];
             if (message.role !== role) continue;
             if (message.final) break;
+            // An open row that belongs to a block is not this speaker's open row, so it is stepped over
+            // rather than rewritten. A settled one still stops the walk above, exactly as before.
+            if (message.blockId != null) continue;
 
             const next = [...this.messages];
             next[i] = { ...message, text, final };
@@ -598,9 +611,12 @@ export class CheatingDaddyApp extends LitElement {
 
     // Turns stream concurrently, so a bubble can no longer be located by being the last one: an
     // interviewer bubble is appended between two live answers. `turnId` is what routes a token to
-    // its own bubble. Bare strings still arrive from the screenshot failure path.
+    // its own bubble. A bare string still arrives from the reconnect handler, which has no turn behind it.
     addNewResponse(data) {
         const { turnId = null, text = '', final = false } = typeof data === 'string' ? { text: data, final: true } : data;
+        // A turn dispatched before the context was cleared must not reappear after it. Only creation is
+        // blocked; a bubble that already exists is still updated by the two callers below.
+        if (turnId !== null && turnId <= this._turnFloorId) return;
         this.messages = [...this.messages, { id: ++this._msgSeq, turnId, role: 'assistant', text, ts: Date.now(), final }];
         this.requestUpdate();
     }
@@ -643,6 +659,9 @@ export class CheatingDaddyApp extends LitElement {
     _ensureDetailRow(detailId, turnSeq, question) {
         const index = this._detailIndex(detailId);
         if (index !== -1) return index;
+        // Same rule as the transcript: an answer that was requested before the clear may not open a row
+        // afterwards. A row that already exists was checked above and keeps updating to completion.
+        if (detailId <= this._detailFloorId) return -1;
 
         this.detailMessages = [
             ...this.detailMessages,
@@ -673,8 +692,9 @@ export class CheatingDaddyApp extends LitElement {
         const { detailId = null, turnSeq = null, question = '', text = '' } = data || {};
         if (detailId === null) return;
 
-        this._ensureDetailRow(detailId, turnSeq, question);
-        this._replaceDetail(this._detailIndex(detailId), { text });
+        const index = this._ensureDetailRow(detailId, turnSeq, question);
+        if (index === -1) return;
+        this._replaceDetail(index, { text });
     }
 
     updateDetailResponse(data) {
@@ -692,7 +712,18 @@ export class CheatingDaddyApp extends LitElement {
         // A request that failed before its first token never opened a row, so the completion is what has
         // to bring the failure into view rather than being dropped for want of somewhere to land.
         const index = this._ensureDetailRow(detailId, turnSeq, question);
+        if (index === -1) return;
         this._replaceDetail(index, { final: true, ok, error, usedKnowledge, truncated });
+    }
+
+    // A screenshot's pane row is opened the moment the image is sent, because thinking can hold its first
+    // token back for half a minute and the row must exist before a clear-context can raise the floor
+    // above it. Its question is the image summary, which arrives seconds later, so the row starts with a
+    // placeholder and is corrected here. Ordinary rows carry the question they were created with.
+    _setDetailQuestion(turnSeq, question) {
+        const index = this.detailMessages.findIndex(m => m.turnSeq === turnSeq);
+        if (index === -1) return;
+        this._replaceDetail(index, { question });
     }
 
     handleDetailToolUsed(data) {
@@ -736,6 +767,7 @@ export class CheatingDaddyApp extends LitElement {
                 const { ipcRenderer } = window.require('electron');
                 await ipcRenderer.invoke('close-session');
             }
+            this._paused = false;
             this.sessionActive = false;
             this._stopTimer();
             this.currentView = 'main';
@@ -747,18 +779,60 @@ export class CheatingDaddyApp extends LitElement {
         }
     }
 
-    async _handleMinimize() {
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('window-minimize');
-        }
-    }
-
     async handleHideToggle() {
         if (window.require) {
             const { ipcRenderer } = window.require('electron');
             await ipcRenderer.invoke('toggle-window-visibility');
         }
+    }
+
+    // The close button proper: tear the live session down the way the back arrow does — stop capturing,
+    // close the session so the transcript is flushed — and then quit. Quitting without it would cut the
+    // session short on disk, since nothing else would tell the main process the session had ended.
+    async handleQuit() {
+        if (this.currentView === 'assistant' && this.sessionActive) {
+            cheatingDaddy.stopCapture();
+            if (window.require) {
+                const { ipcRenderer } = window.require('electron');
+                await ipcRenderer.invoke('close-session');
+            }
+            this.sessionActive = false;
+            this._stopTimer();
+        }
+        if (window.require) {
+            const { ipcRenderer } = window.require('electron');
+            await ipcRenderer.invoke('quit-application');
+        }
+    }
+
+    async togglePause() {
+        this._paused = !this._paused;
+        const res = await cheatingDaddy.setPaused(this._paused);
+        // The main process is the one that actually decides; a refusal (no live session) puts the button
+        // back rather than leaving it showing a state that was never entered.
+        if (!res?.success) this._paused = false;
+        this.requestUpdate();
+    }
+
+    // Drops both what the model has seen and the settled bubbles that show it. Anything still in flight is
+    // kept and left to finish: freezing a half-recognized sentence or a half-streamed answer where it
+    // stands is a truncation, and that is the one thing this must not do. The floors above then stop the
+    // dropped turns from reappearing when their replies finally land.
+    async handleClearContext() {
+        const res = await cheatingDaddy.clearContext();
+        if (!res?.success) return;
+
+        this._turnFloorId = res.turnSeq;
+        this._detailFloorId = res.detailSeq;
+
+        // A candidate row is written as one growing block and never carries a settled flag, so the block
+        // that is still open — the highest id among them — is the only one there is to keep.
+        const openBlockId = Math.max(0, ...this.messages.filter(m => m.role === 'user').map(m => m.blockId));
+        this.messages = this.messages.filter(m => (m.role === 'user' ? m.blockId === openBlockId : m.final !== true));
+        this.detailMessages = this.detailMessages.filter(m => m.final !== true);
+        if (this._detailIndex(this.detailCurrent) === -1) this.detailCurrent = null;
+        this._detailFollowing = true;
+        this.requestUpdate();
     }
 
     // ── Session start ──
@@ -786,6 +860,12 @@ export class CheatingDaddyApp extends LitElement {
 
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
         this.messages = [];
+        this._paused = false;
+        // The floors track the main process's own counters, which resetAudioState takes back to zero, so
+        // carrying them over would put every id of the new session under the old floor and silently
+        // suppress it.
+        this._turnFloorId = 0;
+        this._detailFloorId = 0;
         // Cleared with the transcript: the main process drops its own detail log when the session
         // restarts, so keeping these would page into answers that no longer exist.
         this.detailMessages = [];
@@ -1032,13 +1112,33 @@ export class CheatingDaddyApp extends LitElement {
         `;
     }
 
+    // The same two shapes at the top right of every page: a dash that hides the window (Ctrl+\ brings
+    // it back) and an x that quits. Windows users read those instantly, which is the point of dropping
+    // the macOS dots — and it is why they sit on the live page too, where the drag bar is hidden.
+    renderWindowButtons() {
+        return html`
+            <div class="window-controls">
+                <button class="icon-btn" @click=${() => this.handleHideToggle()} title="Hide window">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 12h14" />
+                    </svg>
+                </button>
+                <button class="icon-btn danger" @click=${() => this.handleQuit()} title="Quit">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                </button>
+            </div>
+        `;
+    }
+
     renderLiveBar() {
         if (!this._isLiveMode()) return '';
 
         return html`
             <div class="live-bar">
                 <div class="live-bar-left">
-                    <button class="live-bar-back" @click=${() => this.handleClose()} title="End session">
+                    <button class="icon-btn" @click=${() => this.handleClose()} title="End session">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path
                                 fill-rule="evenodd"
@@ -1047,22 +1147,45 @@ export class CheatingDaddyApp extends LitElement {
                             />
                         </svg>
                     </button>
+                    <button
+                        class="icon-btn ${this._paused ? 'active' : ''}"
+                        @click=${() => this.togglePause()}
+                        title=${this._paused ? 'Resume' : 'Pause'}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="7" y="5" width="3.4" height="14" rx="1" />
+                            <rect x="13.6" y="5" width="3.4" height="14" rx="1" />
+                        </svg>
+                    </button>
+                    <button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="23 4 23 10 17 10" />
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                    </button>
                 </div>
                 <div class="live-bar-center">Interview</div>
                 <div class="live-bar-right">
                     ${this.statusText ? html`<span class="live-bar-text">${this.statusText}</span>` : ''}
                     <span class="live-bar-text">${this.getElapsedTime()}</span>
                     ${this._isClickThrough ? html`<span class="live-bar-text">[click through]</span>` : ''}
-                    <span class="live-bar-text clickable" @click=${() => this.handleHideToggle()}>[hide]</span>
+                    ${this.renderWindowButtons()}
                 </div>
             </div>
         `;
     }
 
     render() {
-        // Onboarding is fullscreen, no sidebar
+        // Onboarding is fullscreen, no sidebar. It gets the drag bar anyway: without it there is no way
+        // out of a fullscreen page but a global shortcut the user may not know.
         if (this.currentView === 'onboarding') {
-            return html` <div class="fullscreen">${this.renderCurrentView()}</div> `;
+            return html`
+                <div class="top-drag-bar">
+                    <div class="drag-region"></div>
+                    ${this.renderWindowButtons()}
+                </div>
+                <div class="fullscreen">${this.renderCurrentView()}</div>
+            `;
         }
 
         const isLive = this._isLiveMode();
@@ -1070,12 +1193,8 @@ export class CheatingDaddyApp extends LitElement {
         return html`
             <div class="app-shell">
                 <div class="top-drag-bar ${isLive ? 'hidden' : ''}">
-                    <div class="traffic-lights">
-                        <button class="traffic-light close" @click=${() => this.handleClose()} title="Close"></button>
-                        <button class="traffic-light minimize" @click=${() => this._handleMinimize()} title="Minimize"></button>
-                        <button class="traffic-light maximize" title="Maximize"></button>
-                    </div>
                     <div class="drag-region"></div>
+                    ${this.renderWindowButtons()}
                 </div>
                 ${this.renderSidebar()}
                 <div class="content">

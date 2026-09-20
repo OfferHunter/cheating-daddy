@@ -539,7 +539,10 @@ export class AssistantView extends LitElement {
         this._animFrame = null;
         this._pinned = true;
         this._detailAtBottom = true;
-        this._responseCountWhenStarted = 0;
+        // The turn the screenshot on the button belongs to, while it is being answered. It is what the
+        // busy state follows: the answer lands in the pane, keyed by this turn, and nothing else in the
+        // view moves when it arrives.
+        this._screenTurnId = null;
     }
 
     renderMarkdown(content) {
@@ -559,8 +562,13 @@ export class AssistantView extends LitElement {
         return content;
     }
 
-    _assistantCount() {
-        return this.messages.filter(m => m.role === 'assistant').length;
+    // The screenshot's answer landing in the pane is the only signal that it finished, so the busy state
+    // watches that row itself being settled. Counting answers instead would let a first screenshot's
+    // completion clear the busy state while a second one was still on its way.
+    _screenAnswerSettled() {
+        if (this._screenTurnId === null) return false;
+        const row = this.detailMessages.find(m => m.turnSeq === this._screenTurnId);
+        return Boolean(row && row.final);
     }
 
     // Only the bubble whose text actually changed is re-parsed, so a streaming answer costs one
@@ -701,11 +709,23 @@ export class AssistantView extends LitElement {
     }
 
     async handleScreenAnswer() {
-        if (this.isAnalyzing) return;
-        if (window.captureManualScreenshot) {
-            this.isAnalyzing = true;
-            this._responseCountWhenStarted = this._assistantCount();
-            window.captureManualScreenshot();
+        if (this.isAnalyzing || !window.captureManualScreenshot) return;
+
+        this.isAnalyzing = true;
+        // Awaited because the capture can decline to send anything at all — no stream, or a video that
+        // has not produced a frame yet. Those paths return no turn, which means no answer is coming and
+        // the busy state has to end here rather than wait for a completion that will never arrive.
+        const result = await window.captureManualScreenshot();
+        if (!result?.success) {
+            this.isAnalyzing = false;
+            return;
+        }
+
+        this._screenTurnId = result.turnId;
+        // The answer may have landed before this promise resolved.
+        if (this._screenAnswerSettled()) {
+            this.isAnalyzing = false;
+            this._screenTurnId = null;
         }
     }
 
@@ -881,12 +901,12 @@ export class AssistantView extends LitElement {
             }
         }
 
-        // Counted over answers only, so the question bubble that precedes the reply does not
-        // clear the busy state before there is anything to show.
-        if (changedProperties.has('messages') && this.isAnalyzing) {
-            if (this._assistantCount() > this._responseCountWhenStarted) {
-                this.isAnalyzing = false;
-            }
+        // The pane's own row is what ends the busy state, and only for the turn this view started:
+        // another answer finishing alongside it says nothing about the screenshot. A failed request
+        // arrives as a settled row too, so an error ends the wait rather than leaving it turning.
+        if (changedProperties.has('detailMessages') && this.isAnalyzing && this._screenAnswerSettled()) {
+            this.isAnalyzing = false;
+            this._screenTurnId = null;
         }
     }
 

@@ -5,6 +5,7 @@ if (require('electron-squirrel-startup')) {
 // First, before anything can log: a GBK console renders our UTF-8 Chinese as mojibake.
 require('./utils/consoleEncoding').enableUtf8Console();
 
+const fs = require('fs');
 const path = require('path');
 const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
@@ -237,6 +238,52 @@ function setupStorageIpcHandlers() {
             return { success: true };
         } catch (error) {
             console.error('Error deleting all sessions:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // The renderer names sessions to export; the paths stay here, like the knowledge directory. What is
+    // written is the stored session verbatim, not the merged timeline the page shows: an export that
+    // re-derived its shape would quietly drop fields the reader never sees.
+    ipcMain.handle('storage:export-sessions', async (event, sessionIds) => {
+        try {
+            const ids = Array.isArray(sessionIds) ? sessionIds : [];
+            const sessions = ids.map(id => storage.getSession(String(id))).filter(Boolean);
+            if (!sessions.length) {
+                return { success: false, error: 'No sessions to export' };
+            }
+
+            // One session gets a file picker so it can be renamed; several get a folder and keep their
+            // own <sessionId>.json names, because a single merged document would lose that per-session
+            // shape and make the files no longer drop-in replacements for the ones in the config dir.
+            if (sessions.length === 1) {
+                const result = await dialog.showSaveDialog(mainWindow, {
+                    title: '导出会话',
+                    defaultPath: `session-${sessions[0].sessionId}.json`,
+                    filters: [{ name: 'JSON', extensions: ['json'] }],
+                });
+                if (result.canceled || !result.filePath) {
+                    return { success: false, canceled: true };
+                }
+                fs.writeFileSync(result.filePath, JSON.stringify(sessions[0], null, 2), 'utf8');
+                return { success: true, count: 1, dir: path.dirname(result.filePath) };
+            }
+
+            const result = await dialog.showOpenDialog(mainWindow, {
+                title: '选择导出目录',
+                properties: ['openDirectory', 'createDirectory'],
+            });
+            if (result.canceled || !result.filePaths.length) {
+                return { success: false, canceled: true };
+            }
+
+            const dir = result.filePaths[0];
+            sessions.forEach(session => {
+                fs.writeFileSync(path.join(dir, `${session.sessionId}.json`), JSON.stringify(session, null, 2), 'utf8');
+            });
+            return { success: true, count: sessions.length, dir };
+        } catch (error) {
+            console.error('Error exporting sessions:', error);
             return { success: false, error: error.message };
         }
     });

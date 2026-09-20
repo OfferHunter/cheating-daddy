@@ -1,4 +1,4 @@
-const { getSystemPrompt, getDetailSystemPrompt } = require('./prompts');
+const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt } = require('./prompts');
 const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis, saveDetailTurn } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
 const {
@@ -17,6 +17,7 @@ const {
     getMicMaxSentenceSilenceMs,
     getMicGateDb,
     getMicGateDwellMs,
+    getChatContextTurns,
 } = require('../storage');
 
 let currentSystemPrompt = null;
@@ -93,17 +94,39 @@ let candidateBlockId = 1;
 // Every turn is dispatched the moment its question is recognized, even if earlier answers are
 // still streaming: waiting for the previous answer would make the new one arrive too late to be
 // useful. Turns therefore run concurrently and finish out of order, so the log below is the single
-// source of truth for both the prompt context and the recorded history order.
-const CHAT_CONTEXT_TURNS = 15;
+// source of truth for both the prompt context and the recorded history order. How much of it the
+// model is shown is the "Context Turns" setting, snapshotted at session start like the prompts.
+const DEFAULT_CHAT_CONTEXT_TURNS = 15;
+let chatContextTurns = DEFAULT_CHAT_CONTEXT_TURNS;
 // Tokens arrive one IPC message at a time and the renderer re-parses the whole markdown body per
 // message, so a per-turn window keeps a burst of tokens to a handful of renders.
 const STREAM_SEND_INTERVAL_MS = 40;
+
+// A screenshot is a question the interviewer asked on screen, so it enters the context under a label of
+// its own: the model reads the transcript as a run of user messages and cannot tell an image from a
+// spoken question otherwise. The text itself is the summary request's answer, and it is the only trace
+// of the picture any later prompt can see — the answer to it is shown once and never replayed, and the
+// base64 never enters the context at all.
+const SCREEN_PREFIX = '[面试官给出图片题目:]';
+const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
+const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
 
 let turnLog = [];
 let turnSeq = 0;
 // Bumped whenever the session resets. A turn that outlives its session must not write into the
 // next one, and requests are never aborted.
 let sessionGeneration = 0;
+
+// What the model is shown is the part of turnLog after this seq. Clearing the context moves the
+// floor up to the current turnSeq, which empties the prompt without touching the log itself: the log
+// is still what pruneTurnLog, the pending count and persistTurn read, and persistTurn is what writes
+// the history file. Only the prompt starts over.
+let contextFloorSeq = 0;
+
+// The user's pause switch, and one more gate in the chain processLocalAudio applies. Set, it makes
+// the frame silence and drops the server's sentence events, so nothing said after the pause can
+// reach the transcript or a turn — while the sockets stay open and warm behind it.
+let paused = false;
 
 // The detailed answers, tracked completely apart from turnLog. Every later feature reads one of these
 // two logs and they must not see each other's entries: a detail entry in turnLog would be replayed into
@@ -228,7 +251,9 @@ function sendBubble(channel, source) {
 }
 
 function handleAsrSentence(text, sentenceEnd, source) {
-    if (!isLocalActive || !text) return;
+    // A sentence the server finalized for audio it received before the pause is not one the user
+    // asked to keep. Dropped here rather than in flushTurn, so nothing is dispatched either.
+    if (!isLocalActive || paused || !text) return;
 
     const sentence = text.trim();
     if (!sentence) return;
@@ -344,9 +369,9 @@ function flushTurn(source) {
 // Settled turns are kept only as prompt context, so the tail can be dropped once it is longer than
 // anything buildChatMessages will read. Pending turns stay: they are still referenced by closures.
 function pruneTurnLog() {
-    if (turnLog.length <= CHAT_CONTEXT_TURNS * 3) return;
+    if (turnLog.length <= chatContextTurns * 3) return;
 
-    const settled = turnLog.filter(entry => entry.status !== 'pending').slice(-CHAT_CONTEXT_TURNS * 2);
+    const settled = turnLog.filter(entry => entry.status !== 'pending').slice(-chatContextTurns * 2);
     const pending = turnLog.filter(entry => entry.status === 'pending');
     turnLog = [...settled, ...pending].sort((a, b) => a.seq - b.seq);
 }
@@ -420,8 +445,8 @@ function userContent(entry, isCurrent = false) {
 // the question being answered now.
 function buildUserSideHistory(excludeEntry) {
     return turnLog
-        .filter(entry => entry !== excludeEntry)
-        .slice(-CHAT_CONTEXT_TURNS)
+        .filter(entry => entry !== excludeEntry && entry.seq > contextFloorSeq)
+        .slice(-chatContextTurns)
         .map(entry => ({ role: 'user', content: userContent(entry) }));
 }
 
@@ -462,6 +487,13 @@ function pendingTurnCount() {
 // A single shared status line, so it has to reflect every turn still running or the first one to
 // finish would claim the session is idle while others are still streaming.
 function updateStreamingStatus() {
+    // The pause owns the status line while it is on: an answer still streaming behind it must not
+    // rewrite it back to Listening.
+    if (paused) {
+        sendToRenderer('update-status', 'Paused');
+        return;
+    }
+
     const pending = pendingTurnCount();
     if (pending === 0) {
         sendToRenderer('update-status', 'Listening...');
@@ -473,11 +505,12 @@ function updateStreamingStatus() {
 }
 
 function persistTurn(entry) {
-    if (entry.persistKind === 'screen') {
-        saveScreenAnalysis(entry.contextText, entry.assistant, getChatModel(), entry.seq);
-    } else {
-        saveConversationTurn(entry.contextText, entry.assistant, entry.seq);
-    }
+    // A screenshot turn never carries an answer of its own: its only request is the summary, whose
+    // answer is written to the Screen tab by runScreenshotSummary the moment it lands. A screenshot's
+    // answer goes to the pane, which saves itself as a detail turn.
+    if (entry.persistKind === 'screen') return;
+
+    saveConversationTurn(entry.contextText, entry.assistant, entry.seq);
 }
 
 async function runTurn(entry) {
@@ -538,24 +571,21 @@ async function runTurn(entry) {
     updateStreamingStatus();
 }
 
-// The second, longer answer to a question the short chain just took. It streams into the side pane
-// instead of a bubble, and nothing about it is visible to the short chain: it reports only its own
-// completion, so the status line keeps claiming the one response it always did.
+// An answer that streams into the side pane instead of a bubble, and nothing about it is visible to the
+// short chain: it reports only its own completion, so the status line keeps claiming the one response it
+// always did. Both answers that live in the pane go through here — the second one a question earns, and
+// the only one a screenshot gets — so a change to the streaming, the throttling, the knowledge tooling
+// or the persistence reaches both.
 //
 // Deliberately not an async function: the prompt has to be built before the caller returns, exactly as
 // in runTurn, so that two turns dispatched back to back both see a transcript that does not yet contain
 // the other's answer. Calling an async function would do the same, but nothing here can be awaited.
-function runDetailTurn(shortEntry) {
-    if (!detailModeEnabled) return;
-    // A screenshot turn is a one-off question about an image: there is no interview topic to expand, and
-    // the pane would spend a second request to restate the same picture.
-    if (shortEntry.persistKind === 'screen') return;
-
+function startDetailStream(turnEntry, { question, thinking, forceThinking = false }) {
     const entry = {
         detailId: ++detailSeq,
-        turnSeq: shortEntry.seq,
-        generation: shortEntry.generation,
-        question: shortEntry.contextText,
+        turnSeq: turnEntry.seq,
+        generation: turnEntry.generation,
+        question,
         partial: '',
         assistant: null,
         status: 'pending',
@@ -564,7 +594,7 @@ function runDetailTurn(shortEntry) {
         lastSentText: '',
     };
 
-    const messages = buildDetailMessages(shortEntry);
+    const messages = buildDetailMessages(turnEntry);
     logTransportEvent('chat.request', { turnId: entry.turnSeq, detail: true, roles: messages.map(message => message.role) });
 
     detailLog.push(entry);
@@ -607,7 +637,8 @@ function runDetailTurn(shortEntry) {
                     maxToolRounds: hasKnowledge ? 1 : 0,
                     // Only ever needed alongside the tool: without a directory there is no second round.
                     followUpSystem: hasKnowledge ? currentDetailFollowUpSystemPrompt : null,
-                    thinking: detailThinkingEnabled,
+                    thinking,
+                    forceThinking,
                     executeTool: (name, argsJson) => {
                         const dir = getKnowledgeDir();
 
@@ -660,7 +691,10 @@ function runDetailTurn(shortEntry) {
                 truncated: finishReason === 'length',
             });
 
-            if (entry.assistant) saveDetailTurn(entry.question, entry.assistant, entry.turnSeq, entry.usedKnowledge);
+            // Read the question off the turn rather than off this entry: a screenshot's question line is
+            // the image summary, which lands asynchronously, so the copy taken when the row opened can
+            // still be the placeholder. For every other turn the two are the same string.
+            if (entry.assistant) saveDetailTurn(turnEntry.contextText, entry.assistant, entry.turnSeq, entry.usedKnowledge);
         } catch (error) {
             entry.status = 'failed';
             console.error('[Pipeline] detail error:', error);
@@ -679,6 +713,87 @@ function runDetailTurn(shortEntry) {
             });
         }
     })();
+
+    return entry.detailId;
+}
+
+// The ordinary second answer: the same question the short chain just answered, expanded in the pane.
+// A screenshot never comes through here — its answer is the only one that turn gets, so it is started
+// below by startScreenshotAnswer instead of being paired with a short answer it does not have.
+function runDetailTurn(shortEntry) {
+    if (!detailModeEnabled) return;
+
+    startDetailStream(shortEntry, { question: shortEntry.contextText, thinking: detailThinkingEnabled });
+}
+
+// A screenshot's only answer goes to the pane: an image is a question, and the answer to it is read, not
+// spoken, so leaving the transcript free of it is the point rather than a side effect. It thinks first
+// whatever the detail setting says — nothing is waiting on this answer word by word, and the picture is
+// worth the wait. The row is opened here, synchronously, for two reasons: thinking can hold the first
+// token back for half a minute and the pane should say what it is waiting for, and the id has to exist
+// before a clear-context can raise the floor above it.
+function startScreenshotAnswer(turnEntry) {
+    const detailId = startDetailStream(turnEntry, {
+        question: turnEntry.contextText,
+        thinking: true,
+        forceThinking: true,
+    });
+
+    sendToRenderer('new-detail-response', {
+        detailId,
+        turnSeq: turnEntry.seq,
+        question: turnEntry.contextText,
+        text: '',
+    });
+}
+
+// The screenshot's second, concurrent request, and the only one the transcript and the Screen tab ever
+// see. It is deliberately a request of its own rather than a step of the answer above: what the picture
+// asks has to be in words before the next question needs it, and waiting for the answer would put the
+// summary behind thirty seconds of thinking. No history rides along — the question is what is in the
+// image, and nothing about the interview changes what that is.
+async function runScreenshotSummary(entry, base64Data, prompt) {
+    const messages = [
+        { role: 'system', content: getScreenshotSummaryPrompt() },
+        {
+            role: 'user',
+            content: [
+                { type: 'text', text: '概括这张图片里的题目。' },
+                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${base64Data}` } },
+            ],
+        },
+    ];
+    logTransportEvent('chat.request', { turnId: entry.seq, summary: true, roles: messages.map(message => message.role) });
+
+    let line = SCREEN_FAILED_LINE;
+    try {
+        // The stream itself is not shown: this line replaces the placeholder in one piece when it is
+        // done. The prompt asks for one to three sentences and thinking is off, so the cap every other
+        // request uses is left alone here rather than narrowed to what a summary should cost.
+        const { text } = await requestChat(messages, () => {}, { thinking: false });
+        if (text.trim()) {
+            line = `${SCREEN_PREFIX} ${text.trim()}`;
+        }
+    } catch (error) {
+        console.error('[Pipeline] screenshot summary error:', error);
+    }
+
+    // The session may have been replaced while this was in flight, in which case the row and the context
+    // text both belong to a transcript nobody is looking at any more.
+    if (entry.generation !== sessionGeneration) return;
+
+    // From here on every later prompt replays this line in place of the image, which is why the entry was
+    // created with a non-empty contextText and never carries an empty one.
+    entry.contextText = line;
+    sendToRenderer('transcription-final', { text: line, speaker: 'screen', blockId: entry.seq });
+    // The Screen tab renders the response column, so the summary goes there and the pane's own answer
+    // stays where it is shown: the Detailed tab.
+    saveScreenAnalysis(prompt, line, getChatModel(), entry.seq);
+    logTransportEvent('chat.completed', { turnId: entry.seq, summary: true });
+
+    // Nothing of the screenshot is pending in turnLog, so without this the status line would sit on
+    // "Analyzing image..." for the rest of the session.
+    updateStreamingStatus();
 }
 
 // Never awaited and never queued: the caller is the ASR callback and must stay responsive.
@@ -693,8 +808,7 @@ function dispatchTurn(text) {
     const entry = createTurn(trimmed, trimmed, 'conversation');
     runTurn(entry);
     // A sibling of runTurn, not a step inside it: runTurn builds its prompt synchronously, so by the time
-    // this line runs both chains have snapshotted the same transcript. Keeping them siblings is also what
-    // lets a screenshot turn skip the detail chain with a single guard.
+    // this line runs both chains have snapshotted the same transcript.
     runDetailTurn(entry);
     updateStreamingStatus();
     return entry;
@@ -723,6 +837,8 @@ function startAsrClient(source) {
         onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
         onState: state => {
             if (!isInterviewer) return;
+            // Nothing the socket does is worth announcing while the user has the audio paused.
+            if (paused) return;
             if (state === 'connecting') {
                 sendToRenderer('update-status', 'Connecting...');
             } else if (state === 'ready') {
@@ -786,6 +902,8 @@ function resetAudioState() {
     transcriptionLanguage = null;
     turnLog = [];
     turnSeq = 0;
+    contextFloorSeq = 0;
+    paused = false;
     // Cleared with the turn log, or a session opened after this one would start with the previous
     // session's detailed answers still pageable in the pane.
     detailLog = [];
@@ -813,6 +931,7 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
     briefThinkingEnabled = prefs.briefThinking === true;
     detailThinkingEnabled = prefs.detailThinking !== false;
+    chatContextTurns = getChatContextTurns();
 
     transcriptionLanguage = selectedLanguage;
 
@@ -846,6 +965,22 @@ function initializeChatSession(customPrompt, selectedLanguage) {
 
 function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
+
+    // Paused: the frame is still forwarded, but as silence. The endpoint ends a task that hears
+    // nothing for long enough, and a dead socket would have to reconnect in front of the first
+    // question after the resume — so the traffic keeps the session warm and the user's audio never
+    // reaches it as speech. The gate and the watchdog are skipped rather than fed: silence measures
+    // as -inf dBFS and would open the gate, and there is no longer any text for a flush to rescue.
+    if (paused) {
+        const state = streams[source];
+        if (!state || !state.asr) return;
+
+        const pcm16k = resample24kTo16k(Buffer.alloc(monoChunk24k.length), state);
+        if (pcm16k.length === 0) return;
+
+        state.asr.sendAudio(pcm16k);
+        return;
+    }
 
     // Measured before the client check below: the loopback capture keeps delivering chunks even
     // after its recognizer gave up, and a gate that never saw a quiet chunk would stay on forever.
@@ -889,6 +1024,50 @@ function isLocalSessionActive() {
     return isLocalActive;
 }
 
+// The sentence in flight is older than the pause and already on screen, so it is settled rather than
+// dropped: left open, whatever is said after the resume would be spliced onto the half-sentence that
+// preceded it in one bubble. Nothing is dispatched for it — it was not a finished question.
+function suspendPendingText() {
+    for (const source of [INTERVIEWER, CANDIDATE]) {
+        const state = streams[source];
+        if (!state.turnText && !state.interimText) continue;
+
+        state.turnText = '';
+        state.interimText = '';
+        state.silenceMs = 0;
+        sendBubble('transcription-final', source);
+    }
+
+    // Closed either way, so the next thing the candidate says opens a new bubble instead of growing
+    // the one that was open when the pause began.
+    candidateBlockId += 1;
+}
+
+function setPaused(value) {
+    const next = Boolean(value);
+    if (next === paused) return;
+
+    paused = next;
+    console.log('[Pipeline] Paused:', paused);
+
+    if (paused) {
+        suspendPendingText();
+        sendToRenderer('update-status', 'Paused');
+    } else if (isLocalActive) {
+        sendToRenderer('update-status', 'Listening...');
+    }
+}
+
+// The model's view of the session starts over here. Only the prompt is affected: turnLog keeps every
+// entry, so the pending count, the prune and — through persistTurn — the history file are untouched.
+// Audio in flight is deliberately left alone. Clearing a stream's pending text would make the bubble
+// the user is watching shrink on its next update, which is the truncation this is meant to avoid.
+function clearContext() {
+    contextFloorSeq = turnSeq;
+    console.log('[Pipeline] Context cleared at seq', contextFloorSeq);
+    return { turnSeq, detailSeq };
+}
+
 async function sendLocalText(text) {
     if (!isLocalActive) {
         return { success: false, error: 'No active session' };
@@ -921,18 +1100,27 @@ async function sendLocalImage(base64Data, prompt) {
         },
     ];
 
-    // The screenshot prompt is a page of boilerplate, so the bubble gets a short marker instead.
-    sendToRenderer('transcription-final', { text: 'Screenshot' });
-    sendToRenderer('update-status', 'Analyzing image...');
-
-    // Runs like any other turn, so a screenshot taken mid-answer streams alongside it instead of
-    // displacing it. Only the prompt text is kept for later context; the image itself is not.
     // A screenshot is not the interviewer speaking, but it is still a new turn: the block has to close
     // here too, or this prompt would leave out everything the candidate has said since the last question.
     commitCandidateSpeech();
-    const entry = createTurn(requestContent, prompt, 'screen');
-    runTurn(entry);
-    runDetailTurn(entry);
+    // Opened with a placeholder rather than the prompt: userContent falls back to requestContent when a
+    // screen turn's contextText is empty, and for a screenshot that fallback is the whole base64 image,
+    // replayed into every later prompt. A screenshot turn's contextText is never empty, from here on.
+    const entry = createTurn(requestContent, SCREEN_PENDING_LINE, 'screen');
+    // Nothing ever streams into this turn: the answer it would hold lives in the pane, and the summary
+    // it waits for is a request of its own. Left pending it would claim a response is on the way forever.
+    entry.status = 'done';
+
+    // The transcript says what the picture asked, in words: the row is opened now, where the image
+    // arrived, and rewritten in place when the summary comes back — an image taken while the interviewer
+    // is still talking must not have its line pushed below the question that followed it.
+    sendToRenderer('transcription-update', { text: SCREEN_PENDING_LINE, speaker: 'screen', blockId: entry.seq });
+    sendToRenderer('update-status', 'Analyzing image...');
+
+    startScreenshotAnswer(entry);
+    // Never awaited, and started before the answer so the two requests overlap: the summary is one small
+    // request with thinking off, the answer a long one with it on.
+    runScreenshotSummary(entry, base64Data, prompt);
 
     return { success: true, model: getChatModel(), turnId: entry.seq };
 }
@@ -942,6 +1130,8 @@ module.exports = {
     processLocalAudio,
     closeLocalSession,
     isLocalSessionActive,
+    setPaused,
+    clearContext,
     sendLocalText,
     sendLocalImage,
 };

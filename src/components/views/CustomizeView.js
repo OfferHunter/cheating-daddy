@@ -216,6 +216,8 @@ export class CustomizeView extends LitElement {
         detailMode: { type: Boolean },
         briefThinking: { type: Boolean },
         detailThinking: { type: Boolean },
+        chatContextTurns: { type: Number },
+        chatMaxTokens: { type: Number },
     };
 
     constructor() {
@@ -245,6 +247,8 @@ export class CustomizeView extends LitElement {
         this.detailMode = true;
         this.briefThinking = false;
         this.detailThinking = true;
+        this.chatContextTurns = 15;
+        this.chatMaxTokens = 128000;
         this._loadFromStorage();
     }
 
@@ -312,6 +316,8 @@ export class CustomizeView extends LitElement {
             this.detailMode = prefs.detailMode !== false;
             this.briefThinking = prefs.briefThinking === true;
             this.detailThinking = prefs.detailThinking !== false;
+            this.chatContextTurns = prefs.chatContextTurns ?? 15;
+            this.chatMaxTokens = prefs.chatMaxTokens ?? 128000;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
@@ -632,6 +638,8 @@ export class CustomizeView extends LitElement {
                 detailMode: true,
                 briefThinking: false,
                 detailThinking: true,
+                chatContextTurns: 15,
+                chatMaxTokens: 128000,
             };
             for (const [key, value] of Object.entries(defaults)) {
                 await cheatingDaddy.storage.updatePreference(key, value);
@@ -660,6 +668,8 @@ export class CustomizeView extends LitElement {
             this.detailMode = defaults.detailMode;
             this.briefThinking = defaults.briefThinking;
             this.detailThinking = defaults.detailThinking;
+            this.chatContextTurns = defaults.chatContextTurns;
+            this.chatMaxTokens = defaults.chatMaxTokens;
 
             // Notify parent callbacks
             this.onLanguageChange(defaults.selectedLanguage);
@@ -866,6 +876,35 @@ export class CustomizeView extends LitElement {
                         Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which
                         is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. Takes
                         effect on the next session.
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Context Turns</label>
+                        <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="100"
+                            class="control"
+                            .value=${this.chatContextTurns}
+                            @change=${e => this.handleNumberPreferenceInput('chatContextTurns', e.target.value)}
+                        />
+                        <div class="form-help">How many previous turns are replayed to the model, in both the fast and the detailed answer. Higher keeps more of the interview in view but makes every request larger and slower. 1-100. Takes effect on the next session.</div>
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Max Tokens</label>
+                        <input
+                            type="number"
+                            step="1"
+                            min="1024"
+                            class="control"
+                            .value=${this.chatMaxTokens}
+                            @change=${e => this.handleNumberPreferenceInput('chatMaxTokens', e.target.value)}
+                        />
+                        <div class="form-help">
+                            The ceiling on a single reply, thinking included — a thinking reply is charged for its reasoning from this same
+                            number, and a hard question can spend all of a low one before writing anything, which arrives as an empty answer.
+                            Leave it high and the model stops on its own. Takes effect on the next turn.
+                        </div>
                     </div>
                 </div>
             </section>

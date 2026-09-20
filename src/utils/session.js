@@ -308,6 +308,29 @@ function setupIpcHandlers() {
         }
     });
 
+    // Neither pause nor clear ends the session: the sockets stay up for a resume, and the transcript
+    // on disk is written turn by turn from persistTurn, so clearing the context never reaches it.
+    ipcMain.handle('set-audio-paused', async (event, value) => {
+        if (!chatSessionActive) return { success: false, error: 'No active session' };
+        try {
+            getPipeline().setPaused(value);
+            return { success: true };
+        } catch (error) {
+            console.error('Error pausing audio:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('clear-context', async event => {
+        if (!chatSessionActive) return { success: false, error: 'No active session' };
+        try {
+            return { success: true, ...getPipeline().clearContext() };
+        } catch (error) {
+            console.error('Error clearing context:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('send-image-content', async (event, { data, prompt }) => {
         try {
             if (!data || typeof data !== 'string') {

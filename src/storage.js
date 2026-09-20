@@ -65,6 +65,15 @@ const DEFAULT_PREFERENCES = {
     // How long the loopback level must stay on one side of micGateDb before the gate flips. Without
     // it, jitter around the threshold chops the microphone on and off inside a single sentence.
     micGateDwellMs: 300,
+    // How many earlier turns are replayed to the model. Each one is a question with whatever context
+    // came with it, so this trades prompt size and latency against how much of the interview the model
+    // can see. Both answer chains read the same number, and it is snapshotted at session start.
+    chatContextTurns: 15,
+    // The output cap on every request, reasoning included. On this endpoint a `thinking` request is
+    // charged for its reasoning against the same budget, and a hard question can spend the whole of
+    // it before emitting one visible token — which reaches the app as an empty answer. The endpoint
+    // accepts up to 393216, so a high number here means the model stops on its own. Read per request.
+    chatMaxTokens: 128000,
     // Written by the theme picker in Settings, which is why it lives here and not in config.json.
     theme: 'gruvbox',
 };
@@ -74,6 +83,12 @@ const MAX_SENTENCE_SILENCE_RANGE = { min: 200, max: 6000 };
 
 const MIC_GATE_RANGE = { min: -80, max: 0 };
 const MIC_GATE_DWELL_RANGE = { min: 0, max: 2000 };
+const CHAT_CONTEXT_TURNS_RANGE = { min: 1, max: 100 };
+// Deliberately no upper bound: where the ceiling is depends on the endpoint, and one that rejects the
+// value says so in a 400 the chat layer already knows how to retry past. The floor is real, though —
+// reasoning is charged to this same budget, so a value a few hundred tokens large is spent before a
+// single visible token is written, and the turn arrives empty for no reason the user can see.
+const CHAT_MAX_TOKENS_FLOOR = 1024;
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
 
@@ -285,6 +300,21 @@ function getMicGateDwellMs() {
     return Math.min(MIC_GATE_DWELL_RANGE.max, Math.max(MIC_GATE_DWELL_RANGE.min, resolved));
 }
 
+// Clamped on read for a sharper reason than the timeouts above: the pipeline cuts the history with
+// slice(-n), and slice(-0) is slice(0) — a hand-edited 0 would replay *every* turn ever recorded
+// instead of none.
+function getChatContextTurns() {
+    const value = Number(getPreferences().chatContextTurns);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.chatContextTurns;
+    return Math.min(CHAT_CONTEXT_TURNS_RANGE.max, Math.max(CHAT_CONTEXT_TURNS_RANGE.min, Math.round(resolved)));
+}
+
+function getChatMaxTokens() {
+    const value = Number(getPreferences().chatMaxTokens);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.chatMaxTokens;
+    return Math.max(CHAT_MAX_TOKENS_FLOOR, Math.round(resolved));
+}
+
 // ============ KEYBINDS ============
 
 function getKeybinds() {
@@ -431,6 +461,8 @@ module.exports = {
     getMicMaxSentenceSilenceMs,
     getMicGateDb,
     getMicGateDwellMs,
+    getChatContextTurns,
+    getChatMaxTokens,
 
     // Keybinds
     getKeybinds,
