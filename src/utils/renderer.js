@@ -5,7 +5,12 @@ let mediaStream = null;
 let screenshotInterval = null;
 let audioContext = null;
 let audioProcessor = null;
+// The microphone's capture is held separately from the speaker path because it is torn down on its own:
+// its track and the context it was fed through outlive `mediaStream` and `audioContext`, and leaving them
+// open is what keeps the device marked as in use after the session that opened it has ended.
 let micAudioProcessor = null;
+let micCaptureStream = null;
+let micCaptureContext = null;
 let audioBuffer = [];
 const SAMPLE_RATE = 24000;
 const AUDIO_CHUNK_DURATION = 0.1; // seconds
@@ -187,6 +192,28 @@ ipcRenderer.on('update-status', (event, status) => {
     cheatingDaddy.setStatus(status);
 });
 
+// Stopping the track is the step that actually hands the device back — `disconnect()` on the processor
+// only stops the callbacks, so the OS keeps reporting the microphone as in use (on Windows, the
+// indicator in the tray) until the track is stopped and its context closed.
+function releaseMicCapture() {
+    if (micAudioProcessor) {
+        micAudioProcessor.disconnect();
+        micAudioProcessor = null;
+    }
+
+    if (micCaptureStream) {
+        micCaptureStream.getTracks().forEach(track => track.stop());
+        micCaptureStream = null;
+    }
+
+    if (micCaptureContext) {
+        // Fire and forget: nothing waits on the teardown, and a closing context cannot fail in a way the
+        // session would care about.
+        micCaptureContext.close().catch(() => {});
+        micCaptureContext = null;
+    }
+}
+
 // 'none' is the user's explicit "don't use a microphone" choice from Settings, so it never reaches
 // here. A concrete deviceId is passed as 'ideal' rather than 'exact': if that device has since been
 // unplugged we fall back to the system default instead of failing the capture outright.
@@ -215,6 +242,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
     // replacing it, so the only thing that turns it off is an explicit "no microphone" choice.
     const shouldCaptureMic = micDeviceId !== 'none';
 
+    // Released before anything opens: this session's own choice decides whether a microphone runs, and
+    // whatever an earlier session left behind must not outlive it either way.
+    releaseMicCapture();
+
     try {
         if (isMacOS) {
             // On macOS, use SystemAudioDump for audio and getDisplayMedia for screen
@@ -239,11 +270,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             console.log('macOS screen capture started - audio handled by SystemAudioDump');
 
             if (shouldCaptureMic) {
-                let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
+                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('macOS microphone capture started');
-                    setupLinuxMicProcessing(micStream);
+                    setupLinuxMicProcessing(micCaptureStream);
                 } catch (micError) {
                     console.warn('Failed to get microphone access on macOS:', micError);
                 }
@@ -287,14 +317,13 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 
             // Additionally get microphone input for Linux based on audio mode
             if (shouldCaptureMic) {
-                let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
+                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
 
                     console.log('Linux microphone capture started');
 
                     // Setup audio processing for microphone on Linux
-                    setupLinuxMicProcessing(micStream);
+                    setupLinuxMicProcessing(micCaptureStream);
                 } catch (micError) {
                     console.warn('Failed to get microphone access on Linux:', micError);
                     // Continue without microphone if permission denied
@@ -325,11 +354,10 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             setupWindowsLoopbackProcessing();
 
             if (shouldCaptureMic) {
-                let micStream = null;
                 try {
-                    micStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
+                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('Windows microphone capture started');
-                    setupLinuxMicProcessing(micStream);
+                    setupLinuxMicProcessing(micCaptureStream);
                 } catch (micError) {
                     console.warn('Failed to get microphone access on Windows:', micError);
                 }
@@ -353,6 +381,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 function setupLinuxMicProcessing(micStream) {
     // Setup microphone audio processing for Linux
     const micAudioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+    micCaptureContext = micAudioContext;
     const micSource = micAudioContext.createMediaStreamSource(micStream);
     const micProcessor = micAudioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
 
@@ -668,11 +697,8 @@ function stopCapture() {
         audioProcessor = null;
     }
 
-    // Clean up microphone audio processor (Linux only)
-    if (micAudioProcessor) {
-        micAudioProcessor.disconnect();
-        micAudioProcessor = null;
-    }
+    // Clean up the microphone capture: the processor, its track and its context (see releaseMicCapture).
+    releaseMicCapture();
 
     if (audioContext) {
         audioContext.close();
@@ -714,9 +740,11 @@ const METER_RELEASE = 0.12;
 
 let meterAudioContext = null;
 let metersRunning = false;
-// Bumped whenever a capture is stopped, so a capture that resolves afterwards is thrown away
-// instead of being left running with nobody reading it.
-let metersGeneration = 0;
+// Bumped whenever a capture is stopped or replaced, so a capture that resolves afterwards is thrown
+// away instead of being left running with nobody reading it. One counter per source: the two start
+// together and either can be restarted on its own, and a shared counter would let the microphone's
+// restart throw away a system capture that is still on its way.
+const meterGeneration = { system: 0, mic: 0 };
 
 const meterSources = {
     system: { stream: null, analyser: null, samples: null, nodes: [], display: 0 },
@@ -804,7 +832,7 @@ async function startMicMeter(deviceId, generation) {
         return false;
     }
 
-    if (generation !== metersGeneration) {
+    if (generation !== meterGeneration.mic) {
         stream.getTracks().forEach(track => track.stop());
         return false;
     }
@@ -827,7 +855,7 @@ async function startSystemMeter(generation) {
         return false;
     }
 
-    if (generation !== metersGeneration) {
+    if (generation !== meterGeneration.system) {
         stream.getTracks().forEach(track => track.stop());
         return false;
     }
@@ -841,18 +869,22 @@ async function startSystemMeter(generation) {
 
 async function startAudioMeters(micDeviceId) {
     metersRunning = true;
-    const generation = ++metersGeneration;
-    return Promise.all([startSystemMeter(generation), startMicMeter(micDeviceId, generation)]);
+    return Promise.all([startSystemMeter(++meterGeneration.system), startMicMeter(micDeviceId, ++meterGeneration.mic)]);
 }
 
+// Bumping first is what retires a capture an earlier choice already has in flight: the page starts its
+// meters on connect, before the stored preference has been read, so a getUserMedia can still be resolving
+// when the real device — or 'none' — arrives. Without the bump that capture would pass the check in
+// startMicMeter and attach a microphone nobody asked for.
 async function restartMicMeter(micDeviceId) {
     if (!metersRunning) return false;
-    return startMicMeter(micDeviceId, metersGeneration);
+    return startMicMeter(micDeviceId, ++meterGeneration.mic);
 }
 
 function stopAudioMeters() {
     metersRunning = false;
-    metersGeneration += 1;
+    meterGeneration.system += 1;
+    meterGeneration.mic += 1;
     releaseMeter('system');
     releaseMeter('mic');
 }
@@ -929,6 +961,16 @@ ipcRenderer.on('save-detail-turn', async (event, data) => {
         console.log('Detail turn saved:', data.sessionId);
     } catch (error) {
         console.error('Error saving detail turn:', error);
+    }
+});
+
+// Listen for what the candidate said, recorded so the History page can show it beside the answers.
+ipcRenderer.on('save-candidate-speech', async (event, data) => {
+    try {
+        await storage.saveSession(data.sessionId, { candidateHistory: data.fullHistory });
+        console.log('Candidate speech saved:', data.sessionId);
+    } catch (error) {
+        console.error('Error saving candidate speech:', error);
     }
 });
 

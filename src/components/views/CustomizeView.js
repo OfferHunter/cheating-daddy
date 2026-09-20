@@ -236,7 +236,10 @@ export class CustomizeView extends LitElement {
         this.backgroundTransparency = 0.48;
         this.textTransparency = 0.83;
         this.fontSize = 16;
-        this.audioInputDeviceId = 'default';
+        // 'none' until the stored choice is read: the meters start on connect, which happens before
+        // _loadFromStorage resolves, and a placeholder of 'default' would open the system microphone on
+        // the way in even for a user who turned it off. The real device arrives via _refreshMicMeter.
+        this.audioInputDeviceId = 'none';
         this.audioInputDevices = [];
         this.customPrompt = '';
         this.theme = 'gruvbox';

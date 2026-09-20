@@ -1,9 +1,13 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
+import { conversationStyles, renderMarkdown } from './conversationStyles.js';
 
 export class HistoryView extends LitElement {
     static styles = [
         unifiedPageStyles,
+        // The transcript's look, shared with the live view: a recorded session is shown as the same
+        // conversation, so the two must not be able to drift apart. The local rules below come last.
+        conversationStyles,
         css`
             .unified-page {
                 overflow-y: hidden;
@@ -143,16 +147,32 @@ export class HistoryView extends LitElement {
             .selection-bar {
                 display: flex;
                 align-items: center;
+                flex-wrap: wrap;
                 gap: var(--space-sm);
                 padding: var(--space-sm) var(--space-md);
                 border-bottom: 1px solid var(--border);
                 background: var(--bg-elevated);
             }
 
+            /* The basis is what keeps the sentence readable. With flex:1 (= basis 0) and a row that does
+               not wrap, the buttons below — all nowrap, so unshrinkable past their own text — leave the
+               count only its min-content width, and the confirmation sentence stacks one word per line. A
+               240px basis the row cannot meet pushes the buttons onto their own line instead, so the
+               sentence gets the whole width. */
             .selection-count {
-                flex: 1;
+                flex: 1 1 240px;
+                min-width: 0;
                 color: var(--text-secondary);
                 font-size: var(--font-size-sm);
+            }
+
+            /* One item, so a wrap moves the whole set down rather than splitting it. */
+            .bar-actions {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: var(--space-sm);
+                flex-shrink: 0;
             }
 
             .bar-btn {
@@ -165,6 +185,7 @@ export class HistoryView extends LitElement {
                 cursor: pointer;
                 transition: background var(--transition);
                 white-space: nowrap;
+                flex-shrink: 0;
             }
 
             .bar-btn:hover:not(:disabled) {
@@ -197,6 +218,9 @@ export class HistoryView extends LitElement {
                 color: var(--danger);
             }
 
+            /* Sized and selectable exactly like the live transcript, which carries both on its own scroll
+               container rather than on the bubbles: a recorded session then reads at the size and leading
+               the same session was read at, and follows the font-size setting. */
             .details-scroll {
                 overflow-y: auto;
                 flex: 1;
@@ -205,48 +229,62 @@ export class HistoryView extends LitElement {
                 flex-direction: column;
                 gap: var(--space-sm);
                 padding: var(--space-sm) 0;
+                font-size: var(--response-font-size, 15px);
+                line-height: var(--line-height);
+                user-select: text;
+                cursor: text;
             }
 
-            .message-row {
+            .details-scroll * {
+                user-select: text;
+                cursor: text;
+            }
+
+            .details-scroll a {
+                cursor: pointer;
+            }
+
+            /* One turn: its parts, each of which is a meta line over a bubble. The bubble look itself —
+               sides, chrome, markdown — comes from conversationStyles, the same rules the live view uses. */
+            .turn {
                 display: flex;
+                flex-direction: column;
+                gap: 10px;
             }
 
-            .message-row.user {
-                justify-content: flex-end;
+            .part {
+                display: flex;
+                flex-direction: column;
             }
 
-            .message-row.ai,
-            .message-row.screen {
+            /* The label, the time and the references sit above the bubble rather than inside it: an answer
+               is markdown, and rendering it replaces the body's contents wholesale, so anything written
+               into the body would be lost on the next pass. */
+            .meta-row {
+                display: flex;
+                align-items: baseline;
+                gap: 6px;
+                padding: 0 4px 2px;
+                font-size: 10px;
+                color: var(--text-muted);
+            }
+
+            .meta-row.left {
                 justify-content: flex-start;
             }
 
-            .message {
-                max-width: 75%;
-                border-radius: 16px;
-                padding: 8px 12px;
-                word-break: break-word;
-                user-select: text;
-                cursor: text;
-                font-size: var(--font-size-sm);
-                line-height: 1.45;
-            }
-
-            .message-body {
-                white-space: pre-wrap;
-            }
-
-            .message-meta {
-                font-size: 10px;
-                margin-top: 4px;
-                opacity: 0.5;
+            .meta-row.right {
+                justify-content: flex-end;
             }
 
             .message-label {
-                font-size: 10px;
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
-                opacity: 0.55;
-                margin-bottom: 4px;
+                opacity: 0.75;
+            }
+
+            .message-meta {
+                opacity: 0.6;
             }
 
             .context-strip {
@@ -283,30 +321,6 @@ export class HistoryView extends LitElement {
                 gap: var(--space-sm);
                 padding: var(--space-sm);
                 border-top: 1px solid var(--border);
-            }
-
-            .message-row.user .message {
-                background: var(--accent);
-                color: var(--bg-app);
-                border-bottom-right-radius: 4px;
-            }
-
-            .message-row.user .message-meta {
-                text-align: right;
-            }
-
-            .message-row.ai .message {
-                background: var(--bg-elevated);
-                color: var(--text-primary);
-                border: 1px solid var(--border);
-                border-bottom-left-radius: 4px;
-            }
-
-            .message-row.screen .message {
-                background: var(--bg-elevated);
-                color: var(--text-primary);
-                border: 1px solid var(--border);
-                border-bottom-left-radius: 4px;
             }
 
             .context-row {
@@ -554,14 +568,18 @@ export class HistoryView extends LitElement {
         });
     }
 
-    // The three stored lists are two answers to one question, not two conversations: a brief turn, its
-    // detailed twin and the screenshot summary of an image question all carry that question's sequence
-    // number as `order`. So rows are grouped by `order` and read as one timeline.
+    // The stored lists are parts of one conversation, not separate ones: a brief turn, its detailed twin
+    // and the screenshot summary of an image question all carry that question's sequence number as
+    // `order`, and a block of the candidate's own speech carries the one it was committed with. So rows
+    // are grouped by `order` and read as one timeline.
     //
     // Ordering the rows by `order` rather than by timestamp is deliberate. Answers stream concurrently and
     // finish out of order, so a timestamp sort would replay the interview in the order the model happened
     // to finish answering rather than the order the questions were asked — orders 3 and 5 in one recorded
     // session are a real instance of the two disagreeing.
+    //
+    // The candidate's speech keeps its place because the pipeline allocates its sequence number before
+    // the question that interrupted it: the block reads above that question, exactly where it was seen.
     collectTimeline(session) {
         const groups = new Map();
         const groupFor = (order, timestamp) => {
@@ -610,6 +628,14 @@ export class HistoryView extends LitElement {
                 timestamp: entry.timestamp,
                 order: entry.order,
             })),
+            // Absent from sessions recorded before the candidate's own speech was written out, which is
+            // why this list is tolerated missing rather than treated as a broken file.
+            ...(session.candidateHistory || []).map(entry => ({
+                role: 'candidate',
+                content: entry.text,
+                timestamp: entry.timestamp,
+                order: entry.order,
+            })),
         ];
 
         parts.forEach(part => {
@@ -628,8 +654,34 @@ export class HistoryView extends LitElement {
             .sort((a, b) => a.order - b.order || this._firstTimestamp(a) - this._firstTimestamp(b))
             .map(group => {
                 group.parts.sort((a, b) => rank(a) - rank(b) || a.timestamp - b.timestamp);
+                // Where the markdown pass finds each answer again. The parts are already in their final
+                // order here, so position is enough to tell two of the same role apart, and the pass
+                // recomputes the same list, which is what makes the key stable between the two.
+                group.parts.forEach((part, index) => {
+                    part.key = `${group.order}:${part.role}:${index}`;
+                });
                 return group;
             });
+    }
+
+    // An answer is markdown, and markdown cannot be expressed in the template without re-parsing it on
+    // every update, so the body is filled in after the fact — the same pass the live view runs, minus the
+    // streaming: a recorded session renders once, and the memo keeps a selection or a search from
+    // re-parsing anything that has not changed.
+    updated() {
+        if (!this.selectedSession) return;
+
+        for (const group of this.collectTimeline(this.selectedSession)) {
+            for (const part of group.parts) {
+                if (part.role === 'question' || part.role === 'candidate') continue;
+
+                const el = this.renderRoot.querySelector(`[data-timeline-id="${part.key}"]`);
+                if (!el || el._renderedText === part.content) continue;
+
+                el.innerHTML = renderMarkdown(part.content);
+                el._renderedText = part.content;
+            }
+        }
     }
 
     // An image question is stored twice over: the detail turn's `question` is the screenshot summary line
@@ -685,34 +737,49 @@ export class HistoryView extends LitElement {
     renderTimeline() {
         const rows = this.collectTimeline(this.selectedSession);
         if (!rows.length) return html`<div class="empty">No conversation data.</div>`;
-        return rows.map(group => group.parts.map(part => this.renderPart(part)));
+        // Grouped so the gap between turns is the timeline's own and not the one that would otherwise
+        // open up between a meta line and the bubble it belongs to.
+        return rows.map(group => html`<div class="turn">${group.parts.map(part => this.renderPart(part))}</div>`);
     }
 
-    // The question reads as the user's own bubble, the two answers as the assistant's; without the label
-    // the pair would look like one answer interrupted, since they are two replies to the same question.
+    // The sides are the live transcript's: the interviewer on the left, the candidate's own speech and the
+    // assistant's answers on the right. Without the label the two answers would read as one interrupted
+    // answer, since they are two replies to the same question.
     renderPart(part) {
         const time = this.formatTime(part.timestamp);
 
         if (part.role === 'question') {
             return html`
-                <div class="message-row user">
-                    <div class="message">
-                        <div class="message-body">${part.content}</div>
-                        <div class="message-meta">${time}</div>
+                <div class="part">
+                    <div class="meta-row left"><span class="message-meta">${time}</span></div>
+                    <div class="message-row interviewer">
+                        <div class="message-body plain">${part.content}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        if (part.role === 'candidate') {
+            return html`
+                <div class="part">
+                    <div class="meta-row right"><span class="message-meta">${time}</span></div>
+                    <div class="message-row user">
+                        <div class="message-body plain">${part.content}</div>
                     </div>
                 </div>
             `;
         }
 
         const labels = { brief: 'Brief answer', detail: 'Detailed answer', screen: 'Screen' };
+        const references = part.usedKnowledge?.length ? part.usedKnowledge.join(', ') : '';
         return html`
-            <div class="message-row ${part.role === 'screen' ? 'screen' : 'ai'}">
-                <div class="message">
-                    <div class="message-label">${labels[part.role] || part.role}</div>
-                    <div class="message-body">${part.content}</div>
-                    <div class="message-meta">
-                        ${time}${part.usedKnowledge?.length ? ` · ${part.usedKnowledge.join(', ')}` : ''}
-                    </div>
+            <div class="part">
+                <div class="meta-row right">
+                    <span class="message-label">${labels[part.role] || part.role}</span>
+                    <span class="message-meta">${time}${references ? ` · ${references}` : ''}</span>
+                </div>
+                <div class="message-row assistant">
+                    <div class="message-body markdown" data-timeline-id=${part.key}></div>
                 </div>
             </div>
         `;
@@ -782,19 +849,21 @@ export class HistoryView extends LitElement {
                 ${this.confirmingDelete
                     ? html`<span class="selection-count danger">Delete ${count} session${count === 1 ? '' : 's'}? This cannot be undone.</span>`
                     : html`<span class="selection-count">${count} selected</span>`}
-                ${this.confirmingDelete
-                    ? html`
-                        <button class="bar-btn" @click=${() => { this.confirmingDelete = false; }}>Cancel</button>
-                        <button class="bar-btn danger" @click=${this.deleteSelected}>Delete</button>
-                    `
-                    : html`
-                        <button class="bar-btn" @click=${() => this.toggleSelectAll(filteredSessions)}>
-                            ${allSelected ? 'Deselect all' : 'Select all'}
-                        </button>
-                        <button class="bar-btn" @click=${this.clearSelection}>Clear</button>
-                        <button class="bar-btn" @click=${this.exportSelected}>Export JSON</button>
-                        <button class="bar-btn danger" @click=${() => { this.confirmingDelete = true; }}>Delete</button>
-                    `}
+                <div class="bar-actions">
+                    ${this.confirmingDelete
+                        ? html`
+                            <button class="bar-btn" @click=${() => { this.confirmingDelete = false; }}>Cancel</button>
+                            <button class="bar-btn danger" @click=${this.deleteSelected}>Delete</button>
+                        `
+                        : html`
+                            <button class="bar-btn" @click=${() => this.toggleSelectAll(filteredSessions)}>
+                                ${allSelected ? 'Deselect all' : 'Select all'}
+                            </button>
+                            <button class="bar-btn" @click=${this.clearSelection}>Clear</button>
+                            <button class="bar-btn" @click=${this.exportSelected}>Export JSON</button>
+                            <button class="bar-btn danger" @click=${() => { this.confirmingDelete = true; }}>Delete</button>
+                        `}
+                </div>
             </div>
             ${this.statusMessage ? html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>` : ''}
         `;

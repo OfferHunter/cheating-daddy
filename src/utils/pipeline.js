@@ -1,5 +1,5 @@
 const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt } = require('./prompts');
-const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis, saveDetailTurn } = require('./session');
+const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis, saveDetailTurn, saveCandidateSpeech } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
 const {
     KNOWLEDGE_TOOL_NAME,
@@ -419,6 +419,11 @@ function commitCandidateSpeech() {
     // it must not count as pending or the status line would claim an answer is on the way.
     const entry = createTurn(text, text, null, 'candidate');
     entry.status = 'done';
+
+    // Written out for the History page only. Unlike a question this turn is never answered, so nothing
+    // else about it persists: without this the recorded session cannot reproduce the candidate's half of
+    // the conversation, which is half of what the live transcript showed.
+    saveCandidateSpeech(text, entry.seq);
 }
 
 // Who said a line, since every line is a `user` message and the model cannot tell the two speakers

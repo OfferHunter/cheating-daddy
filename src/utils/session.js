@@ -20,6 +20,10 @@ let screenAnalysisHistory = [];
 // second answer to the same question, so the History page shows them under their own tab and the short
 // transcript stays exactly as long as it was.
 let detailHistory = [];
+// What the candidate said, in its own list for the same reason the detailed answers are: it is not a
+// question, so it never dispatches a turn and has no `ai_response` to pair with. Recorded only so the
+// History page can show the transcript the way the live view did — the model sees it through the turn log.
+let candidateHistory = [];
 // The app is an interview teleprompter, so every recorded session carries the same label. It is still
 // written out because the history view reads it, and sessions saved before had other profiles.
 const SESSION_PROFILE = 'interview';
@@ -43,6 +47,7 @@ function initializeNewSession(customPrompt = null) {
     conversationHistory = [];
     screenAnalysisHistory = [];
     detailHistory = [];
+    candidateHistory = [];
     currentProfile = SESSION_PROFILE;
     currentCustomPrompt = customPrompt;
     console.log('New conversation session started:', currentSessionId);
@@ -105,6 +110,30 @@ function saveDetailTurn(question, response, order = 0, usedKnowledge = []) {
         sessionId: currentSessionId,
         turn: detailTurn,
         fullHistory: detailHistory,
+    });
+}
+
+// `order` is the sequence number the committed block itself was given, which the pipeline allocates
+// before the question that interrupted the candidate: the block therefore keeps the position it had in
+// the live transcript, ahead of that question rather than below it.
+function saveCandidateSpeech(text, order = 0) {
+    if (!currentSessionId) {
+        initializeNewSession();
+    }
+
+    const candidateTurn = {
+        timestamp: Date.now(),
+        text: text.trim(),
+        order,
+    };
+
+    candidateHistory = [...candidateHistory, candidateTurn].sort((a, b) => a.order - b.order);
+    console.log('Saved candidate speech:', candidateTurn);
+
+    sendToRenderer('save-candidate-speech', {
+        sessionId: currentSessionId,
+        turn: candidateTurn,
+        fullHistory: candidateHistory,
     });
 }
 
@@ -439,6 +468,7 @@ module.exports = {
     saveConversationTurn,
     saveScreenAnalysis,
     saveDetailTurn,
+    saveCandidateSpeech,
     stopMacOSAudioCapture,
     setupIpcHandlers,
 };

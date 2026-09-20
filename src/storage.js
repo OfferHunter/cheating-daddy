@@ -348,6 +348,9 @@ function saveSession(sessionId, data) {
         conversationHistory: data.conversationHistory || existingSession?.conversationHistory || [],
         screenAnalysisHistory: data.screenAnalysisHistory || existingSession?.screenAnalysisHistory || [],
         detailHistory: data.detailHistory || existingSession?.detailHistory || [],
+        // Absent from every session recorded before the candidate's own speech was written out, so the
+        // History page has to tolerate the key missing rather than expect an empty list.
+        candidateHistory: data.candidateHistory || existingSession?.candidateHistory || [],
     };
     return writeJsonFile(sessionPath, sessionData);
 }
