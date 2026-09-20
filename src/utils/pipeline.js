@@ -23,7 +23,15 @@ let currentSystemPrompt = null;
 // The detail chain's own prompt and switch, snapshotted at session start for the same reason as the
 // prompt above: reading a preference per turn would put a disk read in front of every answer.
 let currentDetailSystemPrompt = null;
+// The follow-up round's prompt: identical to the one above minus the knowledge rule and index, which
+// the model has already acted on by then. Built here for the same snapshot reason.
+let currentDetailFollowUpSystemPrompt = null;
 let detailModeEnabled = false;
+// Whether each chain lets the model think first. The model is a reasoning model whose scratchpad this
+// app never shows, so thinking is dead wait in front of the first visible token — worth it in the
+// detail pane, which is read in the gap between questions, and not in the brief line that is read aloud.
+let briefThinkingEnabled = false;
+let detailThinkingEnabled = true;
 // The entries the session started with, used both for the prompt index and to decide whether the tool is
 // worth declaring at all. Only the *index* is a snapshot — the executor reads the directory live, so a
 // stale entry here can never turn into a wrong fact, only into a failed lookup.
@@ -498,7 +506,7 @@ async function runTurn(entry) {
             entry.lastSentText = text;
             entry.lastSentAt = now;
             sendToRenderer('update-response', { turnId: entry.seq, text });
-        });
+        }, { thinking: briefThinkingEnabled });
 
         entry.assistant = fullText.trim();
         entry.status = 'done';
@@ -573,6 +581,7 @@ function runDetailTurn(shortEntry) {
                     entry.partial = partial;
 
                     if (isFirst) {
+                        logTransportEvent('chat.first_token', { turnId: entry.turnSeq, detail: true });
                         entry.lastSentText = partial;
                         entry.lastSentAt = Date.now();
                         sendToRenderer('new-detail-response', {
@@ -596,6 +605,9 @@ function runDetailTurn(shortEntry) {
                     // has always been — an endpoint that does not support tools cannot even notice.
                     tools: hasKnowledge ? [KNOWLEDGE_TOOL_SPEC] : null,
                     maxToolRounds: hasKnowledge ? 1 : 0,
+                    // Only ever needed alongside the tool: without a directory there is no second round.
+                    followUpSystem: hasKnowledge ? currentDetailFollowUpSystemPrompt : null,
+                    thinking: detailThinkingEnabled,
                     executeTool: (name, argsJson) => {
                         const dir = getKnowledgeDir();
 
@@ -792,9 +804,15 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     // stale window is nil in practice, because the settings page that changes either one cannot be
     // reached from a live session. A stale id still cannot produce a wrong answer — the executor below
     // validates against the directory as it is at call time.
-    detailModeEnabled = getPreferences().detailMode !== false;
+    const prefs = getPreferences();
+    detailModeEnabled = prefs.detailMode !== false;
     detailKnowledgeEntries = detailModeEnabled ? listKnowledgeEntries(getKnowledgeDir()) : [];
     currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries));
+    // Passing an empty summary is what makes this the follow-up prompt: both the knowledge rule and the
+    // index are conditioned on it, so this is the same prompt with neither.
+    currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
+    briefThinkingEnabled = prefs.briefThinking === true;
+    detailThinkingEnabled = prefs.detailThinking !== false;
 
     transcriptionLanguage = selectedLanguage;
 
@@ -862,6 +880,7 @@ function closeLocalSession() {
     resetAudioState();
     currentSystemPrompt = null;
     currentDetailSystemPrompt = null;
+    currentDetailFollowUpSystemPrompt = null;
     detailModeEnabled = false;
     detailKnowledgeEntries = [];
 }

@@ -214,6 +214,8 @@ export class CustomizeView extends LitElement {
         audioInputDeviceId: { type: String },
         audioInputDevices: { state: true },
         detailMode: { type: Boolean },
+        briefThinking: { type: Boolean },
+        detailThinking: { type: Boolean },
     };
 
     constructor() {
@@ -241,6 +243,8 @@ export class CustomizeView extends LitElement {
         this.micGateDb = -45;
         this.micGateDwellMs = 300;
         this.detailMode = true;
+        this.briefThinking = false;
+        this.detailThinking = true;
         this._loadFromStorage();
     }
 
@@ -306,6 +310,8 @@ export class CustomizeView extends LitElement {
             this.micGateDb = prefs.micGateDb ?? -45;
             this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
             this.detailMode = prefs.detailMode !== false;
+            this.briefThinking = prefs.briefThinking === true;
+            this.detailThinking = prefs.detailThinking !== false;
             if (keybinds) {
                 this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
             }
@@ -437,6 +443,16 @@ export class CustomizeView extends LitElement {
     async handleDetailModeChange(checked) {
         this.detailMode = checked;
         await cheatingDaddy.storage.updatePreference('detailMode', checked);
+    }
+
+    async handleBriefThinkingChange(checked) {
+        this.briefThinking = checked;
+        await cheatingDaddy.storage.updatePreference('briefThinking', checked);
+    }
+
+    async handleDetailThinkingChange(checked) {
+        this.detailThinking = checked;
+        await cheatingDaddy.storage.updatePreference('detailThinking', checked);
     }
 
     // Chromium already exposes the system defaults as entries with deviceId 'default' and
@@ -598,7 +614,8 @@ export class CustomizeView extends LitElement {
             // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt and
             // knowledgeDir are deliberately absent: they are the preferences that hold content the user
             // supplied — instructions and a pointer to their own files — rather than knobs, so a reset
-            // leaves them alone. detailMode is a knob, so it is reset with the rest.
+            // leaves them alone. detailMode and the two thinking switches are knobs, so they reset with
+            // the rest.
             const defaults = {
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
@@ -613,6 +630,8 @@ export class CustomizeView extends LitElement {
                 micGateDb: -45,
                 micGateDwellMs: 300,
                 detailMode: true,
+                briefThinking: false,
+                detailThinking: true,
             };
             for (const [key, value] of Object.entries(defaults)) {
                 await cheatingDaddy.storage.updatePreference(key, value);
@@ -639,6 +658,8 @@ export class CustomizeView extends LitElement {
             this.micGateDb = defaults.micGateDb;
             this.micGateDwellMs = defaults.micGateDwellMs;
             this.detailMode = defaults.detailMode;
+            this.briefThinking = defaults.briefThinking;
+            this.detailThinking = defaults.detailThinking;
 
             // Notify parent callbacks
             this.onLanguageChange(defaults.selectedLanguage);
@@ -822,6 +843,29 @@ export class CustomizeView extends LitElement {
                     <div class="form-help">
                         Answer each question twice: a short line for the transcript, and a longer one in the side pane that
                         may consult the knowledge folder. Takes effect on the next session.
+                    </div>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.briefThinking}
+                            @change=${e => this.handleBriefThinkingChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Thinking in the fast reply</span>
+                    </label>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.detailThinking}
+                            @change=${e => this.handleDetailThinkingChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Thinking in the detailed reply</span>
+                    </label>
+                    <div class="form-help">
+                        Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which
+                        is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. Takes
+                        effect on the next session.
                     </div>
                 </div>
             </section>

@@ -103,17 +103,25 @@ async function streamOnce(body, onText) {
     return readStreamingResponse(response, onText);
 }
 
-// `onText` receives the whole text so far on every token, never a delta.
+// `onText` receives the whole text so far on every token, never a delta — including the text of any
+// rounds that already finished, since the returned `text` accumulates across tool rounds too.
 //
-// tools/maxToolRounds/executeTool are all optional. With none of them this is a single plain request,
-// byte for byte the same body as before the knowledge feature existed.
+// tools/maxToolRounds/executeTool/thinking/followUpSystem are all optional. With none of them this is
+// a single plain request, byte for byte the same body as before the knowledge feature existed.
 //
 // `maxToolRounds` counts *tool* rounds, not requests: 1 means the model may call a tool once and is
 // then given one more request to answer in, with tools still declared but `tool_choice: 'none'`.
 // Dropping the field instead would leave `tool_calls`/`tool` messages in the context with nothing
 // declaring them, which some strict OpenAI-compatible servers reject with a 400.
 async function requestChat(messages, onText, options = {}) {
-    const { tools = null, maxToolRounds = 0, executeTool = null, maxTokens = CHAT_MAX_TOKENS } = options;
+    const {
+        tools = null,
+        maxToolRounds = 0,
+        executeTool = null,
+        maxTokens = CHAT_MAX_TOKENS,
+        thinking,
+        followUpSystem = null,
+    } = options;
 
     const apiKey = getDeepseekApiKey();
     if (!apiKey || !apiKey.trim()) {
@@ -124,12 +132,29 @@ async function requestChat(messages, onText, options = {}) {
     // Two separate questions: whether the request declares `tools` at all, and whether the model is
     // allowed to call one. They part ways on the last round.
     let declareTools = Boolean(tools && tools.length);
+    // Only `false` is ever sent, so an endpoint that has never heard of the field is never bothered
+    // by a default-on switch — and an endpoint that rejects it stays quiet for the rest of the turn.
+    let disableThinking = thinking === false;
     let rounds = 0;
+    // Text from every round that has already finished, joined by a blank line.
+    let committed = '';
     let text = '';
     let finishReason = '';
     let toolCalls = [];
 
     for (;;) {
+        // Rounds are joined by a blank line, in the streamed text as much as in the returned one: a
+        // prefix applied only at the end would make the caller's text visibly jump when a round closes.
+        const prefix = committed ? `${committed}\n\n` : '';
+
+        // The follow-up must not repeat the knowledge rule and index the model has already acted on:
+        // the entry itself is in the conversation by then, and showing the index again invites a
+        // lookup that `tool_choice: 'none'` would refuse anyway. Guarded on the role so a caller
+        // whose first message is not a system prompt is left alone rather than losing it.
+        if (rounds > 0 && followUpSystem && convo[0]?.role === 'system') {
+            convo[0] = { role: 'system', content: followUpSystem };
+        }
+
         const body = {
             model: getChatModel(),
             messages: convo,
@@ -142,23 +167,44 @@ async function requestChat(messages, onText, options = {}) {
             body.tool_choice = rounds < maxToolRounds ? 'auto' : 'none';
         }
 
+        if (disableThinking) body.thinking = { type: 'disabled' };
+
         let round;
         try {
-            round = await streamOnce(body, onText);
+            round = await streamOnce(body, partial => onText(prefix + partial));
         } catch (error) {
-            // The knowledge feature is an addition, not a requirement, so an endpoint that rejects
-            // `tools` falls back to a plain request rather than failing the whole answer.
-            const rejectedTools = declareTools && error.status === 400 && /tools|tool_choice/i.test(error.body || '');
-            if (!rejectedTools) throw error;
+            // `tools` and `thinking` are both additions the app can live without, and a 400 that
+            // names one of them says exactly which. Strip every field the message complains about
+            // and retry once — together, not as nested retries, or a body rejected for both would
+            // only shed whichever field the inner handler happened to look at.
+            const errorBody = error.body || '';
+            const rejected = error.status === 400 && errorBody;
+            const dropTools = rejected && declareTools && /tools|tool_choice/i.test(errorBody);
+            const dropThinking = rejected && disableThinking && /thinking/i.test(errorBody);
+            if (!dropTools && !dropThinking) throw error;
 
-            console.warn(`Chat endpoint rejected tools, retrying without them: ${error.body}`);
-            declareTools = false;
-            delete body.tools;
-            delete body.tool_choice;
-            round = await streamOnce(body, onText);
+            const dropped = [dropTools ? 'tools' : '', dropThinking ? 'thinking' : ''].filter(Boolean).join('+');
+            console.warn(`Chat endpoint rejected ${dropped}, retrying without: ${errorBody}`);
+
+            if (dropTools) {
+                declareTools = false;
+                delete body.tools;
+                delete body.tool_choice;
+            }
+            if (dropThinking) {
+                disableThinking = false;
+                delete body.thinking;
+            }
+
+            round = await streamOnce(body, partial => onText(prefix + partial));
         }
 
-        text = round.text;
+        // A round that only calls a tool often has no text of its own; it contributes nothing rather
+        // than leaving a stray blank line in front of the answer.
+        if (round.text) {
+            text = prefix + round.text;
+            committed = text;
+        }
         finishReason = round.finishReason;
 
         const calls = round.toolCalls;

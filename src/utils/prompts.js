@@ -29,7 +29,7 @@ const interviewPrompt = {
 你："我对这个岗位很感兴趣，因为贵公司在金融科技领域解决的是真实存在的问题，这和我希望做能影响普通人日常生活的产品的想法一致。我研究过你们的技术栈，特别想参与微服务架构这块的建设，团队的技术氛围和创新能力很吸引我。"`,
 
     outputInstructions: `**输出要求：**
-只给出可以直接照读的那段话，用 **Markdown 格式**。不要教练式点评、不要「你应该……」、不要解释 —— 就是候选人能马上说出口的原话。保持**简短有力**。`,
+只给出可以直接照读的那段话，用 **Markdown 格式**。不要教练式点评、不要「好，我来回答……」、不要解释 —— 就是候选人能马上说出口的原话。保持**简短有力**。`,
 };
 
 // The second answer to the same question, shown beside the first. Same persona and same language rule,
@@ -54,10 +54,10 @@ const detailPrompt = {
 
     // Only present when there is an index to go with it: a rule about a directory that does not exist
     // would spend prompt space teaching the model about a mechanism it cannot use this session.
-    knowledgeRule: `4. 你可以调用 load_knowledge 读取「知识库」索引里某个条目的正文。当且仅当某个条目的摘要与当前问题直接相关时才调用，并且每次回答最多调用一次。光看摘要判断不了相关性就不要调用，也绝不为了凑内容而调用。`,
+    knowledgeRule: `4. 你可以调用 load_knowledge 读取「知识库」索引里某个条目的正文。当且仅当某个条目的摘要与当前问题直接相关时才调用。光看摘要判断不了相关性就不要调用，也绝不为了凑内容而调用。`,
 
     outputInstructions: `**输出要求：**
-直接输出这份详细回答本身。不要教练式点评、不要「你应该……」、不要解释你在做什么，也不要提到「精要」「详细」「知识库」「load_knowledge」这些机制 —— 用户看到的只是一份答案。这份回答同样必须遵守开头的语言要求。`,
+直接输出这份详细回答本身，不要教练式点评、不要「好，我来回答……」、不要解释 —— 让用户能根据详细信息自主作答。这份回答必须遵守开头的语言要求。`,
 };
 
 // `knowledgeSummary` is the index produced by knowledge.formatKnowledgeSummary: an empty string means

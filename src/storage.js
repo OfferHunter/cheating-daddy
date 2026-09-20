@@ -33,6 +33,12 @@ const DEFAULT_PREFERENCES = {
     // pane that may consult the knowledge directory. A knob, not content, so restoring defaults does
     // reset it.
     detailMode: true,
+    // Whether each chain lets the model think before answering. The model is a reasoning model
+    // streaming a scratchpad this app never shows, so thinking is dead wait in front of the first
+    // visible token — worth it in the detail pane, which is read in the gap between questions, and not
+    // in the brief line that has to be read aloud right now. Knobs, so restoring defaults resets both.
+    briefThinking: false,
+    detailThinking: true,
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
