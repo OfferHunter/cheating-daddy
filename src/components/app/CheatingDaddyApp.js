@@ -458,8 +458,8 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
             ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
-            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker));
-            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker));
+            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
+            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
             ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
                 this._isClickThrough = isEnabled;
@@ -521,21 +521,27 @@ export class CheatingDaddyApp extends LitElement {
     // start a new one. A settled bubble is never touched again. Both speakers stream at once, so the
     // search runs from the end for the matching role — an open bubble of one speaker is never
     // rewritten by the other, and a bubble keeps the position where its speaker started talking.
-    upsertTranscription(text, final, speaker = 'interviewer') {
+    upsertTranscription(text, final, speaker = 'interviewer', blockId = null) {
         const role = speaker === 'user' ? 'user' : 'interviewer';
 
         // The candidate's block is a single bubble that grows: every update already carries everything
         // said since the last question, so it is rewritten in place instead of opening one bubble per
-        // fragment. Only the last row is eligible — the moment a question or a screenshot lands below
-        // it the block is closed for good, and the next thing the candidate says starts a new one.
+        // fragment. The row is found by the block id the pipeline stamped on it, not by being the last
+        // one: a question recognized while this sentence was still being finalized is appended below
+        // it, and the final has to rewrite the bubble the provisional text opened, above the question.
+        // The pipeline hands out a new id once a question closes the block, so the next thing the
+        // candidate says still starts a new bubble. `final` is inert on these rows — only the
+        // assistant's caret and the interviewer's open-row latch below use it.
         if (role === 'user') {
-            const last = this.messages.length - 1;
-            if (last >= 0 && this.messages[last].role === 'user') {
-                this._replaceMessage(last, { text });
-                return;
+            for (let i = this.messages.length - 1; i >= 0; i--) {
+                const message = this.messages[i];
+                if (message.role === 'user' && message.blockId === blockId) {
+                    this._replaceMessage(i, { text });
+                    return;
+                }
             }
 
-            this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final: false }];
+            this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final: false, blockId }];
             this.requestUpdate();
             return;
         }

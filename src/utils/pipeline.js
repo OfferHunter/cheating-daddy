@@ -38,6 +38,9 @@ function createStreamState() {
         // source at session start and handed to that stream's recognizer, so the server's own bound
         // and the client's rescue below can never disagree about it.
         sentenceSilenceMs: 0,
+        // Which candidate bubble the sentence in flight belongs to, 0 while there is none. Meaningful
+        // on the candidate stream only; see candidateBlockId.
+        blockId: 0,
     };
 }
 
@@ -55,6 +58,13 @@ function speakerFor(source) {
 // must stay one entry, which is what a per-fragment cap destroyed — the server cuts an answer into pieces
 // short enough that a handful of them covered only the last few seconds of speech.
 let candidateSpeech = [];
+
+// The block candidateSpeech is currently accumulating into, and the only thing that identifies it to
+// the renderer. The renderer cannot key the candidate's bubble on "the last row" the way it does for
+// the interviewer: a question recognized while the candidate's sentence is still being finalized is
+// appended below the bubble, and the final then has to find that same bubble again to rewrite it. A
+// question ends the block, so the next thing the candidate says opens a new bubble.
+let candidateBlockId = 1;
 
 // Every turn is dispatched the moment its question is recognized, even if earlier answers are
 // still streaming: waiting for the previous answer would make the new one arrive too late to be
@@ -86,8 +96,16 @@ const IDLE_FLUSH_MARGIN_MS = 1000;
 // muted. The level must stay on one side of the threshold for micGateDwellMs before the gate flips,
 // so neither a single spike nor the gap between two words can chop the microphone on and off inside
 // a sentence. Both come from Settings; the values here are only the fallbacks before a session.
+//
+// The level gate has holes the level cannot see: the dwell has to elapse before it closes at the
+// start of a question, and it opens again on any pause longer than the dwell inside one. Both let the
+// microphone through while the interviewer is still talking, which lands the interviewer's own words
+// — or the tail of an interrupted answer — in the candidate column as a fragment. So the gate is also
+// held shut whenever the speaker's recognizer has text it has not finalized yet: an interim sentence
+// means the speaker is mid-utterance, whatever the level happens to be doing.
 let micGateDb = -45;
 let micGateDwellMs = 300;
+let micLevelGated = false;
 let micGated = false;
 let micGateSideLoud = false;
 let micGateSideSinceMs = 0;
@@ -155,6 +173,24 @@ function bubbleText(source) {
     return source === CANDIDATE ? candidateSpeech.join('') + text : text;
 }
 
+// Anything the candidate says this short is dropped rather than merged: a couple of characters is
+// what a leaked word through the gate, a cough or a stray "嗯" looks like after recognition, and a
+// one-word bubble is pure clutter. It never enters the block, so it reaches neither the screen nor
+// the prompt. Interviewer lines are exempt — a short question is still a question.
+const MIN_CANDIDATE_CHARS = 4;
+
+// The one funnel every bubble goes through, so the floor above is applied in exactly one place. An
+// open block is always long enough on its own, so only a short line with no block behind it is
+// suppressed — and it is suppressed on every update, not just the final one, or the provisional
+// update would leave a bubble behind that nothing ever replaces.
+function sendBubble(channel, source) {
+    const text = bubbleText(source);
+    if (source === CANDIDATE && text.length < MIN_CANDIDATE_CHARS) return;
+    const payload = { text, speaker: speakerFor(source) };
+    if (source === CANDIDATE) payload.blockId = streams[CANDIDATE].blockId;
+    sendToRenderer(channel, payload);
+}
+
 function handleAsrSentence(text, sentenceEnd, source) {
     if (!isLocalActive || !text) return;
 
@@ -167,10 +203,16 @@ function handleAsrSentence(text, sentenceEnd, source) {
     // keep arriving while a long question is spoken, which is what stops it being split in two.
     state.silenceMs = 0;
 
+    // A sentence is pinned to the block that was current when it began, not the one current when it
+    // ends: a question can land in the middle of it, and the finalized text still belongs to the
+    // bubble its provisional text already opened. Later sentences of the same block pin the same id,
+    // because only a question moves the counter.
+    if (source === CANDIDATE && !state.turnText && !state.interimText) state.blockId = candidateBlockId;
+
     if (!sentenceEnd) {
         // Provisional: it replaces the previous interim rather than appending to it.
         state.interimText = sentence;
-        sendToRenderer('transcription-update', { text: bubbleText(source), speaker: speakerFor(source) });
+        sendBubble('transcription-update', source);
         return;
     }
 
@@ -178,7 +220,7 @@ function handleAsrSentence(text, sentenceEnd, source) {
     state.interimText = '';
     console.log(`[Pipeline] ASR sentence (${source}):`, sentence);
     logTransportEvent('asr.sentence_final', { text: sentence, source });
-    sendToRenderer('transcription-update', { text: bubbleText(source), speaker: speakerFor(source) });
+    sendBubble('transcription-update', source);
 
     flushTurn(source);
 }
@@ -188,15 +230,15 @@ function handleAsrSentence(text, sentenceEnd, source) {
 // for this utterance, which rewrites this same open row and records the text exactly once.
 function interruptCandidate() {
     const text = bubbleText(CANDIDATE).trim();
-    if (text.length < 2) return;
+    if (text.length < MIN_CANDIDATE_CHARS) return;
 
     console.log('[Pipeline] Candidate interrupted:', text);
-    sendToRenderer('transcription-update', { text, speaker: speakerFor(CANDIDATE) });
+    sendBubble('transcription-update', CANDIDATE);
 }
 
 // Called once per loopback chunk. `loud` is measured, not inferred: the level must hold on one side
-// of the threshold for the whole dwell before the gate moves, which is what keeps a sentence from
-// being chopped into fragments by jitter around the threshold.
+// of the threshold for the whole dwell before the level verdict moves, which is what keeps a sentence
+// from being chopped into fragments by jitter around the threshold.
 function tickMicGate(levelDb) {
     const loud = levelDb > micGateDb;
     const now = Date.now();
@@ -206,12 +248,22 @@ function tickMicGate(levelDb) {
         micGateSideSinceMs = now;
     }
 
-    if (now - micGateSideSinceMs < micGateDwellMs) return;
-    if (loud === micGated) return;
+    if (now - micGateSideSinceMs >= micGateDwellMs) micLevelGated = loud;
+    applyMicGate(levelDb);
+}
 
-    micGated = loud;
+// The gate itself, and the only place it moves. It is shut either because the level says the speaker
+// is loud, or because the speaker's recognizer is holding a sentence it has not finalized — the level
+// verdict alone lets the microphone through in the pauses inside a question, an unfinished sentence
+// does not. It reopens on the next chunk after both are false.
+function applyMicGate(levelDb) {
+    const speakerPending = Boolean(streams[INTERVIEWER].turnText || streams[INTERVIEWER].interimText);
+    const gated = micLevelGated || speakerPending;
+    if (gated === micGated) return;
+
+    micGated = gated;
     if (micGated) {
-        console.log('[Pipeline] Mic gate on:', levelDb.toFixed(1), 'dBFS');
+        console.log('[Pipeline] Mic gate on:', speakerPending ? 'speaker mid-sentence' : `${levelDb.toFixed(1)} dBFS`);
         interruptCandidate();
     } else {
         console.log('[Pipeline] Mic gate off');
@@ -230,14 +282,20 @@ function flushTurn(source) {
     if (!isLocalActive || text.length < 2) return;
 
     if (source === CANDIDATE) {
+        if (text.length < MIN_CANDIDATE_CHARS) {
+            console.log('[Pipeline] Candidate fragment dropped:', text);
+            return;
+        }
+
         // Nothing is dispatched: what the candidate says is context for the next answer, not a
         // question to answer. It joins the open block, which is not bounded here — the block is
         // closed whole by the next turn (see commitCandidateSpeech).
         console.log('[Pipeline] Candidate speech:', text);
         candidateSpeech.push(text);
         // Re-sent in full rather than as this fragment alone: the bubble is the block, so a shrinking
-        // update would visibly undo text the user has already read.
-        sendToRenderer('transcription-final', { text: bubbleText(source), speaker: speakerFor(source) });
+        // update would visibly undo text the user has already read. The block is only ever built from
+        // the fragment pushed above, never from the bubble, so the floor cannot bite here.
+        sendBubble('transcription-final', source);
         return;
     }
 
@@ -286,6 +344,11 @@ function createTurn(requestContent, contextText, persistKind, speaker = 'intervi
 // interrupted the candidate sees it as finished history, and an answer still streaming alongside cannot
 // reorder it.
 function commitCandidateSpeech() {
+    // The block is over even when there is nothing to commit: a sentence cut off by this question may
+    // still be in flight, and the bubble the candidate's next words belong to is a new one either way.
+    // The sentence in flight keeps the id it was pinned with, so its final still finds its own bubble.
+    candidateBlockId += 1;
+
     if (!candidateSpeech.length) return;
 
     const text = candidateSpeech.join('');
@@ -469,6 +532,11 @@ function startAsrClient(source) {
             // rather than sent into a dead socket. The socket is already gone at this point.
             console.error(`[Pipeline] Streaming ASR failed (${source}):`, error.message);
             streams[source].asr = null;
+            // Nothing will ever finalize the text this stream was holding, and the speaker gate reads
+            // it. Left behind, a dead interviewer socket would hold the microphone shut for the rest
+            // of the session.
+            streams[source].turnText = '';
+            streams[source].interimText = '';
 
             if (!isInterviewer) return;
             sendToRenderer('update-status', 'Transcription error: ' + error.message);
@@ -498,11 +566,16 @@ function resetAudioState() {
         state.asr = null;
         state.turnText = '';
         state.interimText = '';
+        state.blockId = 0;
         state.silenceMs = 0;
         state.resampleRemainder = Buffer.alloc(0);
     }
     candidateSpeech = [];
+    // Starts over with turnSeq: the renderer empties its transcript before a session's audio flows,
+    // so there is no row left for an id to collide with.
+    candidateBlockId = 1;
     micGated = false;
+    micLevelGated = false;
     micGateSideLoud = false;
     micGateSideSinceMs = 0;
     transcriptionLanguage = null;

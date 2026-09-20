@@ -228,15 +228,15 @@ export class CustomizeView extends LitElement {
         this.isRestoring = false;
         this.clearStatusMessage = '';
         this.clearStatusType = '';
-        this.backgroundTransparency = 0.8;
-        this.textTransparency = 1;
-        this.fontSize = 20;
-        this.audioInputDeviceId = 'none';
+        this.backgroundTransparency = 0.48;
+        this.textTransparency = 0.83;
+        this.fontSize = 16;
+        this.audioInputDeviceId = 'default';
         this.audioInputDevices = [];
         this.customPrompt = '';
-        this.theme = 'dark';
+        this.theme = 'gruvbox';
         this.maxSentenceSilenceMs = 1500;
-        this.micMaxSentenceSilenceMs = 3000;
+        this.micMaxSentenceSilenceMs = 2000;
         this.micGateDb = -45;
         this.micGateDwellMs = 300;
         this._loadFromStorage();
@@ -293,14 +293,14 @@ export class CustomizeView extends LitElement {
     async _loadFromStorage() {
         try {
             const [prefs, keybinds] = await Promise.all([cheatingDaddy.storage.getPreferences(), cheatingDaddy.storage.getKeybinds()]);
-            this.backgroundTransparency = prefs.backgroundTransparency ?? 0.8;
-            this.textTransparency = prefs.textTransparency ?? 1;
-            this.fontSize = prefs.fontSize ?? 20;
-            this.audioInputDeviceId = prefs.audioInputDeviceId ?? 'none';
+            this.backgroundTransparency = prefs.backgroundTransparency ?? 0.48;
+            this.textTransparency = prefs.textTransparency ?? 0.83;
+            this.fontSize = prefs.fontSize ?? 16;
+            this.audioInputDeviceId = prefs.audioInputDeviceId ?? 'default';
             this.customPrompt = prefs.customPrompt ?? '';
-            this.theme = prefs.theme ?? 'dark';
+            this.theme = prefs.theme ?? 'gruvbox';
             this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
-            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? 3000;
+            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? 2000;
             this.micGateDb = prefs.micGateDb ?? -45;
             this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
             if (keybinds) {
@@ -565,19 +565,20 @@ export class CustomizeView extends LitElement {
         this.clearStatusType = '';
         this.requestUpdate();
         try {
-            // Restore all preferences to defaults
+            // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt is
+            // deliberately absent: it is the one preference that is content rather than a knob, so a
+            // reset leaves whatever the user has written in it alone.
             const defaults = {
-                customPrompt: '',
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
                 selectedImageQuality: 'medium',
-                audioInputDeviceId: 'none',
-                fontSize: 20,
-                backgroundTransparency: 0.8,
-                textTransparency: 1,
-                theme: 'dark',
+                audioInputDeviceId: 'default',
+                fontSize: 16,
+                backgroundTransparency: 0.48,
+                textTransparency: 0.83,
+                theme: 'gruvbox',
                 maxSentenceSilenceMs: 1500,
-                micMaxSentenceSilenceMs: 3000,
+                micMaxSentenceSilenceMs: 2000,
                 micGateDb: -45,
                 micGateDwellMs: 300,
             };
@@ -600,7 +601,6 @@ export class CustomizeView extends LitElement {
             this.fontSize = defaults.fontSize;
             this.backgroundTransparency = defaults.backgroundTransparency;
             this.textTransparency = defaults.textTransparency;
-            this.customPrompt = defaults.customPrompt;
             this.theme = defaults.theme;
             this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
             this.micMaxSentenceSilenceMs = defaults.micMaxSentenceSilenceMs;
@@ -749,7 +749,7 @@ export class CustomizeView extends LitElement {
                             .value=${this.micGateDwellMs}
                             @change=${e => this.handleNumberPreferenceInput('micGateDwellMs', e.target.value)}
                         />
-                        <div class="form-help">How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000.</div>
+                        <div class="form-help">How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still mid-sentence, whatever the level does.</div>
                     </div>
                 </div>
             </section>
