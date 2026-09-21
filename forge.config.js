@@ -41,20 +41,6 @@ module.exports = {
             name: '@electron-forge/maker-dmg',
             platforms: ['darwin'],
         },
-        {
-            name: '@reforged/maker-appimage',
-            platforms: ['linux'],
-            config: {
-                options: {
-                    name: 'Cheating Daddy',
-                    productName: 'Cheating Daddy',
-                    genericName: 'AI Assistant',
-                    description: 'AI assistant for interviews and learning',
-                    categories: ['Development', 'Education'],
-                    icon: 'src/assets/logo.png',
-                },
-            },
-        },
     ],
     plugins: [
         {

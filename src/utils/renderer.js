@@ -27,7 +27,6 @@ let currentImageQuality = 'medium'; // Store current image quality for manual sc
 // reaches the socket, so the audio never leaves this process as speech.
 let capturePaused = false;
 
-const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
 
 // ============ STORAGE API ============
@@ -273,64 +272,11 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                 try {
                     micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('macOS microphone capture started');
-                    setupLinuxMicProcessing(micCaptureStream);
+                    setupMicProcessing(micCaptureStream);
                 } catch (micError) {
                     console.warn('Failed to get microphone access on macOS:', micError);
                 }
             }
-        } else if (isLinux) {
-            // Linux - use display media for screen capture and try to get system audio
-            try {
-                // First try to get system audio via getDisplayMedia (works on newer browsers)
-                mediaStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        frameRate: 1,
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                    },
-                    audio: {
-                        sampleRate: SAMPLE_RATE,
-                        channelCount: 1,
-                        echoCancellation: false, // Don't cancel system audio
-                        noiseSuppression: false,
-                        autoGainControl: false,
-                    },
-                });
-
-                console.log('Linux system audio capture via getDisplayMedia succeeded');
-
-                // Setup audio processing for Linux system audio
-                setupLinuxSystemAudioProcessing();
-            } catch (systemAudioError) {
-                console.warn('System audio via getDisplayMedia failed, trying screen-only capture:', systemAudioError);
-
-                // Fallback to screen-only capture
-                mediaStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        frameRate: 1,
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                    },
-                    audio: false,
-                });
-            }
-
-            // Additionally get microphone input for Linux based on audio mode
-            if (shouldCaptureMic) {
-                try {
-                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
-
-                    console.log('Linux microphone capture started');
-
-                    // Setup audio processing for microphone on Linux
-                    setupLinuxMicProcessing(micCaptureStream);
-                } catch (micError) {
-                    console.warn('Failed to get microphone access on Linux:', micError);
-                    // Continue without microphone if permission denied
-                }
-            }
-
-            console.log('Linux capture started - system audio:', mediaStream.getAudioTracks().length > 0, 'microphone:', shouldCaptureMic);
         } else {
             // Windows - use display media with loopback for system audio
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -357,7 +303,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                 try {
                     micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
                     console.log('Windows microphone capture started');
-                    setupLinuxMicProcessing(micCaptureStream);
+                    setupMicProcessing(micCaptureStream);
                 } catch (micError) {
                     console.warn('Failed to get microphone access on Windows:', micError);
                 }
@@ -378,8 +324,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
     }
 }
 
-function setupLinuxMicProcessing(micStream) {
-    // Setup microphone audio processing for Linux
+function setupMicProcessing(micStream) {
     const micAudioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
     micCaptureContext = micAudioContext;
     const micSource = micAudioContext.createMediaStreamSource(micStream);
@@ -410,36 +355,6 @@ function setupLinuxMicProcessing(micStream) {
 
     // Store processor reference for cleanup
     micAudioProcessor = micProcessor;
-}
-
-function setupLinuxSystemAudioProcessing() {
-    // Setup system audio processing for Linux (from getDisplayMedia)
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    audioProcessor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
-
-    let audioBuffer = [];
-    const samplesPerChunk = SAMPLE_RATE * AUDIO_CHUNK_DURATION;
-
-    audioProcessor.onaudioprocess = async e => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        audioBuffer.push(...inputData);
-
-        // Process audio in chunks
-        while (audioBuffer.length >= samplesPerChunk) {
-            const chunk = audioBuffer.splice(0, samplesPerChunk);
-            const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
-            const base64Data = arrayBufferToBase64(pcmData16.buffer);
-
-            await ipcRenderer.invoke('send-audio-content', {
-                data: base64Data,
-                mimeType: 'audio/pcm;rate=24000',
-            });
-        }
-    };
-
-    source.connect(audioProcessor);
-    audioProcessor.connect(audioContext.destination);
 }
 
 function setupWindowsLoopbackProcessing() {
@@ -564,7 +479,7 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
-const MANUAL_SCREENSHOT_PROMPT = `你是一名面试助手。下面一张面试屏幕截图，图里通常是一道题目。
+const MANUAL_SCREENSHOT_PROMPT = `[屏幕共享的题目（当前问题，请作答）] 你是一名面试助手。下面是一张面试屏幕截图，图里通常是一道题目。
 如果是代码题，先用几个要点讲思路，再给出完整、能跑通的代码，编程语言要用**面试者此次面试使用的编程语言**；如果有别的需要我知道的，也一并说明。
 如果是选择题，直接给答案，再用几个要点讲思路。
 如果图里没有题目，不要作答，直接说明图中没有可见题目即可。
@@ -1383,7 +1298,6 @@ const cheatingDaddy = {
     refreshPreferencesCache: loadPreferencesCache,
 
     // Platform detection
-    isLinux: isLinux,
     isMacOS: isMacOS,
 };
 

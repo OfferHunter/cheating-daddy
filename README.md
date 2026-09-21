@@ -23,7 +23,7 @@ A real-time AI assistant that provides contextual help during video calls, inter
 - **Multiple Profiles**: Interview, Sales Call, Business Meeting, Presentation, Negotiation
 - **Transparent Overlay**: Always-on-top window that can be positioned anywhere
 - **Click-through Mode**: Make window transparent to clicks when needed
-- **Cross-platform**: Works on macOS, Windows, and Linux (kinda, dont use, just for testing rn)
+- **Windows & macOS**: the two platforms this app is built and tested for
 
 ## Setup
 
@@ -50,11 +50,10 @@ A real-time AI assistant that provides contextual help during video calls, inter
 
 - **macOS**: [SystemAudioDump](https://github.com/Mohammed-Yasin-Mulla/Sound) for system audio
 - **Windows**: Loopback audio capture
-- **Linux**: Microphone input
 
 ## Requirements
 
-- Electron-compatible OS (macOS, Windows, Linux)
+- Windows 10+ or macOS
 - Gemini API key
 - Screen recording permissions
 - Microphone/audio permissions
