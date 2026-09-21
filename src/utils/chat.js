@@ -259,7 +259,6 @@ async function requestChat(messages, onText, options = {}) {
 }
 
 module.exports = {
-    getChatBaseUrl,
     getChatModel,
     requestChat,
 };

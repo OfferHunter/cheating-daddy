@@ -264,7 +264,6 @@ function executeKnowledgeTool(name, argsJson, dir) {
 module.exports = {
     KNOWLEDGE_TOOL_NAME,
     KNOWLEDGE_TOOL_SPEC,
-    parseFrontmatter,
     listKnowledgeEntries,
     readKnowledgeById,
     formatKnowledgeSummary,

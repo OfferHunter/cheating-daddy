@@ -365,7 +365,6 @@ export class CheatingDaddyApp extends LitElement {
         currentView: { type: String },
         statusText: { type: String },
         startTime: { type: Number },
-        isRecording: { type: Boolean },
         sessionActive: { type: Boolean },
         selectedLanguage: { type: String },
         messages: { type: Array },
@@ -376,7 +375,6 @@ export class CheatingDaddyApp extends LitElement {
         selectedScreenshotInterval: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
-        _viewInstances: { type: Object, state: true },
         _isClickThrough: { state: true },
         _storageLoaded: { state: true },
         _updateAvailable: { state: true },
@@ -387,7 +385,6 @@ export class CheatingDaddyApp extends LitElement {
         this.currentView = 'main';
         this.statusText = '';
         this.startTime = null;
-        this.isRecording = false;
         this.sessionActive = false;
         this.selectedLanguage = 'cmn-CN';
         this.selectedScreenshotInterval = '5';
@@ -408,7 +405,6 @@ export class CheatingDaddyApp extends LitElement {
         // Follow the newest detailed answer until the user pages back to an older one, at which point a
         // new one must not yank the pane away from what they are reading.
         this._detailFollowing = true;
-        this._viewInstances = new Map();
         this._isClickThrough = false;
         this._storageLoaded = false;
         this._timerInterval = null;

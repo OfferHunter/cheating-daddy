@@ -1161,7 +1161,6 @@ module.exports = {
     initializeChatSession,
     processLocalAudio,
     closeLocalSession,
-    isLocalSessionActive,
     setPaused,
     clearContext,
     sendLocalText,
