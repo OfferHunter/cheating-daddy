@@ -33,6 +33,11 @@ let detailModeEnabled = false;
 // detail pane, which is read in the gap between questions, and not in the brief line that is read aloud.
 let briefThinkingEnabled = false;
 let detailThinkingEnabled = true;
+// The screenshot's own switch. It used to be hard-coded on, whatever the two above said: the chain always
+// asked for the scratchpad, and the reasoning it spends before the first visible token runs inside the
+// client's own request timeout — on the whole-problem-statement screenshots this chain exists for, that
+// budget could go entirely into the scratchpad and the answer arrived as nothing at all.
+let screenshotThinkingEnabled = false;
 // The entries the session started with, used both for the prompt index and to decide whether the tool is
 // worth declaring at all. Only the *index* is a snapshot — the executor reads the directory live, so a
 // stale entry here can never turn into a wrong fact, only into a failed lookup.
@@ -625,7 +630,7 @@ async function runTurn(entry) {
 // Deliberately not an async function: the prompt has to be built before the caller returns, exactly as
 // in runTurn, so that two turns dispatched back to back both see a transcript that does not yet contain
 // the other's answer. Calling an async function would do the same, but nothing here can be awaited.
-function startDetailStream(turnEntry, { question, thinking, forceThinking = false }) {
+function startDetailStream(turnEntry, { question, thinking }) {
     const entry = {
         detailId: ++detailSeq,
         turnSeq: turnEntry.seq,
@@ -683,7 +688,6 @@ function startDetailStream(turnEntry, { question, thinking, forceThinking = fals
                     // Only ever needed alongside the tool: without a directory there is no second round.
                     followUpSystem: hasKnowledge ? currentDetailFollowUpSystemPrompt : null,
                     thinking,
-                    forceThinking,
                     executeTool: (name, argsJson) => {
                         const dir = getKnowledgeDir();
 
@@ -772,16 +776,19 @@ function runDetailTurn(shortEntry) {
 }
 
 // A screenshot's only answer goes to the pane: an image is a question, and the answer to it is read, not
-// spoken, so leaving the transcript free of it is the point rather than a side effect. It thinks first
-// whatever the detail setting says — nothing is waiting on this answer word by word, and the picture is
-// worth the wait. The row is opened here, synchronously, for two reasons: thinking can hold the first
-// token back for half a minute and the pane should say what it is waiting for, and the id has to exist
-// before a clear-context can raise the floor above it.
+// spoken, so leaving the transcript free of it is the point rather than a side effect. The row is opened
+// here, synchronously, for two reasons: thinking can hold the first token back for a minute and the pane
+// should say what it is waiting for, and the id has to exist before a clear-context can raise the floor
+// above it.
+//
+// Thinking follows its own setting rather than the detail pane's, and it is read rather than forced on:
+// this is the one request that carries an image and the wait it spends on reasoning runs inside the
+// client's own request timeout, so a whole problem statement plus a picture can burn the entire budget
+// in the scratchpad and come back as no answer at all.
 function startScreenshotAnswer(turnEntry) {
     const detailId = startDetailStream(turnEntry, {
         question: turnEntry.contextText,
-        thinking: true,
-        forceThinking: true,
+        thinking: screenshotThinkingEnabled,
     });
 
     sendToRenderer('new-detail-response', {
@@ -976,6 +983,7 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
     briefThinkingEnabled = prefs.briefThinking === true;
     detailThinkingEnabled = prefs.detailThinking !== false;
+    screenshotThinkingEnabled = prefs.screenshotThinking === true;
     chatContextTurns = getChatContextTurns();
 
     transcriptionLanguage = selectedLanguage;

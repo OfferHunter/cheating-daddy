@@ -216,6 +216,7 @@ export class CustomizeView extends LitElement {
         detailMode: { type: Boolean },
         briefThinking: { type: Boolean },
         detailThinking: { type: Boolean },
+        screenshotThinking: { type: Boolean },
         chatContextTurns: { type: Number },
         chatMaxTokens: { type: Number },
     };
@@ -250,6 +251,7 @@ export class CustomizeView extends LitElement {
         this.detailMode = true;
         this.briefThinking = false;
         this.detailThinking = true;
+        this.screenshotThinking = false;
         this.chatContextTurns = 15;
         this.chatMaxTokens = 128000;
         this._loadFromStorage();
@@ -319,6 +321,7 @@ export class CustomizeView extends LitElement {
             this.detailMode = prefs.detailMode !== false;
             this.briefThinking = prefs.briefThinking === true;
             this.detailThinking = prefs.detailThinking !== false;
+            this.screenshotThinking = prefs.screenshotThinking === true;
             this.chatContextTurns = prefs.chatContextTurns ?? 15;
             this.chatMaxTokens = prefs.chatMaxTokens ?? 128000;
             if (keybinds) {
@@ -462,6 +465,11 @@ export class CustomizeView extends LitElement {
     async handleDetailThinkingChange(checked) {
         this.detailThinking = checked;
         await cheatingDaddy.storage.updatePreference('detailThinking', checked);
+    }
+
+    async handleScreenshotThinkingChange(checked) {
+        this.screenshotThinking = checked;
+        await cheatingDaddy.storage.updatePreference('screenshotThinking', checked);
     }
 
     // Chromium already exposes the system defaults as entries with deviceId 'default' and
@@ -623,7 +631,7 @@ export class CustomizeView extends LitElement {
             // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt and
             // knowledgeDir are deliberately absent: they are the preferences that hold content the user
             // supplied — instructions and a pointer to their own files — rather than knobs, so a reset
-            // leaves them alone. detailMode and the two thinking switches are knobs, so they reset with
+            // leaves them alone. detailMode and the three thinking switches are knobs, so they reset with
             // the rest.
             const defaults = {
                 selectedLanguage: 'cmn-CN',
@@ -641,6 +649,7 @@ export class CustomizeView extends LitElement {
                 detailMode: true,
                 briefThinking: false,
                 detailThinking: true,
+                screenshotThinking: false,
                 chatContextTurns: 15,
                 chatMaxTokens: 128000,
             };
@@ -671,6 +680,7 @@ export class CustomizeView extends LitElement {
             this.detailMode = defaults.detailMode;
             this.briefThinking = defaults.briefThinking;
             this.detailThinking = defaults.detailThinking;
+            this.screenshotThinking = defaults.screenshotThinking;
             this.chatContextTurns = defaults.chatContextTurns;
             this.chatMaxTokens = defaults.chatMaxTokens;
 
@@ -875,10 +885,21 @@ export class CustomizeView extends LitElement {
                         />
                         <span class="toggle-label">Thinking in the detailed reply</span>
                     </label>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.screenshotThinking}
+                            @change=${e => this.handleScreenshotThinkingChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Thinking in the screenshot reply</span>
+                    </label>
                     <div class="form-help">
                         Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which
-                        is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. Takes
-                        effect on the next session.
+                        is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The
+                        screenshot reply has its own switch because it is the one request carrying an image, and its thinking is
+                        spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come
+                        back empty. Takes effect on the next session.
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Context Turns</label>

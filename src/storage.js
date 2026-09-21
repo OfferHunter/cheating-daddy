@@ -39,6 +39,11 @@ const DEFAULT_PREFERENCES = {
     // in the brief line that has to be read aloud right now. Knobs, so restoring defaults resets both.
     briefThinking: false,
     detailThinking: true,
+    // The screenshot's own switch, deliberately not tied to detailThinking above. Its request is the one
+    // that carries an image, and reasoning is spent before the first visible token, inside the client's
+    // own request timeout — a whole problem statement plus a picture can spend that budget in the
+    // scratchpad and come back as no answer at all. Off is the default for that reason.
+    screenshotThinking: false,
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',

@@ -105,7 +105,7 @@ async function streamOnce(body, onText) {
 // `onText` receives the whole text so far on every token, never a delta — including the text of any
 // rounds that already finished, since the returned `text` accumulates across tool rounds too.
 //
-// tools/maxToolRounds/executeTool/maxTokens/thinking/forceThinking/followUpSystem are all optional.
+// tools/maxToolRounds/executeTool/maxTokens/thinking/followUpSystem are all optional.
 // With none of them this is a single plain request, byte for byte the same body as before the
 // knowledge feature existed, save for the token cap coming from Settings rather than a constant.
 //
@@ -124,7 +124,6 @@ async function requestChat(messages, onText, options = {}) {
         // all of it, which reaches the caller as a response with no text in it at all.
         maxTokens = getChatMaxTokens(),
         thinking,
-        forceThinking = false,
         followUpSystem = null,
     } = options;
 
@@ -137,12 +136,13 @@ async function requestChat(messages, onText, options = {}) {
     // Two separate questions: whether the request declares `tools` at all, and whether the model is
     // allowed to call one. They part ways on the last round.
     let declareTools = Boolean(tools && tools.length);
-    // `thinking` names the switch in the app's own terms and only ever turns it *off* (`true` sends
-    // nothing, which is what every chain did before the field existed); `forceThinking` is the explicit
-    // request for the other direction, and only the screenshot makes it, because it needs the scratchpad
-    // even when the user has turned thinking off for the detail pane. `null` means the request does not
-    // mention thinking at all — byte for byte the body it had before any of this existed.
-    let thinkingBody = forceThinking ? { type: 'enabled' } : thinking === false ? { type: 'disabled' } : null;
+    // `thinking` says the same thing in both directions now that every chain has a setting of its own:
+    // `true` asks for the reasoning mode, `false` asks for it to be off. Leaving it `undefined` is the
+    // one way to say nothing and take the endpoint's own default — which is also what a request with no
+    // thinking field at all used to mean, so an endpoint that refuses the field still gets a usable body
+    // out of the retry below. It used to be the off switch alone, with a second flag carrying the
+    // explicit on for the one chain that needed it regardless of the user's settings; that flag is gone.
+    let thinkingBody = thinking === true ? { type: 'enabled' } : thinking === false ? { type: 'disabled' } : null;
     // Dropped for the rest of the call once an endpoint has refused the value.
     let sendMaxTokens = true;
     let rounds = 0;
