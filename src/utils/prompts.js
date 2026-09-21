@@ -74,24 +74,22 @@ const detailPrompt = {
 直接输出这份详细回答本身，不要教练式点评、不要「好，我来回答……」、不要解释 —— 让用户能根据详细信息自主作答。这份回答必须遵守开头的语言要求。`,
 };
 
-// `knowledgeSummary` is the index produced by knowledge.formatKnowledgeSummary: an empty string means
-// there is no directory to consult, and the whole topic is left out of the prompt rather than shown as
-// an empty list.
-function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
+// 两个 builder 的骨架一模一样，只差中间那段知识库规则与索引，所以拼装只写一遍。
+// 顺序本身是提示词的一部分（语言要求首尾各一次、CONTEXT_RULE 压在最后），改动这里等于改提示词。
+function assemblePrompt(persona, customPrompt, middle = '') {
     return [
-        detailPrompt.intro,
+        persona.intro,
         '\n\n',
         LANGUAGE_RULE,
         '\n\n',
-        detailPrompt.formatRequirements,
+        persona.formatRequirements,
         '\n\n',
-        detailPrompt.content,
-        knowledgeSummary ? `\n${detailPrompt.knowledgeRule}` : '',
-        knowledgeSummary ? `\n\n${knowledgeSummary}\n` : '',
+        persona.content,
+        middle,
         '\n\n用户提供的背景资料\n-----\n',
         customPrompt,
         '\n-----\n\n',
-        detailPrompt.outputInstructions,
+        persona.outputInstructions,
         '\n\n',
         CONTEXT_RULE,
         '\n\n',
@@ -99,24 +97,15 @@ function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
     ].join('');
 }
 
+// `knowledgeSummary` 是 knowledge.formatKnowledgeSummary 生成的索引：空串表示这一轮没有知识库可查，
+// 整段规则与索引都不出现，而不是留一个空列表。
+function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
+    const middle = knowledgeSummary ? `\n${detailPrompt.knowledgeRule}\n\n${knowledgeSummary}\n` : '';
+    return assemblePrompt(detailPrompt, customPrompt, middle);
+}
+
 function getSystemPrompt(customPrompt = '') {
-    return [
-        interviewPrompt.intro,
-        '\n\n',
-        LANGUAGE_RULE,
-        '\n\n',
-        interviewPrompt.formatRequirements,
-        '\n\n',
-        interviewPrompt.content,
-        '\n\n用户提供的背景资料\n-----\n',
-        customPrompt,
-        '\n-----\n\n',
-        interviewPrompt.outputInstructions,
-        '\n\n',
-        CONTEXT_RULE,
-        '\n\n',
-        LANGUAGE_RULE,
-    ].join('');
+    return assemblePrompt(interviewPrompt, customPrompt);
 }
 
 // A screenshot is answered by the detailed chain — which sends the image itself, not this line — but the

@@ -58,81 +58,52 @@ function initializeNewSession(customPrompt = null) {
     });
 }
 
-// Turns now complete out of order: a question asked mid-stream is answered before the answer it
-// interrupted. The caller passes its turn sequence as `order` so the recorded history still reads
-// in the order the questions were asked.
+// 三个 save 只有字段名和 IPC 频道不同：按 order 插进自己的列表，然后把**整份**列表交给渲染端落盘。
+// 传整份而不是这一条，是为了让任意顺序到达的多次写入得到同一个文件。payload 结构不能改，渲染端按
+// 频道名分发。
+function appendHistory(list, turn, channel, label) {
+    const next = [...list, turn].sort((a, b) => a.order - b.order);
+    console.log(`Saved ${label}:`, turn);
+    sendToRenderer(channel, { sessionId: currentSessionId, turn, fullHistory: next });
+    return next;
+}
+
+// 轮次是乱序完成的：流式中途插进来的问题会先于被它打断的那个回答落地，所以调用方把自己的轮序号当
+// `order` 传进来，历史文件仍然按提问顺序排列。
 function saveConversationTurn(transcription, aiResponse, order = 0) {
-    if (!currentSessionId) {
-        initializeNewSession();
-    }
+    if (!currentSessionId) initializeNewSession();
 
-    const conversationTurn = {
-        timestamp: Date.now(),
-        transcription: transcription.trim(),
-        ai_response: aiResponse.trim(),
-        order,
-    };
-
-    conversationHistory = [...conversationHistory, conversationTurn].sort((a, b) => a.order - b.order);
-    console.log('Saved conversation turn:', conversationTurn);
-
-    // Send to renderer to save in IndexedDB
-    sendToRenderer('save-conversation-turn', {
-        sessionId: currentSessionId,
-        turn: conversationTurn,
-        fullHistory: conversationHistory,
-    });
+    conversationHistory = appendHistory(
+        conversationHistory,
+        { timestamp: Date.now(), transcription: transcription.trim(), ai_response: aiResponse.trim(), order },
+        'save-conversation-turn',
+        'conversation turn'
+    );
 }
 
-// `order` is the sequence number of the short turn this answers, so the two tabs of the History page
-// list the session in the same order even though the detailed answer lands seconds later.
+// `order` 是这条详细回答对应的那个精简轮的序号：详细回答晚几秒才回来，但历史页两个标签页要按同一顺序排。
 function saveDetailTurn(question, response, order = 0, usedKnowledge = []) {
-    if (!currentSessionId) {
-        initializeNewSession();
-    }
+    if (!currentSessionId) initializeNewSession();
 
-    const detailTurn = {
-        timestamp: Date.now(),
-        question: (question || '').trim(),
-        ai_response: response.trim(),
-        used_knowledge: usedKnowledge,
-        order,
-    };
-
-    detailHistory = [...detailHistory, detailTurn].sort((a, b) => a.order - b.order);
-    console.log('Saved detail turn:', detailTurn);
-
-    // Sent to the renderer, which persists it; the reply is the whole array, not this turn, so that any
-    // number of them arriving in any order leave the stored file identical.
-    sendToRenderer('save-detail-turn', {
-        sessionId: currentSessionId,
-        turn: detailTurn,
-        fullHistory: detailHistory,
-    });
+    detailHistory = appendHistory(
+        detailHistory,
+        { timestamp: Date.now(), question: (question || '').trim(), ai_response: response.trim(), used_knowledge: usedKnowledge, order },
+        'save-detail-turn',
+        'detail turn'
+    );
 }
 
-// `order` is the sequence number the committed block itself was given, which the pipeline allocates
-// before the question that interrupted the candidate: the block therefore keeps the position it had in
-// the live transcript, ahead of that question rather than below it.
+// `order` 是这段话所属区块自己的序号，由 pipeline 在打断它的那个问题之前分配：这样它在历史里的位置与
+// 它在实时字幕里的位置一致，排在那个问题前面而不是后面。
 function saveCandidateSpeech(text, order = 0) {
-    if (!currentSessionId) {
-        initializeNewSession();
-    }
+    if (!currentSessionId) initializeNewSession();
 
-    const candidateTurn = {
-        timestamp: Date.now(),
-        text: text.trim(),
-        order,
-    };
-
-    candidateHistory = [...candidateHistory, candidateTurn].sort((a, b) => a.order - b.order);
-    console.log('Saved candidate speech:', candidateTurn);
-
-    sendToRenderer('save-candidate-speech', {
-        sessionId: currentSessionId,
-        turn: candidateTurn,
-        fullHistory: candidateHistory,
-    });
+    candidateHistory = appendHistory(
+        candidateHistory,
+        { timestamp: Date.now(), text: text.trim(), order },
+        'save-candidate-speech',
+        'candidate speech'
+    );
 }
 
 function getCurrentSessionData() {

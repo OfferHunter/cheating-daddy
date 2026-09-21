@@ -21,11 +21,9 @@ const {
 } = require('../storage');
 
 let currentSystemPrompt = null;
-// The detail chain's own prompt and switch, snapshotted at session start for the same reason as the
-// prompt above: reading a preference per turn would put a disk read in front of every answer.
+// 详细链自己的提示词与开关，和上面一样在会话开始时快照：每轮现读配置等于在每个回答前插一次磁盘读。
 let currentDetailSystemPrompt = null;
-// The follow-up round's prompt: identical to the one above minus the knowledge rule and index, which
-// the model has already acted on by then. Built here for the same snapshot reason.
+// 追问轮用的提示词：就是上面那份去掉知识库规则与索引——到那时模型已经用过了。同样在会话开始时快照。
 let currentDetailFollowUpSystemPrompt = null;
 let detailModeEnabled = false;
 // Whether each chain lets the model think first. The model is a reasoning model whose scratchpad this
@@ -130,6 +128,8 @@ const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
 const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
 // 拍题在详情面板里的固定标题。摘要只走对话记录，面板用它自己的这行标题，两者不再互相改写。
 const SCREENSHOT_ANSWER_QUESTION = '对屏幕截图的作答';
+// 会话还没开始时（比如手动发消息）没有系统提示词可用，兜底一行。
+const DEFAULT_SYSTEM_PROMPT = '你是一名乐于助人的助手。';
 
 let turnLog = [];
 let turnSeq = 0;
@@ -502,20 +502,11 @@ function buildUserSideHistory(excludeEntry) {
         .map(entry => ({ role: 'user', content: userContent(entry) }));
 }
 
-function buildChatMessages(currentEntry) {
+// 两条链看到的是同一份对话，只差 system 那一行——精简是「照读的话」，详细是「把这道题读透」。
+// 都走 buildUserSideHistory，所以两边看到的面试官/面试者轮次永远一致。
+function buildMessages(systemPrompt, currentEntry) {
     return [
-        { role: 'system', content: currentSystemPrompt || '你是一名乐于助人的助手。' },
-        ...buildUserSideHistory(currentEntry),
-        { role: 'user', content: userContent(currentEntry, true) },
-    ];
-}
-
-// Identical to buildChatMessages but for the system line, which is the whole difference between the two
-// answers: the same transcript, the same current question, a different set of instructions. Both read
-// buildUserSideHistory, so the interviewer/candidate turns each one sees stay in step.
-function buildDetailMessages(currentEntry) {
-    return [
-        { role: 'system', content: currentDetailSystemPrompt || '你是一名乐于助人的助手。' },
+        { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_PROMPT },
         ...buildUserSideHistory(currentEntry),
         { role: 'user', content: userContent(currentEntry, true) },
     ];
@@ -562,7 +553,7 @@ function persistTurn(entry) {
 
 async function runTurn(entry) {
     // Snapshot synchronously: turns dispatched while this one streams must not mutate its prompt.
-    const messages = buildChatMessages(entry);
+    const messages = buildMessages(currentSystemPrompt, entry);
     // Roles only, never the text: the transcript is already reconstructible from the ASR events in the
     // same log, and this is the one line that says what actually went to the model.
     logTransportEvent('chat.request', { turnId: entry.seq, roles: messages.map(message => message.role) });
@@ -641,7 +632,7 @@ function startDetailStream(turnEntry, { question, thinking }) {
         lastSentText: '',
     };
 
-    const messages = buildDetailMessages(turnEntry);
+    const messages = buildMessages(currentDetailSystemPrompt, turnEntry);
     logTransportEvent('chat.request', { turnId: entry.turnSeq, detail: true, roles: messages.map(message => message.role) });
 
     detailLog.push(entry);

@@ -324,67 +324,47 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
     }
 }
 
-function setupMicProcessing(micStream) {
-    const micAudioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    micCaptureContext = micAudioContext;
-    const micSource = micAudioContext.createMediaStreamSource(micStream);
-    const micProcessor = micAudioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
+// 麦克风与系统声音两条泵只差一个 IPC 频道：一个是候选人自己的话，一个是面试官的声音，主力侧按频道分。
+// context/processor 必须交回调用方去赋给对应的模块级变量——releaseMicCapture 与 stopCapture 就是靠
+// 它们来关的，漏掉一个就会留下没关掉的音频上下文和没断开的设备。
+function startAudioPump(stream, channel) {
+    const context = new AudioContext({ sampleRate: SAMPLE_RATE });
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(BUFFER_SIZE, 1, 1);
 
     let audioBuffer = [];
     const samplesPerChunk = SAMPLE_RATE * AUDIO_CHUNK_DURATION;
 
-    micProcessor.onaudioprocess = async e => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        audioBuffer.push(...inputData);
+    processor.onaudioprocess = async e => {
+        audioBuffer.push(...e.inputBuffer.getChannelData(0));
 
-        // Process audio in chunks
         while (audioBuffer.length >= samplesPerChunk) {
             const chunk = audioBuffer.splice(0, samplesPerChunk);
             const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
             const base64Data = arrayBufferToBase64(pcmData16.buffer);
 
-            await ipcRenderer.invoke('send-mic-audio-content', {
+            await ipcRenderer.invoke(channel, {
                 data: base64Data,
                 mimeType: 'audio/pcm;rate=24000',
             });
         }
     };
 
-    micSource.connect(micProcessor);
-    micProcessor.connect(micAudioContext.destination);
+    source.connect(processor);
+    processor.connect(context.destination);
+    return { context, processor };
+}
 
-    // Store processor reference for cleanup
-    micAudioProcessor = micProcessor;
+function setupMicProcessing(micStream) {
+    const { context, processor } = startAudioPump(micStream, 'send-mic-audio-content');
+    micCaptureContext = context;
+    micAudioProcessor = processor;
 }
 
 function setupWindowsLoopbackProcessing() {
-    // Setup audio processing for Windows loopback audio only
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    audioProcessor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
-
-    let audioBuffer = [];
-    const samplesPerChunk = SAMPLE_RATE * AUDIO_CHUNK_DURATION;
-
-    audioProcessor.onaudioprocess = async e => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        audioBuffer.push(...inputData);
-
-        // Process audio in chunks
-        while (audioBuffer.length >= samplesPerChunk) {
-            const chunk = audioBuffer.splice(0, samplesPerChunk);
-            const pcmData16 = capturePaused ? new Int16Array(chunk.length) : convertFloat32ToInt16(chunk);
-            const base64Data = arrayBufferToBase64(pcmData16.buffer);
-
-            await ipcRenderer.invoke('send-audio-content', {
-                data: base64Data,
-                mimeType: 'audio/pcm;rate=24000',
-            });
-        }
-    };
-
-    source.connect(audioProcessor);
-    audioProcessor.connect(audioContext.destination);
+    const { context, processor } = startAudioPump(mediaStream, 'send-audio-content');
+    audioContext = context;
+    audioProcessor = processor;
 }
 
 async function captureScreenshot(imageQuality = 'medium', isManual = false) {
