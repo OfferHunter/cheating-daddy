@@ -15,7 +15,6 @@ let chatSessionActive = false;
 // Conversation tracking variables
 let currentSessionId = null;
 let conversationHistory = [];
-let screenAnalysisHistory = [];
 // The detailed answers, kept as their own list rather than folded into conversationHistory: they are a
 // second answer to the same question, so the History page shows them under their own tab and the short
 // transcript stays exactly as long as it was.
@@ -45,7 +44,6 @@ function initializeNewSession(customPrompt = null) {
     currentSessionId = Date.now().toString();
     startTransportLog(currentSessionId);
     conversationHistory = [];
-    screenAnalysisHistory = [];
     detailHistory = [];
     candidateHistory = [];
     currentProfile = SESSION_PROFILE;
@@ -134,32 +132,6 @@ function saveCandidateSpeech(text, order = 0) {
         sessionId: currentSessionId,
         turn: candidateTurn,
         fullHistory: candidateHistory,
-    });
-}
-
-function saveScreenAnalysis(prompt, response, model, order = 0) {
-    if (!currentSessionId) {
-        initializeNewSession();
-    }
-
-    const analysisEntry = {
-        timestamp: Date.now(),
-        prompt: prompt,
-        response: response.trim(),
-        model: model,
-        order,
-    };
-
-    screenAnalysisHistory = [...screenAnalysisHistory, analysisEntry].sort((a, b) => a.order - b.order);
-    console.log('Saved screen analysis:', analysisEntry);
-
-    // Send to renderer to save
-    sendToRenderer('save-screen-analysis', {
-        sessionId: currentSessionId,
-        analysis: analysisEntry,
-        fullHistory: screenAnalysisHistory,
-        profile: currentProfile,
-        customPrompt: currentCustomPrompt,
     });
 }
 
@@ -360,7 +332,7 @@ function setupIpcHandlers() {
         }
     });
 
-    ipcMain.handle('send-image-content', async (event, { data, prompt }) => {
+    ipcMain.handle('send-image-content', async (event, { data }) => {
         try {
             if (!data || typeof data !== 'string') {
                 console.error('Invalid image data received');
@@ -377,7 +349,7 @@ function setupIpcHandlers() {
                 return { success: false, error: 'No active session' };
             }
 
-            return await getPipeline().sendLocalImage(data, prompt);
+            return await getPipeline().sendLocalImage(data);
         } catch (error) {
             console.error('Error sending image:', error);
             return { success: false, error: error.message };
@@ -466,7 +438,6 @@ module.exports = {
     sendToRenderer,
     initializeNewSession,
     saveConversationTurn,
-    saveScreenAnalysis,
     saveDetailTurn,
     saveCandidateSpeech,
     stopMacOSAudioCapture,

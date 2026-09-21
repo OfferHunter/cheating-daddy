@@ -550,7 +550,6 @@ export class HistoryView extends LitElement {
         const parts = [];
         if (session.messageCount > 0) parts.push(`${session.messageCount} messages`);
         if (session.detailCount > 0) parts.push(`${session.detailCount} detailed`);
-        if (session.screenAnalysisCount > 0) parts.push(`${session.screenAnalysisCount} screen`);
         if (session.profile) {
             const profileNames = this.getProfileNames();
             parts.push(profileNames[session.profile] || session.profile);
@@ -622,12 +621,6 @@ export class HistoryView extends LitElement {
                 order: turn.order,
                 usedKnowledge: turn.used_knowledge || [],
             })),
-            ...(session.screenAnalysisHistory || []).map(entry => ({
-                role: 'screen',
-                content: entry.response,
-                timestamp: entry.timestamp,
-                order: entry.order,
-            })),
             // Absent from sessions recorded before the candidate's own speech was written out, which is
             // why this list is tolerated missing rather than treated as a broken file.
             ...(session.candidateHistory || []).map(entry => ({
@@ -649,7 +642,6 @@ export class HistoryView extends LitElement {
         // is why the screenshot summary can sit ahead of the detailed answer for the same image.
         const rank = part => (part.role === 'question' ? 0 : 1);
         return [...groups.values()]
-            .map(group => this._dropRepeatedQuestion(group))
             .filter(group => group.parts.length > 0)
             .sort((a, b) => a.order - b.order || this._firstTimestamp(a) - this._firstTimestamp(b))
             .map(group => {
@@ -682,18 +674,6 @@ export class HistoryView extends LitElement {
                 el._renderedText = part.content;
             }
         }
-    }
-
-    // An image question is stored twice over: the detail turn's `question` is the screenshot summary line
-    // verbatim, and the same line is what the screen entry holds. Once the question is there to carry it,
-    // the screen copy is dropped — otherwise the row prints one identical line twice.
-    _dropRepeatedQuestion(group) {
-        const question = group.parts.find(part => part.role === 'question');
-        if (question) {
-            const text = question.content.trim();
-            group.parts = group.parts.filter(part => part.role === 'question' || part.content.trim() !== text);
-        }
-        return group;
     }
 
     _firstTimestamp(group) {
@@ -770,7 +750,7 @@ export class HistoryView extends LitElement {
             `;
         }
 
-        const labels = { brief: 'Brief answer', detail: 'Detailed answer', screen: 'Screen' };
+        const labels = { brief: 'Brief answer', detail: 'Detailed answer' };
         const references = part.usedKnowledge?.length ? part.usedKnowledge.join(', ') : '';
         return html`
             <div class="part">

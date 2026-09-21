@@ -356,7 +356,6 @@ function saveSession(sessionId, data) {
         customPrompt: data.customPrompt || existingSession?.customPrompt || null,
         // Conversation data
         conversationHistory: data.conversationHistory || existingSession?.conversationHistory || [],
-        screenAnalysisHistory: data.screenAnalysisHistory || existingSession?.screenAnalysisHistory || [],
         detailHistory: data.detailHistory || existingSession?.detailHistory || [],
         // Absent from every session recorded before the candidate's own speech was written out, so the
         // History page has to tolerate the key missing rather than expect an empty list.
@@ -397,7 +396,6 @@ function getAllSessions() {
                         createdAt: data.createdAt,
                         lastUpdated: data.lastUpdated,
                         messageCount: data.conversationHistory?.length || 0,
-                        screenAnalysisCount: data.screenAnalysisHistory?.length || 0,
                         detailCount: data.detailHistory?.length || 0,
                         profile: data.profile || null,
                         customPrompt: data.customPrompt || null,

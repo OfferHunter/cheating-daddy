@@ -470,12 +470,7 @@ export class CheatingDaddyApp extends LitElement {
             ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
             ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
             ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
-            ipcRenderer.on('transcription-final', (_, data) => {
-                this.upsertTranscription(data.text, true, data.speaker, data.blockId);
-                // A screenshot's line is the written-up question of the pane row opened by the same turn,
-                // which was created with a placeholder: this is where the two halves are joined.
-                if (data.speaker === 'screen') this._setDetailQuestion(data.blockId, data.text);
-            });
+            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
             ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
             ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
                 this._isClickThrough = isEnabled;
@@ -714,16 +709,6 @@ export class CheatingDaddyApp extends LitElement {
         const index = this._ensureDetailRow(detailId, turnSeq, question);
         if (index === -1) return;
         this._replaceDetail(index, { final: true, ok, error, usedKnowledge, truncated });
-    }
-
-    // A screenshot's pane row is opened the moment the image is sent, because thinking can hold its first
-    // token back for half a minute and the row must exist before a clear-context can raise the floor
-    // above it. Its question is the image summary, which arrives seconds later, so the row starts with a
-    // placeholder and is corrected here. Ordinary rows carry the question they were created with.
-    _setDetailQuestion(turnSeq, question) {
-        const index = this.detailMessages.findIndex(m => m.turnSeq === turnSeq);
-        if (index === -1) return;
-        this._replaceDetail(index, { question });
     }
 
     handleDetailToolUsed(data) {

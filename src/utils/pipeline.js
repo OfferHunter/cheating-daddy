@@ -1,5 +1,5 @@
-const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt } = require('./prompts');
-const { sendToRenderer, initializeNewSession, saveConversationTurn, saveScreenAnalysis, saveDetailTurn, saveCandidateSpeech } = require('./session');
+const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt, getScreenshotAnswerPrompt } = require('./prompts');
+const { sendToRenderer, initializeNewSession, saveConversationTurn, saveDetailTurn, saveCandidateSpeech } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
 const {
     KNOWLEDGE_TOOL_NAME,
@@ -128,6 +128,8 @@ const SCREEN_PREFIX = '[屏幕截图]';
 const SCREEN_CONTEXT_PREFIX = '[屏幕共享的题目（已回答，仅参考）]';
 const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
 const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
+// 拍题在详情面板里的固定标题。摘要只走对话记录，面板用它自己的这行标题，两者不再互相改写。
+const SCREENSHOT_ANSWER_QUESTION = '对屏幕截图的作答';
 
 let turnLog = [];
 let turnSeq = 0;
@@ -555,11 +557,6 @@ function updateStreamingStatus() {
 }
 
 function persistTurn(entry) {
-    // A screenshot turn never carries an answer of its own: its only request is the summary, whose
-    // answer is written to the Screen tab by runScreenshotSummary the moment it lands. A screenshot's
-    // answer goes to the pane, which saves itself as a detail turn.
-    if (entry.persistKind === 'screen') return;
-
     saveConversationTurn(entry.contextText, entry.assistant, entry.seq);
 }
 
@@ -740,10 +737,9 @@ function startDetailStream(turnEntry, { question, thinking }) {
                 truncated: finishReason === 'length',
             });
 
-            // Read the question off the turn rather than off this entry: a screenshot's question line is
-            // the image summary, which lands asynchronously, so the copy taken when the row opened can
-            // still be the placeholder. For every other turn the two are the same string.
-            if (entry.assistant) saveDetailTurn(turnEntry.contextText, entry.assistant, entry.turnSeq, entry.usedKnowledge);
+            // 落库用 entry.question 而不是 turnEntry.contextText：截图那一轮的 contextText 稍后会被摘要
+            // 覆盖，而面板标题是固定的「对屏幕截图的作答」，两者从这一刻起就是两回事。
+            if (entry.assistant) saveDetailTurn(entry.question, entry.assistant, entry.turnSeq, entry.usedKnowledge);
         } catch (error) {
             entry.status = 'failed';
             console.error('[Pipeline] detail error:', error);
@@ -775,36 +771,29 @@ function runDetailTurn(shortEntry) {
     startDetailStream(shortEntry, { question: shortEntry.contextText, thinking: detailThinkingEnabled });
 }
 
-// A screenshot's only answer goes to the pane: an image is a question, and the answer to it is read, not
-// spoken, so leaving the transcript free of it is the point rather than a side effect. The row is opened
-// here, synchronously, for two reasons: thinking can hold the first token back for a minute and the pane
-// should say what it is waiting for, and the id has to exist before a clear-context can raise the floor
-// above it.
-//
-// Thinking follows its own setting rather than the detail pane's, and it is read rather than forced on:
-// this is the one request that carries an image and the wait it spends on reasoning runs inside the
-// client's own request timeout, so a whole problem statement plus a picture can burn the entire budget
-// in the scratchpad and come back as no answer at all.
+// 拍题的答案只进详情面板：图是一道题，答案是读的不是念的，不进对话记录。
+// 同步开行有两个理由：thinking 可能几十秒不出第一个字，面板要立刻说明在等什么；detailId 必须先存在，
+// clear-context 才能把下限抬到它之上。
+// thinking 用截图自己的开关（默认关），不跟详情面板走：这是唯一带图片的请求，思考耗时算在客户端 120s
+// 总超时里，一整道题加一张图能把预算烧完，最后一个字都回不来。
 function startScreenshotAnswer(turnEntry) {
     const detailId = startDetailStream(turnEntry, {
-        question: turnEntry.contextText,
+        question: SCREENSHOT_ANSWER_QUESTION,
         thinking: screenshotThinkingEnabled,
     });
 
     sendToRenderer('new-detail-response', {
         detailId,
         turnSeq: turnEntry.seq,
-        question: turnEntry.contextText,
+        question: SCREENSHOT_ANSWER_QUESTION,
         text: '',
     });
 }
 
-// The screenshot's second, concurrent request, and the only one the transcript and the Screen tab ever
-// see. It is deliberately a request of its own rather than a step of the answer above: what the picture
-// asks has to be in words before the next question needs it, and waiting for the answer would put the
-// summary behind thirty seconds of thinking. No history rides along — the question is what is in the
-// image, and nothing about the interview changes what that is.
-async function runScreenshotSummary(entry, base64Data, prompt) {
+// 与上面那条回答并发的第二个请求，也是对话记录里唯一留下痕迹的那个。它自成一个请求而不是回答的一步：
+// 图里问的是什么要在下个问题之前变成文字，等回答就等于把摘要压在几十秒思考后面。
+// 不带历史：问题就是图里那张纸上的东西，面试聊了什么不影响它。
+async function runScreenshotSummary(entry, base64Data) {
     const messages = [
         { role: 'system', content: getScreenshotSummaryPrompt() },
         {
@@ -834,13 +823,12 @@ async function runScreenshotSummary(entry, base64Data, prompt) {
     // text both belong to a transcript nobody is looking at any more.
     if (entry.generation !== sessionGeneration) return;
 
-    // From here on every later prompt replays this line in place of the image, which is why the entry was
-    // created with a non-empty contextText and never carries an empty one.
+    // 从这一刻起，之后每个提示词都用这行文字代替那张图，所以这轮的 contextText 一开始就非空、也永远不为空。
     entry.contextText = line;
     sendToRenderer('transcription-final', { text: line, speaker: 'screen', blockId: entry.seq });
-    // The Screen tab renders the response column, so the summary goes there and the pane's own answer
-    // stays where it is shown: the Detailed tab.
-    saveScreenAnalysis(prompt, line, getChatModel(), entry.seq);
+    // 摘要就作为一条普通对话记录落盘（没有精简回答，ai_response 为空）。详情面板那行是拍题自己的固定标题，
+    // 两边从此不再互相改写。
+    saveConversationTurn(line, '', entry.seq);
     logTransportEvent('chat.completed', { turnId: entry.seq, summary: true });
 
     // Nothing of the screenshot is pending in turnLog, so without this the status line would sit on
@@ -1138,13 +1126,13 @@ async function sendLocalText(text) {
     return { success: true, turnId: entry ? entry.seq : null };
 }
 
-async function sendLocalImage(base64Data, prompt) {
+async function sendLocalImage(base64Data) {
     if (!isLocalActive) {
         return { success: false, error: 'No active session' };
     }
 
     const requestContent = [
-        { type: 'text', text: prompt },
+        { type: 'text', text: getScreenshotAnswerPrompt() },
         {
             type: 'image_url',
             image_url: {
@@ -1173,7 +1161,7 @@ async function sendLocalImage(base64Data, prompt) {
     startScreenshotAnswer(entry);
     // Never awaited, and started before the answer so the two requests overlap: the summary is one small
     // request with thinking off, the answer a long one with it on.
-    runScreenshotSummary(entry, base64Data, prompt);
+    runScreenshotSummary(entry, base64Data);
 
     return { success: true, model: getChatModel(), turnId: entry.seq };
 }

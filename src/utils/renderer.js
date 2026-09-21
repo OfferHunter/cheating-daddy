@@ -479,12 +479,6 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
-const MANUAL_SCREENSHOT_PROMPT = `[屏幕共享的题目（当前问题，请作答）] 你是一名面试助手。下面是一张面试屏幕截图，图里通常是一道题目。
-如果是代码题，先用几个要点讲思路，再给出完整、能跑通的代码，编程语言要用**面试者此次面试使用的编程语言**；如果有别的需要我知道的，也一并说明。
-如果是选择题，直接给答案，再用几个要点讲思路。
-如果图里没有题目，不要作答，直接说明图中没有可见题目即可。
-使用页面/题目所用的语言作答：中文内容就用简体中文，英文内容就用英文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
-
 // Resolves with the main process's reply, or null when nothing was sent at all. The caller drives its
 // busy state from that reply, so every path that declines to send has to be able to say so — silently
 // returning would leave a button spinning until the next session.
@@ -579,10 +573,7 @@ async function captureManualScreenshot(imageQuality = null) {
                     // started, what model it went to, and which turn it opened.
                     try {
                         resolve(
-                            await ipcRenderer.invoke('send-image-content', {
-                                data: base64data,
-                                prompt: MANUAL_SCREENSHOT_PROMPT,
-                            })
+                            await ipcRenderer.invoke('send-image-content', { data: base64data })
                         );
                     } catch (error) {
                         console.error('Failed to send screenshot:', error);
@@ -853,20 +844,6 @@ ipcRenderer.on('save-session-context', async (event, data) => {
         console.log('Session context saved:', data.sessionId, 'profile:', data.profile);
     } catch (error) {
         console.error('Error saving session context:', error);
-    }
-});
-
-// Listen for screen analysis responses (from ctrl+enter)
-ipcRenderer.on('save-screen-analysis', async (event, data) => {
-    try {
-        await storage.saveSession(data.sessionId, {
-            screenAnalysisHistory: data.fullHistory,
-            profile: data.profile,
-            customPrompt: data.customPrompt,
-        });
-        console.log('Screen analysis saved:', data.sessionId);
-    } catch (error) {
-        console.error('Error saving screen analysis:', error);
     }
 });
 
