@@ -48,7 +48,6 @@ function createWindow(sendToRenderer) {
         mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
     }
 
-    // Hide from Windows taskbar
     if (process.platform === 'win32') {
         try {
             mainWindow.setSkipTaskbar(true);
@@ -57,7 +56,6 @@ function createWindow(sendToRenderer) {
         }
     }
 
-    // Hide from Mission Control on macOS
     if (process.platform === 'darwin') {
         try {
             mainWindow.setHiddenInMissionControl(true);
@@ -68,13 +66,11 @@ function createWindow(sendToRenderer) {
 
     mainWindow.loadFile(path.join(__dirname, '../index.html'));
 
-    // After window is created, initialize keybinds
     mainWindow.webContents.once('dom-ready', () => {
         setTimeout(() => {
             const defaultKeybinds = getDefaultKeybinds();
             let keybinds = defaultKeybinds;
 
-            // Load keybinds from storage
             const savedKeybinds = storage.getKeybinds();
             if (savedKeybinds) {
                 keybinds = { ...defaultKeybinds, ...savedKeybinds };
@@ -101,8 +97,7 @@ function getDefaultKeybinds() {
         nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
-        // Brackets rather than Up/Down: those already scroll the transcript, and Ctrl+Alt+Up/Down is
-        // grabbed by the graphics driver on Windows for screen rotation.
+        // 用方括号而非方向键：上下键已经用来滚动字幕，而 Ctrl+Alt+Up/Down 在 Windows 上被显卡驱动占用做屏幕旋转。
         detailPrev: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+[',
         detailNext: isMac ? 'Cmd+Shift+]' : 'Ctrl+Shift+]',
         emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
@@ -112,15 +107,12 @@ function getDefaultKeybinds() {
 }
 
 function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
-    // Merged over the defaults rather than trusted as given. The renderer's settings page keeps its own
-    // copy of the default table, and when the two drift the missing key is not neutral: everything below
-    // is guarded by `if (keybinds.X)`, so an absent one is silently never registered. That is exactly how
-    // a shortcut the user never touched — emergencyErase — stopped working until a restart.
+    // 必须与默认表合并，不能直接信传入的：设置页自己抄了一份默认键位表，两边漂移时缺键不是中性的——下面
+    // 每处注册都被 `if (keybinds.X)` 守着，缺的那个会静默地永不注册。
     keybinds = { ...getDefaultKeybinds(), ...(keybinds || {}) };
 
     console.log('Updating global shortcuts with:', keybinds);
 
-    // Unregister all existing shortcuts
     globalShortcut.unregisterAll();
 
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -162,7 +154,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     });
 
-    // Register toggle visibility shortcut
     if (keybinds.toggleVisibility) {
         try {
             globalShortcut.register(keybinds.toggleVisibility, () => {
@@ -178,7 +169,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register toggle click-through shortcut
     if (keybinds.toggleClickThrough) {
         try {
             globalShortcut.register(keybinds.toggleClickThrough, () => {
@@ -198,17 +188,14 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register next step shortcut (either starts session or takes screenshot based on view)
     if (keybinds.nextStep) {
         try {
             globalShortcut.register(keybinds.nextStep, async () => {
                 console.log('Next step shortcut triggered');
                 try {
-                    // Determine the shortcut key format
                     const isMac = process.platform === 'darwin';
                     const shortcutKey = isMac ? 'cmd+enter' : 'ctrl+enter';
 
-                    // Use the new handleShortcut function
                     mainWindow.webContents.executeJavaScript(`
                         cheatingDaddy.handleShortcut('${shortcutKey}');
                     `);
@@ -222,7 +209,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register scroll up shortcut
     if (keybinds.scrollUp) {
         try {
             globalShortcut.register(keybinds.scrollUp, () => {
@@ -235,7 +221,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register scroll down shortcut
     if (keybinds.scrollDown) {
         try {
             globalShortcut.register(keybinds.scrollDown, () => {
@@ -248,8 +233,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register step-back through the detailed answers. A one-way accelerator only: the pane's own ‹ ›
-    // buttons are the way in, so a shortcut the OS refuses to hand over costs nothing.
+    // 详细回答的翻页快捷键只是加速器：面板自己的 ‹ › 按钮才是入口，所以系统不肯让出这个键也无损失。
     if (keybinds.detailPrev) {
         try {
             globalShortcut.register(keybinds.detailPrev, () => {
@@ -272,7 +256,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register emergency erase shortcut
     if (keybinds.emergencyErase) {
         try {
             globalShortcut.register(keybinds.emergencyErase, () => {
@@ -294,7 +277,6 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register light/dark theme toggle shortcut
     if (keybinds.toggleTheme) {
         try {
             globalShortcut.register(keybinds.toggleTheme, async () => {
@@ -313,12 +295,12 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // Register quit shortcut. Unlike emergencyErase this keeps the data: it is a plain exit.
+    // 与 emergencyErase 不同，这里是普通退出，不动数据。
     if (keybinds.quit) {
         try {
             globalShortcut.register(keybinds.quit, () => {
                 console.log('Quit shortcut triggered');
-                // before-quit in index.js stops the audio capture and closes the session.
+                // index.js 的 before-quit 会停掉音频采集并关闭会话。
                 const { app } = require('electron');
                 app.quit();
             });

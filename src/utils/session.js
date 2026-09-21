@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { startTransportLog, closeTransportLog } = require('./transportLogger');
 
-// Lazy-loaded to avoid a circular dependency (pipeline.js imports from this module).
+// 延迟加载：pipeline.js 反过来 require 本模块，直接写在顶部会成环。
 let _pipeline = null;
 function getPipeline() {
     if (!_pipeline) _pipeline = require('./pipeline');
@@ -12,24 +12,19 @@ function getPipeline() {
 
 let chatSessionActive = false;
 
-// Conversation tracking variables
 let currentSessionId = null;
 let conversationHistory = [];
-// The detailed answers, kept as their own list rather than folded into conversationHistory: they are a
-// second answer to the same question, so the History page shows them under their own tab and the short
-// transcript stays exactly as long as it was.
+// 详细回答单独一份列表，不并进 conversationHistory：它是对同一个问题的第二个回答，历史页给它自己的
+// 标签页，这样精简字幕的长度不会因为详细回答而变长。
 let detailHistory = [];
-// What the candidate said, in its own list for the same reason the detailed answers are: it is not a
-// question, so it never dispatches a turn and has no `ai_response` to pair with. Recorded only so the
-// History page can show the transcript the way the live view did — the model sees it through the turn log.
+// 面试者发言同理单列：它不是问题，从不派发轮次，也没有 ai_response 可配对，记下来只是让历史页能像实时
+// 视图那样还原字幕。模型是通过轮次日志看到它的。
 let candidateHistory = [];
-// The app is an interview teleprompter, so every recorded session carries the same label. It is still
-// written out because the history view reads it, and sessions saved before had other profiles.
+// 本应用只做面试提词器，所有会话都带同一个档位标签；仍然写出来是因为历史页会读它，而旧会话存过别的值。
 const SESSION_PROFILE = 'interview';
 let currentProfile = SESSION_PROFILE;
 let currentCustomPrompt = null;
 
-// Audio capture variables
 let systemAudioProc = null;
 
 function sendToRenderer(channel, data) {
@@ -39,7 +34,6 @@ function sendToRenderer(channel, data) {
     }
 }
 
-// Conversation management functions
 function initializeNewSession(customPrompt = null) {
     currentSessionId = Date.now().toString();
     startTransportLog(currentSessionId);
@@ -50,7 +44,6 @@ function initializeNewSession(customPrompt = null) {
     currentCustomPrompt = customPrompt;
     console.log('New conversation session started:', currentSessionId);
 
-    // Save initial session with profile context
     sendToRenderer('save-session-context', {
         sessionId: currentSessionId,
         profile: SESSION_PROFILE,
@@ -113,8 +106,6 @@ function getCurrentSessionData() {
     };
 }
 
-// ── macOS system audio capture ──
-
 function killExistingSystemAudioDump() {
     return new Promise(resolve => {
         console.log('Checking for existing SystemAudioDump processes...');
@@ -137,7 +128,6 @@ function killExistingSystemAudioDump() {
             resolve();
         });
 
-        // Timeout after 2 seconds
         setTimeout(() => {
             killProc.kill();
             resolve();
@@ -148,7 +138,6 @@ function killExistingSystemAudioDump() {
 async function startMacOSAudioCapture() {
     if (process.platform !== 'darwin') return false;
 
-    // Kill any existing SystemAudioDump processes first
     await killExistingSystemAudioDump();
 
     console.log('Starting macOS audio capture with SystemAudioDump...');
@@ -249,8 +238,6 @@ function stopMacOSAudioCapture() {
     }
 }
 
-// ── IPC ──
-
 function setupIpcHandlers() {
     ipcMain.handle('initialize-chat', async (event, customPrompt, selectedLanguage) => {
         chatSessionActive = getPipeline().initializeChatSession(customPrompt, selectedLanguage);
@@ -268,7 +255,6 @@ function setupIpcHandlers() {
         }
     });
 
-    // Handle microphone audio on a separate channel
     ipcMain.handle('send-mic-audio-content', async (event, { data }) => {
         if (!chatSessionActive) return { success: false, error: 'No active session' };
         try {
@@ -280,8 +266,8 @@ function setupIpcHandlers() {
         }
     });
 
-    // Neither pause nor clear ends the session: the sockets stay up for a resume, and the transcript
-    // on disk is written turn by turn from persistTurn, so clearing the context never reaches it.
+    // 暂停和清空都不结束会话：socket 留着等恢复，而磁盘上的记录是 persistTurn 一轮一轮写的，清空上下文
+    // 永远碰不到它。
     ipcMain.handle('set-audio-paused', async (event, value) => {
         if (!chatSessionActive) return { success: false, error: 'No active session' };
         try {
@@ -384,7 +370,6 @@ function setupIpcHandlers() {
         }
     });
 
-    // Conversation history IPC handlers
     ipcMain.handle('get-current-session', async event => {
         try {
             return { success: true, data: getCurrentSessionData() };

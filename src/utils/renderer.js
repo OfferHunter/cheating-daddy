@@ -1,38 +1,31 @@
-// renderer.js
 const { ipcRenderer } = require('electron');
 
 let mediaStream = null;
 let screenshotInterval = null;
 let audioContext = null;
 let audioProcessor = null;
-// The microphone's capture is held separately from the speaker path because it is torn down on its own:
-// its track and the context it was fed through outlive `mediaStream` and `audioContext`, and leaving them
-// open is what keeps the device marked as in use after the session that opened it has ended.
+// 麦克风单独持有：它有自己的拆卸时机，track 和喂它的 context 都比 mediaStream/audioContext 活得久，不显式
+// 关掉，设备在会话结束后仍会被系统标记为占用中。
 let micAudioProcessor = null;
 let micCaptureStream = null;
 let micCaptureContext = null;
 let audioBuffer = [];
 const SAMPLE_RATE = 24000;
-const AUDIO_CHUNK_DURATION = 0.1; // seconds
-const BUFFER_SIZE = 4096; // Increased buffer size for smoother audio
+const AUDIO_CHUNK_DURATION = 0.1; // 秒，主力侧按同一节奏拼帧
+const BUFFER_SIZE = 4096;
 
 let hiddenVideo = null;
 let offscreenCanvas = null;
 let offscreenContext = null;
-let currentImageQuality = 'medium'; // Store current image quality for manual screenshots
+let currentImageQuality = 'medium';
 
-// Paused: the captures keep running and the chunks keep coming at the same 100 ms cadence, but they
-// carry silence. Stopping the sends instead would starve the recognizer's task, which the endpoint
-// ends after hearing nothing for long enough — and every frame it does send is discarded before it
-// reaches the socket, so the audio never leaves this process as speech.
+// 暂停时采集照旧，每 100ms 仍然送一帧，只是帧里是静音。改成停止发送反而会饿死识别任务——端点静默太久
+// 会主动结束它；而送出去的静音帧在到达 socket 前就被丢掉了，音频不会作为语音离开本进程。
 let capturePaused = false;
 
 const isMacOS = process.platform === 'darwin';
 
-// ============ STORAGE API ============
-// Wrapper for IPC-based storage access
 const storage = {
-    // Config
     async getConfig() {
         const result = await ipcRenderer.invoke('storage:get-config');
         return result.success ? result.data : {};
@@ -44,7 +37,6 @@ const storage = {
         return ipcRenderer.invoke('storage:update-config', key, value);
     },
 
-    // Credentials
     async getCredentials() {
         const result = await ipcRenderer.invoke('storage:get-credentials');
         return result.success ? result.data : {};
@@ -67,7 +59,6 @@ const storage = {
         return ipcRenderer.invoke('storage:set-bailian-api-key', bailianApiKey);
     },
 
-    // Preferences
     async getPreferences() {
         const result = await ipcRenderer.invoke('storage:get-preferences');
         return result.success ? result.data : {};
@@ -79,7 +70,6 @@ const storage = {
         return ipcRenderer.invoke('storage:update-preference', key, value);
     },
 
-    // Keybinds
     async getKeybinds() {
         const result = await ipcRenderer.invoke('storage:get-keybinds');
         return result.success ? result.data : null;
@@ -88,7 +78,6 @@ const storage = {
         return ipcRenderer.invoke('storage:set-keybinds', keybinds);
     },
 
-    // Sessions (History)
     async getAllSessions() {
         const result = await ipcRenderer.invoke('storage:get-all-sessions');
         return result.success ? result.data : [];
@@ -106,26 +95,22 @@ const storage = {
     async deleteAllSessions() {
         return ipcRenderer.invoke('storage:delete-all-sessions');
     },
-    // Raw result, not a defaulted shape: the page has to tell a cancelled dialog apart from a failed
-    // write, and only this carries that distinction.
+    // 返回原始结果而非补齐过的结构：用户取消导出和写盘失败是两回事，只有原始结果带这个区分。
     async exportSessions(sessionIds) {
         return ipcRenderer.invoke('storage:export-sessions', sessionIds);
     },
 
-    // Clear all
     async clearAll() {
         return ipcRenderer.invoke('storage:clear-all');
     },
 };
 
-// The knowledge directory is the user's folder and is owned by the main process. The renderer only ever
-// names an entry by id — it never holds or sends a path.
+// 知识目录归主进程所有。渲染端只用 id 指认条目，从不持有或传递路径。
 const knowledge = {
     async chooseDirectory() {
         return ipcRenderer.invoke('knowledge:choose-directory');
     },
-    // Raw result, not a defaulted shape: the page has to tell "no folder chosen" apart from "the folder
-    // is set but nothing in it could be read", and only this carries that distinction.
+    // 同 exportSessions：原始结果才能区分「没选目录」和「目录已设但里面什么都没读到」。
     async list() {
         return ipcRenderer.invoke('knowledge:get-list');
     },
@@ -140,7 +125,7 @@ const knowledge = {
     },
 };
 
-// Cache for preferences to avoid async calls in hot paths
+// 缓存偏好设置：热路径上不能每次都 await 一次 IPC。
 let preferencesCache = null;
 
 async function loadPreferencesCache() {
@@ -148,13 +133,11 @@ async function loadPreferencesCache() {
     return preferencesCache;
 }
 
-// Initialize preferences cache
 loadPreferencesCache();
 
 function convertFloat32ToInt16(float32Array) {
     const int16Array = new Int16Array(float32Array.length);
     for (let i = 0; i < float32Array.length; i++) {
-        // Improved scaling to prevent clipping
         const s = Math.max(-1, Math.min(1, float32Array[i]));
         int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
@@ -185,15 +168,13 @@ async function initializeChat() {
     return false;
 }
 
-// Listen for status updates
 ipcRenderer.on('update-status', (event, status) => {
     console.log('Status update:', status);
     cheatingDaddy.setStatus(status);
 });
 
-// Stopping the track is the step that actually hands the device back — `disconnect()` on the processor
-// only stops the callbacks, so the OS keeps reporting the microphone as in use (on Windows, the
-// indicator in the tray) until the track is stopped and its context closed.
+// 真正把设备交回去的是 stop 掉 track：processor 的 disconnect() 只是停掉回调，系统仍会显示麦克风占用中
+// （Windows 上就是托盘那个指示），必须连 track 和它的 context 一起关。
 function releaseMicCapture() {
     if (micAudioProcessor) {
         micAudioProcessor.disconnect();
@@ -206,16 +187,13 @@ function releaseMicCapture() {
     }
 
     if (micCaptureContext) {
-        // Fire and forget: nothing waits on the teardown, and a closing context cannot fail in a way the
-        // session would care about.
         micCaptureContext.close().catch(() => {});
         micCaptureContext = null;
     }
 }
 
-// 'none' is the user's explicit "don't use a microphone" choice from Settings, so it never reaches
-// here. A concrete deviceId is passed as 'ideal' rather than 'exact': if that device has since been
-// unplugged we fall back to the system default instead of failing the capture outright.
+// 'none' 是设置页里「不用麦克风」的显式选择，不会走到这里。具体 deviceId 用 'ideal' 而不是 'exact'：那个
+// 设备要是被拔了，退回系统默认设备，而不是整个采集直接失败。
 function buildMicConstraints(micDeviceId) {
     const audio = {
         sampleRate: SAMPLE_RATE,
@@ -231,39 +209,33 @@ function buildMicConstraints(micDeviceId) {
 }
 
 async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'medium') {
-    // Store the image quality for manual screenshots
     currentImageQuality = imageQuality;
 
-    // Refresh preferences cache
     await loadPreferencesCache();
     const micDeviceId = preferencesCache.audioInputDeviceId || 'none';
-    // The microphone is the candidate's own channel: it runs alongside the speaker path rather than
-    // replacing it, so the only thing that turns it off is an explicit "no microphone" choice.
+    // 麦克风是候选人自己那一路：与扬声器那一路并行，而不是取代它，所以只有「明确不用麦克风」才会关掉它。
     const shouldCaptureMic = micDeviceId !== 'none';
 
-    // Released before anything opens: this session's own choice decides whether a microphone runs, and
-    // whatever an earlier session left behind must not outlive it either way.
+    // 在开始任何采集之前先释放：这一路开不开由本次会话自己的选择决定，上一次会话留下的东西两种情况下都
+    // 不该继续活着。
     releaseMicCapture();
 
     try {
         if (isMacOS) {
-            // On macOS, use SystemAudioDump for audio and getDisplayMedia for screen
             console.log('Starting macOS capture with SystemAudioDump...');
 
-            // Start macOS audio capture
             const audioResult = await ipcRenderer.invoke('start-macos-audio');
             if (!audioResult.success) {
                 throw new Error('Failed to start macOS audio capture: ' + audioResult.error);
             }
 
-            // Get screen capture for screenshots
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     frameRate: 1,
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
                 },
-                audio: false, // Don't use browser audio on macOS
+                audio: false, // 系统声音走 SystemAudioDump，不走浏览器
             });
 
             console.log('macOS screen capture started - audio handled by SystemAudioDump');
@@ -278,7 +250,6 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
                 }
             }
         } else {
-            // Windows - use display media with loopback for system audio
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
                     frameRate: 1,
@@ -296,7 +267,6 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 
             console.log('Windows capture started with loopback audio');
 
-            // Setup audio processing for Windows loopback audio only
             setupWindowsLoopbackProcessing();
 
             if (shouldCaptureMic) {
@@ -316,7 +286,6 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
             videoTrack: mediaStream.getVideoTracks()[0]?.getSettings(),
         });
 
-        // Manual mode only - screenshots captured on demand via shortcut
         console.log('Manual mode enabled - screenshots will be captured on demand only');
     } catch (err) {
         console.error('Error starting capture:', err);
@@ -371,7 +340,6 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     console.log(`Capturing ${isManual ? 'manual' : 'automated'} screenshot...`);
     if (!mediaStream) return;
 
-    // Lazy init of video element
     if (!hiddenVideo) {
         hiddenVideo = document.createElement('video');
         hiddenVideo.srcObject = mediaStream;
@@ -384,14 +352,12 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
             hiddenVideo.onloadedmetadata = () => resolve();
         });
 
-        // Lazy init of canvas based on video dimensions
         offscreenCanvas = document.createElement('canvas');
         offscreenCanvas.width = hiddenVideo.videoWidth;
         offscreenCanvas.height = hiddenVideo.videoHeight;
         offscreenContext = offscreenCanvas.getContext('2d');
     }
 
-    // Check if video is ready
     if (hiddenVideo.readyState < 2) {
         console.warn('Video not ready yet, skipping screenshot');
         return;
@@ -399,10 +365,9 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
 
     offscreenContext.drawImage(hiddenVideo, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
 
-    // Check if image was drawn properly by sampling a pixel
+    // 只采样一个像素（四个分量里的 alpha 跳过）：全黑或全透明就当成空画面。
     const imageData = offscreenContext.getImageData(0, 0, 1, 1);
     const isBlank = imageData.data.every((value, index) => {
-        // Check if all pixels are black (0,0,0) or transparent
         return index === 3 ? true : value === 0;
     });
 
@@ -422,7 +387,7 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
             qualityValue = 0.5;
             break;
         default:
-            qualityValue = 0.7; // Default to medium
+            qualityValue = 0.7;
     }
 
     offscreenCanvas.toBlob(
@@ -436,7 +401,6 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
             reader.onloadend = async () => {
                 const base64data = reader.result.split(',')[1];
 
-                // Validate base64 data
                 if (!base64data || base64data.length < 100) {
                     console.error('Invalid base64 data generated');
                     return;
@@ -459,9 +423,8 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
-// Resolves with the main process's reply, or null when nothing was sent at all. The caller drives its
-// busy state from that reply, so every path that declines to send has to be able to say so — silently
-// returning would leave a button spinning until the next session.
+// 返回主进程的答复；什么都没发出去时返回 null。调用方拿这个值来结束自己的忙碌态，所以每条拒绝发送的
+// 路径都必须说得出话——静默 return 会让按钮一直转到下一次会话。
 async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');
     const quality = imageQuality || currentImageQuality;
@@ -471,14 +434,12 @@ async function captureManualScreenshot(imageQuality = null) {
         return null;
     }
 
-    // Lazy init of video element
     if (!hiddenVideo) {
         hiddenVideo = document.createElement('video');
         hiddenVideo.srcObject = mediaStream;
         hiddenVideo.muted = true;
         hiddenVideo.playsInline = true;
-        // A playback that fails leaves the element with no frames, which the readyState check below turns
-        // into the same "nothing was sent" as a video that has not produced a frame yet.
+        // 播放失败时元素没有帧，下面的 readyState 检查会把它归到与「还没有帧」同一种结果：什么都没发。
         await hiddenVideo.play().catch(() => {});
 
         await new Promise(resolve => {
@@ -486,20 +447,18 @@ async function captureManualScreenshot(imageQuality = null) {
             hiddenVideo.onloadedmetadata = () => resolve();
         });
 
-        // Lazy init of canvas based on video dimensions
         offscreenCanvas = document.createElement('canvas');
         offscreenCanvas.width = hiddenVideo.videoWidth;
         offscreenCanvas.height = hiddenVideo.videoHeight;
         offscreenContext = offscreenCanvas.getContext('2d');
     }
 
-    // Check if video is ready
     if (hiddenVideo.readyState < 2) {
         console.warn('Video not ready yet, skipping screenshot');
         return null;
     }
 
-    // Downscale to max 1280px wide for faster transfer — vision models don't need 4K
+    // 缩到最宽 1280px 传得更快：视觉模型不需要 4K。
     const MAX_WIDTH = 1280;
     const srcW = hiddenVideo.videoWidth;
     const srcH = hiddenVideo.videoHeight;
@@ -549,8 +508,7 @@ async function captureManualScreenshot(imageQuality = null) {
 
                     console.log(`Sending image: ${destW}x${destH}, ~${Math.round(base64data.length / 1024)}KB`);
 
-                    // The answer streams back as pane events; this reply only says that the request
-                    // started, what model it went to, and which turn it opened.
+                    // 回答是通过详情面板事件流回来的；这个返回值只说明请求已发出去了、发给了哪个模型、开的是哪一轮。
                     try {
                         resolve(
                             await ipcRenderer.invoke('send-image-content', { data: base64data })
@@ -568,7 +526,7 @@ async function captureManualScreenshot(imageQuality = null) {
     });
 }
 
-// Expose functions to global scope for external access
+// 挂到 window 上供组件直接调用。
 window.captureManualScreenshot = captureManualScreenshot;
 
 function stopCapture() {
@@ -584,7 +542,6 @@ function stopCapture() {
         audioProcessor = null;
     }
 
-    // Clean up the microphone capture: the processor, its track and its context (see releaseMicCapture).
     releaseMicCapture();
 
     if (audioContext) {
@@ -597,14 +554,12 @@ function stopCapture() {
         mediaStream = null;
     }
 
-    // Stop macOS audio capture if running
     if (isMacOS) {
         ipcRenderer.invoke('stop-macos-audio').catch(err => {
             console.error('Error stopping macOS audio:', err);
         });
     }
 
-    // Clean up hidden elements
     if (hiddenVideo) {
         hiddenVideo.pause();
         hiddenVideo.srcObject = null;
@@ -614,23 +569,18 @@ function stopCapture() {
     offscreenContext = null;
 }
 
-// ── Settings level meters ──
-// The Settings page shows a live level next to each source, so it opens preview captures of its
-// own. They exist only to be measured: the audio is analysed and dropped, never sent over IPC, so
-// a preview can never reach the transcript. Both are torn down when the page is left.
+// 设置页在每个声源旁显示实时电平，为此自己开了预览采集。它们只为测量而存在：音频分析完就丢，从不经 IPC
+// 送出去，所以预览永远进不了字幕。离开页面时两条都拆掉。
 const METER_BARS = 4;
-// Everything below this reads as zero, so room tone does not keep a bar lit.
+// 低于这个值一律算 0，免得环境底噪让格子常亮。
 const METER_FLOOR_DB = -55;
-// Level lost per read while falling. The page reads every ~80 ms, so a bar takes about 300 ms to
-// go out: short enough to follow speech, long enough for a syllable to be seen.
+// 每次读取时衰减掉的电平。页面约每 80ms 读一次，一根柱子约 300ms 落下去：跟得上语速，也看得见一个音节。
 const METER_RELEASE = 0.12;
 
 let meterAudioContext = null;
 let metersRunning = false;
-// Bumped whenever a capture is stopped or replaced, so a capture that resolves afterwards is thrown
-// away instead of being left running with nobody reading it. One counter per source: the two start
-// together and either can be restarted on its own, and a shared counter would let the microphone's
-// restart throw away a system capture that is still on its way.
+// 采集被停掉或替换时自增，让之后再 resolve 的那个采集作废，而不是没人读却还开着。每个声源各一个计数器：
+// 两者同时启动但可以各自单独重启，共用一个会让麦克风的重启把还在路上的系统声音采集作废掉。
 const meterGeneration = { system: 0, mic: 0 };
 
 const meterSources = {
@@ -653,8 +603,7 @@ function attachMeter(kind, stream) {
     analyser.fftSize = 2048;
     source.connect(analyser);
 
-    // An analyser is only pulled while it leads somewhere, and the meter has to stay silent, so
-    // the signal is routed into a zero gain before the destination.
+    // analyser 只在有下游时才被拉动，而电平表必须保持静音，所以信号先过一道增益为 0 的节点再接到输出。
     const mute = context.createGain();
     mute.gain.value = 0;
     analyser.connect(mute);
@@ -679,8 +628,7 @@ function releaseMeter(kind) {
     slot.display = 0;
 }
 
-// RMS in dB, mapped so full scale is 1 and the floor is 0. Loudness is perceived logarithmically,
-// so a linear mapping would leave the bars near the bottom through the whole useful range.
+// RMS 转 dB 再映射：满量程为 1、地板为 0。响度感知是对数的，线性映射会让整个有用区间里柱子都贴着底。
 function meterLevel(slot) {
     if (!slot.analyser) return 0;
 
@@ -699,7 +647,7 @@ function readMeterLevels() {
     for (const kind of ['system', 'mic']) {
         const slot = meterSources[kind];
         const level = meterLevel(slot);
-        // Instant attack, slow release.
+        // 立刻上升，缓慢回落。
         slot.display = level > slot.display ? level : Math.max(level, slot.display - METER_RELEASE);
         levels[kind] = slot.analyser ? Math.ceil(slot.display * METER_BARS) : 0;
     }
@@ -747,8 +695,7 @@ async function startSystemMeter(generation) {
         return false;
     }
 
-    // The main process answers every request with a whole desktop stream; only the loopback audio
-    // is wanted here, so the screen track is dropped straight away.
+    // 主进程对每个请求都回一整条桌面流；这里只要回环音频，视频轨立刻停掉。
     stream.getVideoTracks().forEach(track => track.stop());
     attachMeter('system', stream);
     return true;
@@ -759,10 +706,9 @@ async function startAudioMeters(micDeviceId) {
     return Promise.all([startSystemMeter(++meterGeneration.system), startMicMeter(micDeviceId, ++meterGeneration.mic)]);
 }
 
-// Bumping first is what retires a capture an earlier choice already has in flight: the page starts its
-// meters on connect, before the stored preference has been read, so a getUserMedia can still be resolving
-// when the real device — or 'none' — arrives. Without the bump that capture would pass the check in
-// startMicMeter and attach a microphone nobody asked for.
+// 先自增才能作废上一次选择遗留的在途采集：页面一连接就启动电平表，那时还没读到存下来的偏好，所以真实
+// 设备（或 'none'）到达时可能仍有一个 getUserMedia 在解析中；不自增的话它会通过 startMicMeter 里的检查，
+// 挂上一个没人要的麦克风。
 async function restartMicMeter(micDeviceId) {
     if (!metersRunning) return false;
     return startMicMeter(micDeviceId, ++meterGeneration.mic);
@@ -783,7 +729,6 @@ const audioMeter = {
     read: readMeterLevels,
 };
 
-// Send text message to the chat endpoint
 async function sendTextMessage(text) {
     if (!text || text.trim().length === 0) {
         console.warn('Cannot send empty text message');
@@ -804,7 +749,6 @@ async function sendTextMessage(text) {
     }
 }
 
-// Listen for conversation data from main process and save to storage
 ipcRenderer.on('save-conversation-turn', async (event, data) => {
     try {
         await storage.saveSession(data.sessionId, { conversationHistory: data.fullHistory });
@@ -814,7 +758,6 @@ ipcRenderer.on('save-conversation-turn', async (event, data) => {
     }
 });
 
-// Listen for session context (profile info) when session starts
 ipcRenderer.on('save-session-context', async (event, data) => {
     try {
         await storage.saveSession(data.sessionId, {
@@ -827,7 +770,6 @@ ipcRenderer.on('save-session-context', async (event, data) => {
     }
 });
 
-// Listen for detailed answers, which are stored alongside the conversation but as their own list.
 ipcRenderer.on('save-detail-turn', async (event, data) => {
     try {
         await storage.saveSession(data.sessionId, { detailHistory: data.fullHistory });
@@ -837,7 +779,6 @@ ipcRenderer.on('save-detail-turn', async (event, data) => {
     }
 });
 
-// Listen for what the candidate said, recorded so the History page can show it beside the answers.
 ipcRenderer.on('save-candidate-speech', async (event, data) => {
     try {
         await storage.saveSession(data.sessionId, { candidateHistory: data.fullHistory });
@@ -847,13 +788,11 @@ ipcRenderer.on('save-candidate-speech', async (event, data) => {
     }
 });
 
-// Listen for emergency erase command from main process
 ipcRenderer.on('clear-sensitive-data', async () => {
     console.log('Clearing all data...');
     await storage.clearAll();
 });
 
-// Handle shortcuts based on current view
 function handleShortcut(shortcutKey) {
     const currentView = cheatingDaddy.getCurrentView();
 
@@ -866,10 +805,8 @@ function handleShortcut(shortcutKey) {
     }
 }
 
-// Create reference to the main app element
 const cheatingDaddyApp = document.querySelector('cheating-daddy-app');
 
-// ============ THEME SYSTEM ============
 const theme = {
     themes: {
         dark: {
@@ -1036,9 +973,8 @@ const theme = {
             : { r: 30, g: 30, b: 30 };
     },
 
-    // Same luminance test applyBackgrounds uses, so a theme counts as "light" for the toggle exactly
-    // when it is light enough to have its surfaces darkened. Computed rather than a hardcoded list of
-    // theme names, so themes added later are classified without touching this.
+    // 与 applyBackgrounds 用同一个亮度判据：一个主题被判为「亮色」当且仅当它亮到需要把表面压暗。算出来
+    // 而不是硬编码主题名，以后新增主题不用改这里。
     isLightTheme(name) {
         const { r, g, b } = this.hexToRgb(this.get(name).background);
         return (r + g + b) / 3 > 128;
@@ -1060,13 +996,12 @@ const theme = {
         };
     },
 
-    // Every surface token carries the alpha as a var() instead of a baked number, so dragging the
-    // opacity slider only has to rewrite --ui-alpha and the whole app re-resolves in one frame.
+    // 每个表面 token 的 alpha 写成 var() 而不是定值：拖动透明度滑块只需要重写 --ui-alpha，整个界面一帧
+    // 之内就重新解析完。
     applyBackgrounds(backgroundColor) {
         const root = document.documentElement;
         const baseRgb = this.hexToRgb(backgroundColor);
 
-        // For light themes, darken; for dark themes, lighten
         const isLight = (baseRgb.r + baseRgb.g + baseRgb.b) / 3 > 128;
         const adjust = isLight ? this.darkenColor.bind(this) : this.lightenColor.bind(this);
 
@@ -1079,13 +1014,13 @@ const theme = {
         const bgElevated = `rgba(${tertiary.r}, ${tertiary.g}, ${tertiary.b}, var(--ui-alpha))`;
         const bgHover = `rgba(${hover.r}, ${hover.g}, ${hover.b}, var(--ui-alpha))`;
 
-        // New design tokens (used by components)
+        // 组件读的是这一组
         root.style.setProperty('--bg-app', bgBase);
         root.style.setProperty('--bg-surface', bgSurface);
         root.style.setProperty('--bg-elevated', bgElevated);
         root.style.setProperty('--bg-hover', bgHover);
 
-        // Legacy aliases
+        // 老样式用的别名，同一批值
         root.style.setProperty('--header-background', bgBase);
         root.style.setProperty('--main-content-background', bgBase);
         root.style.setProperty('--bg-primary', bgBase);
@@ -1097,8 +1032,8 @@ const theme = {
         root.style.setProperty('--scrollbar-background', bgBase);
     },
 
-    // The only two numbers that change at runtime. Tokens reference them, so a slider drag is a pair
-    // of setProperty calls rather than a rebuild of every colour string.
+    // 运行时唯一会变的两个数字。所有 token 都引用它们，所以拖一次滑块只是两次 setProperty，不必重建每
+    // 一个颜色字符串。
     setAlphas(uiAlpha, textAlpha) {
         const root = document.documentElement;
         if (uiAlpha !== undefined) {
@@ -1123,14 +1058,14 @@ const theme = {
             return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alphaVar})`;
         };
 
-        // Text follows the font alpha; borders follow the component alpha. --border-strong is left
-        // opaque on purpose: it is the accent colour and doubles as a focus/highlight outline.
+        // 文字跟字体透明度，边框跟组件透明度。--border-strong 故意不透明：它就是强调色，同时充当聚焦/
+        // 高亮描边。
         const textPrimary = rgba(colors.text, 'var(--text-alpha)');
         const textSecondary = rgba(colors.textSecondary, 'var(--text-alpha)');
         const textMuted = rgba(colors.textMuted, 'var(--text-alpha)');
         const border = rgba(colors.border, 'var(--ui-alpha)');
 
-        // New design tokens (used by components)
+        // 组件读的是这一组
         root.style.setProperty('--text-primary', textPrimary);
         root.style.setProperty('--text-secondary', textSecondary);
         root.style.setProperty('--text-muted', textMuted);
@@ -1138,10 +1073,10 @@ const theme = {
         root.style.setProperty('--border-strong', colors.accent);
         root.style.setProperty('--accent', colors.btnPrimaryBg);
         root.style.setProperty('--accent-hover', colors.btnPrimaryHover);
-        // Links are text, so unlike --accent they have to follow the font alpha.
+        // 链接是文字，所以与 --accent 不同，它必须跟字体透明度走。
         root.style.setProperty('--link-color', rgba(colors.btnPrimaryBg, 'var(--text-alpha)'));
 
-        // Legacy aliases
+        // 老样式用的别名，同一批值
         root.style.setProperty('--text-color', textPrimary);
         root.style.setProperty('--border-color', border);
         root.style.setProperty('--border-default', colors.accent);
@@ -1149,22 +1084,18 @@ const theme = {
         root.style.setProperty('--scrollbar-thumb', border);
         root.style.setProperty('--scrollbar-thumb-hover', textMuted);
         root.style.setProperty('--key-background', colors.keyBg);
-        // Primary button
         root.style.setProperty('--btn-primary-bg', colors.btnPrimaryBg);
         root.style.setProperty('--btn-primary-text', colors.btnPrimaryText);
         root.style.setProperty('--btn-primary-hover', colors.btnPrimaryHover);
-        // Start button (same as primary)
+        // 开始按钮与主按钮同色，改一处要跟着改另一处。
         root.style.setProperty('--start-button-background', colors.btnPrimaryBg);
         root.style.setProperty('--start-button-color', colors.btnPrimaryText);
         root.style.setProperty('--start-button-hover-background', colors.btnPrimaryHover);
-        // Tooltip
         root.style.setProperty('--tooltip-bg', colors.tooltipBg);
         root.style.setProperty('--tooltip-text', colors.tooltipText);
-        // Error color (stays constant)
         root.style.setProperty('--error-color', '#f14c4c');
         root.style.setProperty('--success-color', '#4caf50');
 
-        // Also apply background colors from theme
         this.applyBackgrounds(colors.background);
     },
 
@@ -1182,15 +1113,14 @@ const theme = {
         }
     },
 
-    // Both alphas are passed in: applying a theme must not silently reset the user's opacity.
+    // 两个 alpha 都要传进来：换主题不能顺手把用户调好的透明度重置掉。
     async save(themeName, uiAlpha, textAlpha) {
         await storage.updatePreference('theme', themeName);
         this.apply(themeName, uiAlpha, textAlpha);
     },
 
-    // Flips to the other half of the palette so the overlay stays readable whatever is behind it.
-    // The last theme of each polarity is remembered in memory, so toggling back returns to the
-    // user's real theme instead of a fixed default.
+    // 翻到调色板的另一半，好让浮层压在什么背景上都读得清。每种极性最后用过的那套主题记在内存里，所以
+    // 翻回来能回到用户自己的主题，而不是一个固定默认值。
     async togglePolarity() {
         const current = this.current;
         const isLight = this.isLightTheme(current);
@@ -1206,62 +1136,48 @@ const theme = {
     },
 };
 
-// Consolidated cheatingDaddy object - all functions in one place
 const cheatingDaddy = {
-    // App version
     getVersion: async () => ipcRenderer.invoke('get-app-version'),
 
-    // Element access
     element: () => cheatingDaddyApp,
     e: () => cheatingDaddyApp,
 
-    // App state functions - access properties directly from the app element
     getCurrentView: () => cheatingDaddyApp.currentView,
     getLayoutMode: () => cheatingDaddyApp.layoutMode,
 
-    // Status and response functions
     setStatus: text => cheatingDaddyApp.setStatus(text),
     addNewResponse: response => cheatingDaddyApp.addNewResponse(response),
     updateCurrentResponse: response => cheatingDaddyApp.updateCurrentResponse(response),
 
-    // Core functionality
     initializeChat,
     startCapture,
     stopCapture,
     sendTextMessage,
     handleShortcut,
 
-    // Session controls. Pausing leaves both captures running and stops feeding the recognizer;
-    // clearing resets what the model has seen without touching the transcript on disk.
+    // 暂停时两条采集照旧跑，只是不再喂给识别器；清空只重置模型看过的上下文，不动磁盘上的记录。
     setPaused: async value => {
         capturePaused = Boolean(value);
         return ipcRenderer.invoke('set-audio-paused', Boolean(value));
     },
     clearContext: () => ipcRenderer.invoke('clear-context'),
 
-    // Storage API
     storage,
 
-    // Knowledge directory API
     knowledge,
 
-    // Theme API
     theme,
 
-    // Settings level meters
     audioMeter,
 
-    // Refresh preferences cache (call after updating preferences)
+    // 改完偏好设置要调一次，否则读到的还是旧的缓存值。
     refreshPreferencesCache: loadPreferencesCache,
 
-    // Platform detection
     isMacOS: isMacOS,
 };
 
-// Make it globally available
 window.cheatingDaddy = cheatingDaddy;
 
-// Load theme after DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => theme.load());
 } else {

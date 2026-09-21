@@ -1,24 +1,17 @@
-// The prompts themselves are Chinese (easier to maintain), but the model must answer in whichever
-// language the other party speaks. The rule is injected twice: right after the persona and again at
-// the very end, where instruction-following is strongest.
+// 提示词本身用中文写（好维护），但模型必须按对方的语言作答。这条规则在每份提示词里注入两次：
+// persona 之后一次，结尾再一次——结尾处的遵循度最高。
 const LANGUAGE_RULE = `**语言要求：**必须使用对方提问所用的语言作答 —— 对方说中文就用简体中文回答，对方说英文就用英文回答。严禁在中文提问时用英文作答。中英混用时以中文为主，专业术语 (如 React、Kubernetes、ROI) 保留英文原词，不要硬翻。
 如果出现了很奇怪的词汇，有可能是语音识别的问题，根据上下文和近似发音判断他的真正含义。`;
 
-// The transcript is replayed as a run of `user` messages with the model's own earlier answers left out,
-// so a long piece of text in there looks like something still waiting to be done. The screenshot line is
-// the one that suffers from this — it is a whole problem statement and it is the only user message with
-// no answer after it — and the model was answering *it* instead of the question that followed. Naming the
-// rule is what this is for; the labels themselves are applied when the prompt is built (see the three
-// SCREEN_*_PREFIX constants in pipeline.js).
-//
-// The rule has to name every current label, not just the spoken one. An image turn carries no speaker
-// tag — it is a request addressed to the assistant, not speech — so once this rule said the last
-// [面试官:] message was the only thing to answer, every screenshot was answered with the question that had
-// been asked out loud before it. The labels are a pair per kind: what is being asked now, and what has
-// been answered already, and both halves have to be named or the unnamed one falls back to the other.
+// 对话是以一串 `user` 消息回放的，模型自己的旧答案不在里面，于是一大段没有后续的正文看起来就像一件
+// 还没做完的事——截图那行正是这样（整道题，且后面没有任何回答）。这条规则就是给这些行命名的；标签本身
+// 在拼提示词时贴上（见 pipeline.js 的 SCREEN_* 常量）。
+// 规则必须点名每一种「当前」标签，不能只写说话的那一种：图片轮不带说话人标签（它是发给助手的一次请求，
+// 不是谁说的话），曾经只点名 [面试官:] 时，每次截图都被拿去答了上一条念出来的问题。两种标签成对出现
+// ——正在问的和已经答过的——少点一个，没被点名的那种就会退回成另一种。
 const CONTEXT_RULE = `**上下文约定：**历史里带 [面试官（已回答，仅参考）]/[面试者:] 标记的是过去的内容。**你现在要回答的是最后一条消息**：带 [面试官（当前问题，请作答）:] 标记的那句提问，或者带 [屏幕共享的题目（当前问题，请作答）] 标记的那张图；其余内容都只是背景，不要替它们补作答，也不要因为其中出现了题目就自动去解题或写代码。带 [屏幕共享的题目（已回答，仅参考）] 标记的是之前屏幕上出现过的题目，已经被处理过了，仅在当前问题确实与它相关时才参考。`;
 
-// One persona only: the app is an interview teleprompter and nothing else is maintained.
+// 只有这一套人设：本应用就是面试提词器，其他角色不再维护。
 const interviewPrompt = {
     intro: `你是一名实时面试助手，以屏显提词器的方式隐蔽地辅助用户。你的任务是为用户提供简洁、有力、可以直接照读的答案或要点，帮助他在求职面试中表现出色。请分析正在进行的面试对话，尤其是下文的「用户提供的背景资料」。`,
 
@@ -46,10 +39,8 @@ const interviewPrompt = {
 只给出可以直接照读的那段话，用 **Markdown 格式**。不要教练式点评、不要「好，我来回答……」、不要解释 —— 就是候选人能马上说出口的原话。保持**简短有力**。`,
 };
 
-// The second answer to the same question, shown beside the first. Same persona and same language rule,
-// but the opposite brief: the short one is a line to read aloud right now, this one is what the user
-// reads in the gap before the next question, to have the whole topic in hand. It may use the knowledge
-// directory, so both the framing and the closing instruction are written for it rather than reused.
+// 同一个问题的第二份回答，与精简回答并排显示：人设和语言规则相同，要求正好相反——精简的是马上要念出口
+// 的话，这份是两次提问之间用来把整道题读透的。它可能用知识库，所以开场与结尾都单独写，不跟精简那份共用。
 const detailPrompt = {
     intro: `你是一名实时面试助手。除了屏幕上那份可以立刻照读的精简回答之外，你还要为同一次提问额外准备一份**详细回答**，显示在侧边的独立面板里。用户会在面试官继续追问之前、或者两次提问之间的空档里读它，用它把这道题彻底答透、答准。
 
@@ -66,8 +57,7 @@ const detailPrompt = {
 2. 有依据地给出取舍。存在多种做法时，说明各自的代价与适用条件，再明确推荐一种并讲清为什么。
 3. 不要编造用户的经历、数字或项目细节。背景资料里没有的事实，就作为通用的技术或方法论述，不要安到用户头上。`,
 
-    // Only present when there is an index to go with it: a rule about a directory that does not exist
-    // would spend prompt space teaching the model about a mechanism it cannot use this session.
+    // 只在真有索引时才拼进去：教模型一个这一轮根本用不上的机制，纯属浪费提示词篇幅。
     knowledgeRule: `4. 你可以调用 load_knowledge 读取「知识库」索引里某个条目的正文。当且仅当某个条目的摘要与当前问题直接相关时才调用。光看摘要判断不了相关性就不要调用，也绝不为了凑内容而调用。`,
 
     outputInstructions: `**输出要求：**
@@ -108,17 +98,11 @@ function getSystemPrompt(customPrompt = '') {
     return assemblePrompt(interviewPrompt, customPrompt);
 }
 
-// A screenshot is answered by the detailed chain — which sends the image itself, not this line — but the
-// transcript still has to say what the picture asked. This is the whole prompt of the small concurrent
-// request that puts it into words; the answer to the screenshot is deliberately not replayed later, so
-// this line is the only trace of the image in the context.
-//
-// What it must not produce is a copy of the page. A whole problem statement — constraints, limits, I/O
-// format, sample explanations — is a long imperative block, and the next unrelated question was being
-// answered by solving it instead. What is kept is what a follow-up ("do that one") would actually need:
-// the ask and the examples; what is dropped is everything that only exists to serve the judge.
-// It carries its own language rule rather than LANGUAGE_RULE, which is about the language the other
-// party is *speaking* — for a picture, the language that matters is the one written in the picture.
+// 拍题走详细链作答（那条请求带的是图本身），但对话记录里得有一句话说明图里问了什么——就是这个并发小
+// 请求的全部提示词。拍题的答案刻意不回放，所以这行摘要就是那张图在上下文里留下的唯一痕迹。
+// 它绝不能输出题干以外的整页内容：数据范围、限制、I/O 格式、样例解释都是一长串祈使句，会让模型放着
+// 下一个问题不管、转去解这道题。只留「题目要你做什么」和关键的示例输入输出，其余服务于判题系统的都丢掉。
+// 它自带语言规则而不用 LANGUAGE_RULE：后者管的是对方**说**的语言，图片要看的是图里**写**的语言。
 function getScreenshotSummaryPrompt() {
     return `你是一名面试助手。用户会发给你一张面试屏幕截图，图里通常是一道题目。请把图里的题目转成一段**简短**的文字，只保留与作答有关的部分。
 

@@ -1,11 +1,8 @@
-// Streaming ASR over Aliyun Bailian's DashScope websocket API. Transport only: it knows nothing
-// about turns or the LLM, it just turns a live PCM stream into sentence events.
+// 阿里云百炼 DashScope 的流式 ASR（websocket）。只管传输：不认识轮次也不认识模型，只把实时 PCM 流
+// 变成一句一句的话。线路格式是用 scripts/asr-smoke.js 打过真端点的，这里的字段名就是那次探测打印出来的。
 //
-// The wire format was verified with scripts/asr-smoke.js against a live endpoint. Field names
-// here are the ones that probe printed.
-//
-// `maxSentenceSilenceMs` is the caller's, not a preference read here: there is one socket per audio
-// source and the two sources want different values, so the pipeline owns the policy.
+// `maxSentenceSilenceMs` 由调用方给，不在这里读配置：每路音频各一个 socket，两路想要的静音阈值不同，
+// 策略归 pipeline 管。
 
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
@@ -16,7 +13,7 @@ const DEFAULT_MODEL = 'paraformer-realtime-v2';
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
-const BUFFER_LIMIT_BYTES = 64000; // 2 s of 16 kHz mono s16
+const BUFFER_LIMIT_BYTES = 64000; // 16kHz 单声道 s16，约 2 秒
 const PING_INTERVAL_MS = 30000;
 const PONG_TIMEOUT_MS = 10000;
 const FINISH_GRACE_MS = 1000;
@@ -64,7 +61,7 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
         try {
             dying.terminate();
         } catch {
-            /* already gone */
+            /* 已经断了 */
         }
     }
 
@@ -267,7 +264,7 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
             return;
         }
 
-        // Not handshaken yet (or mid-reconnect): hold the frames and replay them once ready.
+        // 还没握手完（或正在重连）：先把帧存住，ready 之后补发。
         audioQueue.push(Buffer.from(pcm16k));
         queuedBytes += pcm16k.length;
         while (queuedBytes > BUFFER_LIMIT_BYTES && audioQueue.length > 1) {

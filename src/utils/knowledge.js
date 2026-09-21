@@ -1,14 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
-// A knowledge directory is a plain folder of `.md` files, one entry each, laid out the way a skill
-// directory is: a small frontmatter block carries the summary, the rest of the file is the content.
-// Only the summaries ever reach the model; the content is pulled in on demand by load_knowledge, so a
-// large directory costs a list of one-liners in the prompt rather than its own weight in tokens.
+// 知识库就是一个放 `.md` 的普通文件夹，一个文件一个条目：开头一小段 frontmatter 是摘要，剩下的是正文。
+// 只有摘要进提示词，正文靠 load_knowledge 按需拉取——所以再大的知识库也只是提示词里一串一行话，
+// 而不是它自身的体量。
 const KNOWLEDGE_TOOL_NAME = 'load_knowledge';
 
-// Both the summary and the content are bounded: the directory belongs to the user and nothing stops it
-// from holding a hundred files or a book. The summary caps are what keep the system prompt predictable.
+// 摘要和正文都有上限：目录是用户自己的，塞进一百个文件或一整本书都没人拦着。摘要的上限决定了系统提示词
+// 的长度可控。
 const MAX_ENTRIES = 50;
 const MAX_SUMMARY_CHARS = 4000;
 const MAX_DESCRIPTION_CHARS = 160;
@@ -43,8 +42,7 @@ function unquote(value) {
     return value;
 }
 
-// Markdown markers are stripped so a description can be pasted straight into the prompt index, where a
-// stray `**` around a term would read as noise rather than emphasis.
+// 去掉 Markdown 标记，好让描述直接拼进提示词索引——索引里的 `**` 只会读成噪音，不表示强调。
 function toPlainLine(text) {
     return text
         .replace(/^#+\s*/, '')
@@ -55,9 +53,8 @@ function toPlainLine(text) {
         .trim();
 }
 
-// A deliberately small subset of YAML: scalars and `- ` lists, no nesting and no block scalars. This
-// is a header block a person types by hand, and a real parser would only buy support for shapes nobody
-// writes here — while failing closed on the ones that do appear would lose the entry entirely.
+// 故意只支持 YAML 的一小撮：标量和 `- ` 列表，没有嵌套、没有块标量。这种头部是人手打的，上真解析器只会
+// 换来没人会写的写法支持，而真出现不支持的写法时又会整条丢弃。
 function parseFrontmatter(raw) {
     const text = String(raw).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
     const match = /^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?:\n|$)/.exec(text);
@@ -85,8 +82,8 @@ function parseFrontmatter(raw) {
         const key = line.slice(0, colon).trim().toLowerCase();
         if (!key) continue;
 
-        // A block scalar keeps its marker: `|` and `>` are read as the literal characters, which is
-        // honest about not supporting them, and the body fallback below is what actually covers it.
+        // 块标量原样保留：`|` 和 `>` 就当普通字符读，等于明说支持不了它；真正兜住这种情况的是后面的
+        // extractFallbacks。
         meta[key] = unquote(line.slice(colon + 1).trim());
         lastKey = key;
     }
@@ -94,8 +91,7 @@ function parseFrontmatter(raw) {
     return { meta, body: text.slice(match[0].length), hasFrontmatter: true };
 }
 
-// What a file with no usable frontmatter still has: a first heading to name it with and a first line of
-// prose to describe it.
+// 没有可用 frontmatter 的文件还能凑出什么：第一个标题当名字，第一行正文当描述。
 function extractFallbacks(body) {
     let heading = '';
     let paragraph = '';
@@ -119,9 +115,8 @@ function extractFallbacks(body) {
     return { heading, paragraph };
 }
 
-// The only place a file is opened, which is what makes the checks here load-bearing. `name` comes from
-// a readdir of the directory itself, so it cannot contain a separator, but a symlink inside the
-// directory can still point out of it — hence the realpath containment test rather than a join.
+// 全模块唯一真正打开文件的地方，所以这里的检查是承重的。`name` 来自目录自身的 readdir，不含路径分隔符，
+// 但目录里的软链接仍可能指向外面——所以要用 realpath 判断包含关系，而不是拼一个路径就完事。
 function readEntry(dir, name) {
     const resolvedDir = path.resolve(dir);
     const resolvedFile = path.resolve(resolvedDir, name);
@@ -145,7 +140,7 @@ function readEntry(dir, name) {
         const { meta, body } = parseFrontmatter(raw);
         const { heading, paragraph } = extractFallbacks(body);
 
-        // The filename is the id, so the model can only ever name something that already exists here.
+        // 文件名就是 id，所以模型只能点到确实存在的条目。
         const id = name.slice(0, -3);
         const entryName = toPlainLine(meta.name || meta.title || heading || id) || id;
         const description = (meta.description || paragraph || '').slice(0, MAX_DESCRIPTION_CHARS);
@@ -157,8 +152,7 @@ function readEntry(dir, name) {
     }
 }
 
-// Never throws: an unset, missing or unreadable directory is a state the settings page has to be able to
-// render, and a session that starts against one must still be able to answer without knowledge.
+// 永不抛异常：目录没设、不存在或读不了，都是设置页必须能正常渲染的状态，会话在这种情况下也得能照常作答。
 function listKnowledgeEntries(dir) {
     if (!dir) return [];
 
@@ -182,8 +176,7 @@ function listKnowledgeEntries(dir) {
     return entries;
 }
 
-// Runs against the entries list rather than the filesystem, so the id is matched against names that were
-// just enumerated — there is no path to build and nothing to traverse out of.
+// 在已列出的条目数组里查，不再碰文件系统：id 是跟刚枚举出来的名字比对的，没有路径可拼，也没有目录能穿出去。
 function readKnowledgeById(dir, id) {
     if (!dir) return { ok: false, error: '未配置知识目录。' };
 
@@ -194,8 +187,7 @@ function readKnowledgeById(dir, id) {
     const entry = entries.find(candidate => candidate.id === wanted);
 
     if (!entry) {
-        // Only one tool call is allowed per answer, so the model gets no chance to correct itself: the
-        // error carries the ids that do exist, which is the only way it can still use the tool.
+        // 每个回答只准调一次工具，模型没有机会自我纠正：错误里必须带上真实存在的 id，它才可能用上这个工具。
         const available = entries.slice(0, MAX_ENTRIES).map(candidate => candidate.id);
         return {
             ok: false,
@@ -210,8 +202,7 @@ function readKnowledgeById(dir, id) {
     return { ok: true, id: entry.id, name: entry.name, description: entry.description, body };
 }
 
-// The index that goes into the detail prompt. Empty when there is nothing to load, which is also what
-// tells the caller not to attach the tool at all.
+// 拼进详细提示词的索引。没有可读条目时返回空串——调用方也正是靠这个空串决定连工具都不声明。
 function formatKnowledgeSummary(entries) {
     if (!entries || !entries.length) return '';
 
@@ -238,8 +229,8 @@ function formatKnowledgeSummary(entries) {
     return ['知识库（下面是条目索引；正文需要调用 load_knowledge 获取，仅当与当前问题直接相关时才调用）：', ...lines].join('\n') + tail;
 }
 
-// Returns a string in every case, including every failure — it is a tool result, not an exception path,
-// and a throw here would take down the whole answer rather than just this one lookup.
+// 任何情况都返回字符串，失败也一样：它是工具结果而不是异常路径，在这里抛出去会把整个回答搞没，而不只是
+// 这一次查询失败。
 function executeKnowledgeTool(name, argsJson, dir) {
     try {
         if (name !== KNOWLEDGE_TOOL_NAME) {

@@ -26,35 +26,28 @@ let currentDetailSystemPrompt = null;
 // 追问轮用的提示词：就是上面那份去掉知识库规则与索引——到那时模型已经用过了。同样在会话开始时快照。
 let currentDetailFollowUpSystemPrompt = null;
 let detailModeEnabled = false;
-// Whether each chain lets the model think first. The model is a reasoning model whose scratchpad this
-// app never shows, so thinking is dead wait in front of the first visible token — worth it in the
-// detail pane, which is read in the gap between questions, and not in the brief line that is read aloud.
+// 两条链各自是否让模型先思考。本应用从不显示推理过程，思考就是第一个可见 token 前的纯等待：详细面板读的
+// 是两次提问之间的空档，值得；马上要照读的精简那句不值得。
 let briefThinkingEnabled = false;
 let detailThinkingEnabled = true;
-// The screenshot's own switch. It used to be hard-coded on, whatever the two above said: the chain always
-// asked for the scratchpad, and the reasoning it spends before the first visible token runs inside the
-// client's own request timeout — on the whole-problem-statement screenshots this chain exists for, that
-// budget could go entirely into the scratchpad and the answer arrived as nothing at all.
+// 截图自己的开关。它一度被硬编码成开：推理耗时算在客户端 120s 总超时里，而这条链专治的一整道题截图能把
+// 预算全烧在推理上，最后一个字都回不来。
 let screenshotThinkingEnabled = false;
-// The entries the session started with, used both for the prompt index and to decide whether the tool is
-// worth declaring at all. Only the *index* is a snapshot — the executor reads the directory live, so a
-// stale entry here can never turn into a wrong fact, only into a failed lookup.
+// 会话开始时那份条目，既用来生成提示词里的索引，也用来决定值不值得声明工具。只有**索引**是快照——执行器
+// 是现读目录的，所以这里过期最坏只是查不到，不会变成错误的事实。
 let detailKnowledgeEntries = [];
 let isLocalActive = false;
 let transcriptionLanguage = null;
 
-// Two captures, each with its own recognizer: the speaker path transcribes the interviewer and owns
-// the turns that get answered, the microphone path transcribes the candidate, whose words are only
-// ever context. Same streaming algorithm on both, one socket each.
+// 两路采集各有自己的识别器：扬声器那路转录面试官，并且只有它会产生要作答的轮次；麦克风那路转录候选人，
+// 说的话永远只是背景。两边算法相同，各一个 socket。
 const INTERVIEWER = 'system';
 const CANDIDATE = 'mic';
 
-// Text for the turn currently being assembled from streaming sentences. The server rewrites an
-// in-flight sentence as it hears more, so the uncommitted tail is held separately and only folded
-// in when it is committed or rescued by the idle flush.
+// 正在从流式句子拼装的那一轮文本。服务端会随听到的更多而改写未定稿的句子，所以未提交的尾巴单独存，只在
+// 定稿或被空闲兜底救回时并进去。
 //
-// Per stream, not shared: two voices writing one buffer would splice into a single turn. The
-// resampler's leftover half-sample belongs to exactly one stream for the same reason.
+// 按流独立而非共用：两路写同一个缓冲会把两句话拼成一整轮；重采样剩下的半个采样点同理只属于一路。
 function createStreamState() {
     return {
         asr: null,
@@ -62,12 +55,10 @@ function createStreamState() {
         interimText: '',
         silenceMs: 0,
         resampleRemainder: Buffer.alloc(0),
-        // How long the server waits for silence before it ends a sentence on this stream. Set per
-        // source at session start and handed to that stream's recognizer, so the server's own bound
-        // and the client's rescue below can never disagree about it.
+        // 服务端在这路音频上等多久静音才结束一句。会话开始时按声源各自设定并交给该路的识别器，这样服务端
+        // 自己的界限和下面的客户端兜底不会对不上。
         sentenceSilenceMs: 0,
-        // Which candidate bubble the sentence in flight belongs to, 0 while there is none. Meaningful
-        // on the candidate stream only; see candidateBlockId.
+        // 在途句子属于哪个候选人气泡，没有时为 0。只在候选人那路有意义，见 candidateBlockId。
         blockId: 0,
     };
 }
@@ -81,48 +72,36 @@ function speakerFor(source) {
     return source === CANDIDATE ? 'user' : 'interviewer';
 }
 
-// What the candidate has said since the last dispatched turn, in the order it was recognized. Fragments
-// accumulate here and are committed as a single context entry when the next turn is created: one answer
-// must stay one entry, which is what a per-fragment cap destroyed — the server cuts an answer into pieces
-// short enough that a handful of them covered only the last few seconds of speech.
+// 上一次派发轮次之后候选人说过的话，按识别顺序。碎片在这里累积，下一个轮次创建时整块提交为一条背景记录：
+// 一个回答必须保持是一条记录——服务端会把一个回答切成很多片段，逐片段记下来最后只剩最近几秒。
 let candidateSpeech = [];
 
-// The block candidateSpeech is currently accumulating into, and the only thing that identifies it to
-// the renderer. The renderer cannot key the candidate's bubble on "the last row" the way it does for
-// the interviewer: a question recognized while the candidate's sentence is still being finalized is
-// appended below the bubble, and the final then has to find that same bubble again to rewrite it. A
-// question ends the block, so the next thing the candidate says opens a new bubble.
+// candidateSpeech 正在累积的那个块，也是它在渲染端唯一的身份。渲染端没法像面试官那样用「最后一行」来认
+// 候选人气泡：候选人句子还没定稿时识别出的一句提问会插在气泡下面，而定稿时还要找回同一个气泡改写。一句提
+// 问就结束这个块，所以候选人接下来说的话会开一个新气泡。
 let candidateBlockId = 1;
 
-// Every turn is dispatched the moment its question is recognized, even if earlier answers are
-// still streaming: waiting for the previous answer would make the new one arrive too late to be
-// useful. Turns therefore run concurrently and finish out of order, so the log below is the single
-// source of truth for both the prompt context and the recorded history order. How much of it the
-// model is shown is the "Context Turns" setting, snapshotted at session start like the prompts.
+// 每个轮次在提问被识别的瞬间就派发，哪怕前面的回答还在流：等上一个回答落地会让新回答晚到没用。于是轮次
+// 并发运行、乱序完成，下面的日志就是提示词上下文与历史顺序唯一的真相来源。给模型看多少由「上下文轮数」
+// 设置决定，和提示词一样在会话开始时快照。
 const DEFAULT_CHAT_CONTEXT_TURNS = 15;
 let chatContextTurns = DEFAULT_CHAT_CONTEXT_TURNS;
-// Tokens arrive one IPC message at a time and the renderer re-parses the whole markdown body per
-// message, so a per-turn window keeps a burst of tokens to a handful of renders.
+// token 一次一个 IPC 消息到达，而渲染端每收一条都要重新解析整段 markdown，所以按轮限流把一阵 token 压成
+// 几次重绘。
 const STREAM_SEND_INTERVAL_MS = 40;
 
-// A screenshot is a question the interviewer asked on screen, so it enters the context under a label of
-// its own: the model reads the transcript as a run of user messages and cannot tell an image from a
-// spoken question otherwise. The text itself is the summary request's answer, and it is the only trace
-// of the picture any later prompt can see — the answer to it is shown once and never replayed, and the
-// base64 never enters the context at all.
+// 截图是面试官写在屏幕上的一道题，所以它带着自己的标签进上下文：模型看到的是一串 user 消息，否则分不清
+// 一张图和一个口头提问。文本本身是摘要请求的结果，也是这张图在后续任何提示词里唯一的痕迹——它的回答只
+// 显示一次、从不回放，base64 根本不进上下文。
 //
-// The label it is written under and the label it is *replayed* under are deliberately different. In the
-// transcript the short one is what the row shows; in the prompt the long one is what keeps a full problem
-// statement from reading as an outstanding task. Every other turn carries a speaker tag and sits before
-// an answer the model wrote, but an answer is never replayed: a screenshot turn is the one user message
-// that arrives with nothing after it, so untagged it reads as "the user has just asked this" and the
-// model answers *it* instead of the question that was actually asked next.
+// 写入用的标签和**回放**用的标签故意不同：对话记录里用短的那个（行上显示的就是它），提示词里用长的那个，
+// 免得一整道题干被读成一件待办的事。其他轮次都带说话人标签、且后面跟着模型写过的回答；而回答从不回放，
+// 截图轮就是唯一一条后面什么都没有的 user 消息，不带标签就会被读成「用户刚问了这个」，模型转而去答它，
+// 而不是真正接着问的那个问题。
 const SCREEN_PREFIX = '[屏幕截图]';
-// The label the turn being answered carries. Without it the current image is the one message in the
-// prompt with no label at all — it is a request addressed to the assistant rather than something anyone
-// said, so it never gets a speaker tag — and the context rule, which used to name the last [面试官:]
-// message as the only thing to answer, pointed past it at whatever had been asked out loud before. The
-// two labels are named together in CONTEXT_RULE, as are the interviewer's two.
+// 正在作答的那一轮带的标签。没有它就只剩当前这张图在提示词里毫无标签——它是发给助手的一个请求而不是谁
+// 说的话，本来就拿不到说话人标签——上下文规则就会越过它，去答之前口头问过的那句。两个标签在 CONTEXT_RULE
+// 里一起被点名，面试官的两个也是。
 const SCREEN_CONTEXT_PREFIX = '[屏幕共享的题目（已回答，仅参考）]';
 const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
 const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
@@ -133,25 +112,21 @@ const DEFAULT_SYSTEM_PROMPT = '你是一名乐于助人的助手。';
 
 let turnLog = [];
 let turnSeq = 0;
-// Bumped whenever the session resets. A turn that outlives its session must not write into the
-// next one, and requests are never aborted.
+// 会话重置时自增。比会话活得久的轮次不许写进下一个会话，而请求从不中断。
 let sessionGeneration = 0;
 
-// What the model is shown is the part of turnLog after this seq. Clearing the context moves the
-// floor up to the current turnSeq, which empties the prompt without touching the log itself: the log
-// is still what pruneTurnLog, the pending count and persistTurn read, and persistTurn is what writes
-// the history file. Only the prompt starts over.
+// 给模型看的是 turnLog 里这个 seq 之后的部分。清空上下文把下限抬到当前 turnSeq，于是提示词空了而日志
+// 本身没动：pruneTurnLog、待处理计数和 persistTurn 读的仍然是日志，写历史文件的也是 persistTurn。只有
+// 提示词重来。
 let contextFloorSeq = 0;
 
-// The user's pause switch, and one more gate in the chain processLocalAudio applies. Set, it makes
-// the frame silence and drops the server's sentence events, so nothing said after the pause can
-// reach the transcript or a turn — while the sockets stay open and warm behind it.
+// 用户的暂停开关，也是 processLocalAudio 那串门槛里的又一道。置上后帧变成静音、服务端的句子事件被丢弃，
+// 所以暂停后说的话既进不了字幕也进不了轮次——而 socket 在后面照旧开着保温。
 let paused = false;
 
-// The detailed answers, tracked completely apart from turnLog. Every later feature reads one of these
-// two logs and they must not see each other's entries: a detail entry in turnLog would be replayed into
-// the chat context, counted by the status line as another pending answer, cropped early by pruneTurnLog,
-// and given a bubble of its own by the renderer. Kept only so the pane can page back through the session.
+// 详细回答，与 turnLog 完全分开记。后续每个功能只读其中一份日志，两边绝不能看到对方的记录：详细记录混进
+// turnLog 会被回放进对话上下文、被状态行算成又一个待处理回答、被 pruneTurnLog 提前截掉、被渲染端多开一
+// 个气泡。留着它只为让面板能往回翻看整场会话。
 let detailLog = [];
 let detailSeq = 0;
 const MAX_DETAIL_TURNS = 30;
@@ -160,28 +135,22 @@ function getKnowledgeDir() {
     return getPreferences().knowledgeDir || '';
 }
 
-// Turns are assembled from the server's sentence events; the client analyses no audio. A final
-// sentence ends the turn on the spot, so there is no client-side settle window — a window armed on
-// the last final expires while the speaker is still talking.
+// 轮次由服务端的句子事件拼成，客户端不分析音频。定稿的句子当场结束一轮，所以没有客户端静置窗——在最后一
+// 个定稿上开的窗会在说话人还在说时就过期。
 //
-// Every sentence event resets this countdown (see handleAsrSentence). If the socket stays quiet
-// this long with text still pending, no final sentence is coming and the turn is flushed anyway.
-// It is derived from the stream's own max_sentence_silence so it always outlasts it.
-const AUDIO_CHUNK_MS = 100; // must match AUDIO_CHUNK_DURATION in renderer.js
+// 每个句子事件都会重置这个倒计时（见 handleAsrSentence）。socket 静了这么久而文本还挂着，说明那一句定稿
+// 不会来了，这轮照样冲掉。它由该流自己的 max_sentence_silence 推出，所以一定比后者长。
+const AUDIO_CHUNK_MS = 100; // 必须与 renderer.js 的 AUDIO_CHUNK_DURATION 一致
 const IDLE_FLUSH_MARGIN_MS = 1000;
 
-// Speaker gate. The user does not wear headphones, so the interviewer's voice reaches the microphone
-// and the candidate column echoes it. While the loopback level is above micGateDb the microphone is
-// muted. The level must stay on one side of the threshold for micGateDwellMs before the gate flips,
-// so neither a single spike nor the gap between two words can chop the microphone on and off inside
-// a sentence. Both come from Settings; the values here are only the fallbacks before a session.
+// 说话人闸门。用户不戴耳机，面试官的声音会进麦克风，候选人的那一栏就会跟着复读。回环电平高于 micGateDb
+// 期间麦克风被静音。电平必须在阈值同侧保持 micGateDwellMs 才翻，这样单个尖峰或两个词之间的停顿都不会在
+// 一句话中间把麦克风切来切去。两个值都来自设置页，这里的数字只是会话开始前的兜底。
 //
-// The level gate has holes the level cannot see: the dwell has to elapse before it closes at the
-// start of a question, and it opens again on any pause longer than the dwell inside one. Both let the
-// microphone through while the interviewer is still talking, which lands the interviewer's own words
-// — or the tail of an interrupted answer — in the candidate column as a fragment. So the gate is also
-// held shut whenever the speaker's recognizer has text it has not finalized yet: an interim sentence
-// means the speaker is mid-utterance, whatever the level happens to be doing.
+// 电平闸门有它看不见的洞：提问开始时得等停顿攒够才关上，而话里的任何一段长停顿又会把它重新打开。这两处
+// 都会在面试官还在说话时放麦克风过去，把面试官自己的话（或被截断回答的尾巴）作为碎片落进候选人那一栏。
+// 所以只要扬声器那路的识别器还有没定稿的文本，闸门就一并关着：有在途句子就说明说话人正说到一半，不管电
+// 平怎样。
 let micGateDb = -45;
 let micGateDwellMs = 300;
 let micLevelGated = false;
@@ -189,8 +158,8 @@ let micGated = false;
 let micGateSideLoud = false;
 let micGateSideSinceMs = 0;
 
-// dBFS of a little-endian int16 chunk, using the same 20*log10(rms) convention as the Settings level
-// meter, so the threshold the user types in Settings means the same thing here.
+// 小端 int16 块的 dBFS，用与设置页电平表相同的 20*log10(rms) 口径，这样用户在设置里填的阈值在这里意思
+// 一样。
 function pcmRmsDb(buffer) {
     const samples = Math.floor(buffer.length / 2);
     if (samples === 0) return -Infinity;
@@ -226,7 +195,7 @@ function resample24kTo16k(inputBuffer, state) {
     return outputBuffer;
 }
 
-// The ASR endpoint wants a bare ISO-639-1 code, but preferences store BCP-47 locales.
+// ASR 端点要的是裸 ISO-639-1 代码，而偏好里存的是 BCP-47 地区码。
 function toAsrLanguage(locale) {
     if (!locale) {
         return null;
@@ -236,32 +205,25 @@ function toAsrLanguage(locale) {
     return primary === 'cmn' ? 'zh' : primary;
 }
 
-// ── Streaming turn assembly ──
-
-// The committed sentences plus whatever tail the server has not confirmed yet.
 function mergeTurnText(state) {
     if (state.turnText && state.interimText) return `${state.turnText} ${state.interimText}`;
     return state.turnText || state.interimText;
 }
 
-// What one stream's bubble shows right now. For the candidate that is the whole open block, not just
-// the utterance in flight: stumbling over a word then grows the one paragraph on screen instead of
-// opening a second bubble, and the text the block will be committed with is exactly what is shown.
+// 某一路的气泡此刻该显示什么。候选人显示的是整个未关闭的块，而不只是在途那一句：磕绊一下会让屏幕上那段
+// 继续变长，而不是另开一个气泡；这个块被提交时的文本也正好就是显示出来的这段。
 function bubbleText(source) {
     const text = mergeTurnText(streams[source]);
     return source === CANDIDATE ? candidateSpeech.join('') + text : text;
 }
 
-// Anything the candidate says this short is dropped rather than merged: a couple of characters is
-// what a leaked word through the gate, a cough or a stray "嗯" looks like after recognition, and a
-// one-word bubble is pure clutter. It never enters the block, so it reaches neither the screen nor
-// the prompt. Interviewer lines are exempt — a short question is still a question.
+// 候选人说的话短到这个程度就丢弃而不是并入：识别后，从闸门漏过去的词、一声咳嗽、一个走神的「嗯」都长得
+// 这样，而一个词的气泡纯属噪音。它从不进块，所以既不上屏也进不了提示词。面试官那路不受此限——再短的提
+// 问也是提问。
 const MIN_CANDIDATE_CHARS = 4;
 
-// The one funnel every bubble goes through, so the floor above is applied in exactly one place. An
-// open block is always long enough on its own, so only a short line with no block behind it is
-// suppressed — and it is suppressed on every update, not just the final one, or the provisional
-// update would leave a bubble behind that nothing ever replaces.
+// 所有气泡唯一的出口，所以上面那个下限只在一个地方生效。开着的块本身一定够长，所以只有背后没有块的短行
+// 才会被压掉——而且每次更新都要压，不只是定稿那次，否则中间态会留下一个再也无人替换的气泡。
 function sendBubble(channel, source) {
     const text = bubbleText(source);
     if (source === CANDIDATE && text.length < MIN_CANDIDATE_CHARS) return;
@@ -271,8 +233,8 @@ function sendBubble(channel, source) {
 }
 
 function handleAsrSentence(text, sentenceEnd, source) {
-    // A sentence the server finalized for audio it received before the pause is not one the user
-    // asked to keep. Dropped here rather than in flushTurn, so nothing is dispatched either.
+    // 服务端为暂停之前收到的音频定稿的句子，不是用户想留下的。在这里丢而不是在 flushTurn 里，顺带也就
+    // 不会派发任何轮次。
     if (!isLocalActive || paused || !text) return;
 
     const sentence = text.trim();
@@ -280,18 +242,15 @@ function handleAsrSentence(text, sentenceEnd, source) {
 
     const state = streams[source];
 
-    // Any event means the server is still hearing speech, so the idle flush must not fire. Interims
-    // keep arriving while a long question is spoken, which is what stops it being split in two.
+    // 有事件就说明服务端还听得见人声，空闲兜底不能触发。长提问期间中间态文本会持续到达，这正是它不被切成
+    // 两半的原因。
     state.silenceMs = 0;
 
-    // A sentence is pinned to the block that was current when it began, not the one current when it
-    // ends: a question can land in the middle of it, and the finalized text still belongs to the
-    // bubble its provisional text already opened. Later sentences of the same block pin the same id,
-    // because only a question moves the counter.
+    // 句子钉在它开始时的那个块上，而不是结束时当前的那个：提问可能落在句子中间，而定稿后的文本仍然属于它
+    // 的中间态文本已经开好的那个气泡。同一块里后面的句子钉的是同一个 id，因为只有提问会推进计数器。
     if (source === CANDIDATE && !state.turnText && !state.interimText) state.blockId = candidateBlockId;
 
     if (!sentenceEnd) {
-        // Provisional: it replaces the previous interim rather than appending to it.
         state.interimText = sentence;
         sendBubble('transcription-update', source);
         return;
@@ -306,9 +265,8 @@ function handleAsrSentence(text, sentenceEnd, source) {
     flushTurn(source);
 }
 
-// The gate flipped on, so the candidate is being cut off mid-sentence. Show what is there now, but
-// do not settle it: the server still holds the audio it already received and will send its own final
-// for this utterance, which rewrites this same open row and records the text exactly once.
+// 闸门刚关上，候选人正说到一半被切断。把现有的显示出来，但不定稿：服务端手里还有已经收到的音频，会为这
+// 句话自己发来定稿，那次会改写同一个开着的行，文本刚好只被记录一次。
 function interruptCandidate() {
     const text = bubbleText(CANDIDATE).trim();
     if (text.length < MIN_CANDIDATE_CHARS) return;
@@ -317,9 +275,8 @@ function interruptCandidate() {
     sendBubble('transcription-update', CANDIDATE);
 }
 
-// Called once per loopback chunk. `loud` is measured, not inferred: the level must hold on one side
-// of the threshold for the whole dwell before the level verdict moves, which is what keeps a sentence
-// from being chopped into fragments by jitter around the threshold.
+// 每个回环音频块调一次。`loud` 是量出来的而不是推出来的：电平必须在阈值同侧保持够整个 dwell 才改变判定，
+// 这样阈值附近的抖动才不会把一句话切成碎片。
 function tickMicGate(levelDb) {
     const loud = levelDb > micGateDb;
     const now = Date.now();
@@ -333,10 +290,9 @@ function tickMicGate(levelDb) {
     applyMicGate(levelDb);
 }
 
-// The gate itself, and the only place it moves. It is shut either because the level says the speaker
-// is loud, or because the speaker's recognizer is holding a sentence it has not finalized — the level
-// verdict alone lets the microphone through in the pauses inside a question, an unfinished sentence
-// does not. It reopens on the next chunk after both are false.
+// 闸门本体，也是它唯一会动的地方。关着的理由有两个：电平说扬声器正响，或者扬声器那路的识别器还握着没定
+// 稿的句子——只看电平会在提问内部的停顿里放麦克风过去，未定稿的句子不会。两者都为假之后的下一个音频块
+// 重新打开。
 function applyMicGate(levelDb) {
     const speakerPending = Boolean(streams[INTERVIEWER].turnText || streams[INTERVIEWER].interimText);
     const gated = micLevelGated || speakerPending;
@@ -354,7 +310,7 @@ function applyMicGate(levelDb) {
 function flushTurn(source) {
     const state = streams[source];
 
-    // An uncommitted tail is still better than losing the utterance entirely.
+    // 没定稿的尾巴也比整句丢掉强。
     const text = mergeTurnText(state).trim();
     state.turnText = '';
     state.interimText = '';
@@ -368,26 +324,23 @@ function flushTurn(source) {
             return;
         }
 
-        // Nothing is dispatched: what the candidate says is context for the next answer, not a
-        // question to answer. It joins the open block, which is not bounded here — the block is
-        // closed whole by the next turn (see commitCandidateSpeech).
+        // 什么都不派发：候选人说的话是下一个回答的背景，而不是要回答的问题。它并入开着的块，这里不给块
+        // 设上限——块由下一个轮次整体关闭（见 commitCandidateSpeech）。
         console.log('[Pipeline] Candidate speech:', text);
         candidateSpeech.push(text);
-        // Re-sent in full rather than as this fragment alone: the bubble is the block, so a shrinking
-        // update would visibly undo text the user has already read. The block is only ever built from
-        // the fragment pushed above, never from the bubble, so the floor cannot bite here.
+        // 整体重发而不是只发这段碎片：气泡就是这个块，只发片段会让用户已经读到的文字可见地缩回去。块只
+        // 由上面 push 的碎片构成，从不从气泡反向拼，所以那个长度下限在这里咬不到。
         sendBubble('transcription-final', source);
         return;
     }
 
     console.log('[Pipeline] Turn dispatched:', text);
-    // The question bubble is settled first, then the answer streams into its own.
     sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
     dispatchTurn(text);
 }
 
-// Settled turns are kept only as prompt context, so the tail can be dropped once it is longer than
-// anything buildChatMessages will read. Pending turns stay: they are still referenced by closures.
+// 已定稿的轮次只剩下提示词上下文的作用，所以长过 buildMessages 会读到的部分就可以丢掉。待处理的留着：
+// 闭包还在引用它们。
 function pruneTurnLog() {
     if (turnLog.length <= chatContextTurns * 3) return;
 
@@ -396,14 +349,13 @@ function pruneTurnLog() {
     turnLog = [...settled, ...pending].sort((a, b) => a.seq - b.seq);
 }
 
-// `speaker` picks the label buildChatMessages puts in front of the text. It defaults to the interviewer
-// because a typed question is replayed as one — the API takes only system/user/assistant roles and drops
-// the OpenAI-style `name` field, so who spoke has to be carried in the content itself.
+// `speaker` 决定 buildMessages 在文本前贴哪个标签。默认面试官，因为手动输入的问题也按面试官回放——API
+// 只认 system/user/assistant 三种角色、会丢掉 OpenAI 风格的 `name` 字段，所以谁说的必须写进正文里。
 function createTurn(requestContent, contextText, persistKind, speaker = 'interviewer') {
     const entry = {
         seq: ++turnSeq,
         generation: sessionGeneration,
-        // A screenshot turn sends a multimodal array; every later turn only needs its prompt text.
+        // 截图轮发的是多模态数组；之后每一轮只需要它的提示词文本。
         requestContent,
         contextText: contextText || (typeof requestContent === 'string' ? requestContent : ''),
         speaker,
@@ -420,14 +372,11 @@ function createTurn(requestContent, contextText, persistKind, speaker = 'intervi
     return entry;
 }
 
-// Closes the open block of candidate speech as one turn. It is committed on the way into the next turn
-// rather than read at request time, so it holds a fixed seq and position: the prompt of the turn that
-// interrupted the candidate sees it as finished history, and an answer still streaming alongside cannot
-// reorder it.
+// 把候选人开着的那个块整体关闭成一轮。它在进入下一个轮次时提交，而不是在请求时现读，所以位置和 seq 是固定
+// 的：打断候选人的那个轮次的提示词看到的是已完成的历史，同时还在流的别的回答也没法把它挪位。
 function commitCandidateSpeech() {
-    // The block is over even when there is nothing to commit: a sentence cut off by this question may
-    // still be in flight, and the bubble the candidate's next words belong to is a new one either way.
-    // The sentence in flight keeps the id it was pinned with, so its final still finds its own bubble.
+    // 即使没东西可提交，块也算结束了：被这句提问截断的句子可能还在路上，而候选人接下来的话无论如何都属
+    // 于新气泡。在途的句子保留它当时钉下的 id，所以它的定稿仍能找到自己的气泡。
     candidateBlockId += 1;
 
     if (!candidateSpeech.length) return;
@@ -435,40 +384,35 @@ function commitCandidateSpeech() {
     const text = candidateSpeech.join('');
     candidateSpeech = [];
 
-    // Settled the moment it exists: no request stands behind it and nothing will ever stream into it, so
-    // it must not count as pending or the status line would claim an answer is on the way.
+    // 它一产生就是已定稿的：背后没有请求，也永远不会有东西流进来，所以不能算待处理，否则状态行会一直声称
+    // 有回答在路上。
     const entry = createTurn(text, text, null, 'candidate');
     entry.status = 'done';
 
-    // Written out for the History page only. Unlike a question this turn is never answered, so nothing
-    // else about it persists: without this the recorded session cannot reproduce the candidate's half of
-    // the conversation, which is half of what the live transcript showed.
+    // 只为了历史页而写。与提问不同，这一轮永远得不到回答，所以它没有别的持久化：没有它，存下来的会话就
+    // 还原不出候选人这半边对话，而那是实时字幕显示的一半内容。
     saveCandidateSpeech(text, entry.seq);
 }
 
-// Who said a line, since every line is a `user` message and the model cannot tell the two speakers
-// apart otherwise. Bracketed and on its own line prefix so it reads as a label, not as content.
+// 谁说的这句话——每一行都是 `user` 消息，不标就分不清两个说话人。加方括号并放在行首，读起来才是标签而
+// 不是正文。
 //
-// The interviewer's words carry two labels, because only one of them is still waiting for an answer:
-// the turn being requested now, and everything asked before it. Naming both is the same guard as the
-// screen labels below and exists for the same reason — a question that has already been answered reads
-// as an outstanding task when nothing in the prompt says otherwise, and the model answers it again.
-// The candidate's words never take the current label: nothing he says is a question for this assistant,
-// it is what he has already said, so they stay context whatever their position.
+// 面试官的话带两种标签，因为只有其中一句还在等回答：正在请求的这一轮，和之前问过的全部。两个都点名，与
+// 下面截图那两个标签是同一个守卫，理由也一样——已经答过的问题在提示词里没有任何说明时会被读成一件待办
+// 的事，模型于是再答一遍。候选人的话从不带「当前」标签：他说的话没有一句是给这个助手的提问，都是他已经
+// 说过的内容，所以无论排在哪里都是背景。
 const SPEAKER_TAG = { interviewer: '[面试官（已回答，仅参考）:]', candidate: '[面试者:]' };
 const CURRENT_QUESTION_TAG = '[面试官（当前问题，请作答）:]';
 
-// History replays a turn as text — a screenshot's prompt text stands in for its image, which is what
-// createTurn already keeps in contextText — and only the turn being requested keeps everything it was
-// created with. Screenshot turns are requests addressed to the assistant rather than speech, so they
-// carry no speaker label: the ones being replayed
-// SCREEN_CONTEXT_PREFIX, and CONTEXT_RULE names both.
+// 历史把一轮还原成文本——截图轮的提示词文本代替它的图片，createTurn 本来就把这份存在 contextText 里——
+// 只有正在请求的那一轮保留创建它的全部内容。截图轮是发给助手的请求而不是谁说的话，所以不带说话人标签：
+// 回放的那些用 SCREEN_CONTEXT_PREFIX，两个标签在 CONTEXT_RULE 里一起点名。
 function userContent(entry, isCurrent = false) {
     const content = isCurrent ? entry.requestContent : entry.contextText || entry.requestContent;
 
     if (entry.persistKind === 'screen') {
-        // The turn being answered carries the image itself, so the label goes on the text part beside it
-        // rather than replacing it: the picture is what the question is, and the label is what says so.
+        // 正在作答的那一轮带的是图本身，所以标签加在它旁边的文本段上而不是替代它：图才是问题，标签负责
+        // 说明这一点。
         if (isCurrent) {
             let tagged = false;
             return content.map(part => {
@@ -477,24 +421,21 @@ function userContent(entry, isCurrent = false) {
                 return { ...part, text: `${part.text}` };
             });
         }
-        // The ones being replayed carry the transcription instead of the image, and are relabelled as a
-        // past record.
+        // 回放的轮次带的是转录文本而不是图，并改标成一条历史记录。
         if (typeof content !== 'string' || !content.startsWith(SCREEN_PREFIX)) return content;
         return `${SCREEN_CONTEXT_PREFIX} ${content.slice(SCREEN_PREFIX.length).trim()}`;
     }
-    // Only the turn being requested can be a question to answer now: every other entry in the log is
-    // either an earlier question or something the candidate said, and both are context by then.
+    // 只有正在请求的这一轮可能是此刻要回答的问题：日志里其他每一条要么是更早的提问，要么是候选人说过
+    // 的话，到这时都只是背景。
     const tag = isCurrent && entry.speaker === 'interviewer' ? CURRENT_QUESTION_TAG : SPEAKER_TAG[entry.speaker];
     return `${tag} ${content}`;
 }
 
-// The user side of the transcript only: the interviewer's questions and the candidate's own words, in
-// order. Past answers are deliberately left out. The model can already see what it was asked, and
-// replaying its own previous answers pulled every later one toward the phrasing of the last — most
-// visibly on a follow-up, which came back as a rewording of the answer above it.
+// 只拼对话里用户的那一侧：面试官的提问和候选人自己的话，按顺序。过去的回答故意不放进来。模型已经看得见
+// 自己被问过什么，而回放它自己以前的回答会把后面每一个都往上一句的措辞上带——追问时最明显，回来的成了
+// 上一个回答的改写。
 //
-// The result is a run of consecutive `user` messages, which the API accepts; the last one is always
-// the question being answered now.
+// 结果是一串连续的 `user` 消息，API 接受这种形式；最后一条永远是此刻正在作答的问题。
 function buildUserSideHistory(excludeEntry) {
     return turnLog
         .filter(entry => entry !== excludeEntry && entry.seq > contextFloorSeq)
@@ -512,8 +453,8 @@ function buildMessages(systemPrompt, currentEntry) {
     ];
 }
 
-// The id the model asked for, or '' if there is nothing usable. Kept separate from executeKnowledgeTool
-// because the success path below has to know *which* entry was read in order to name it in the pane.
+// 模型要的 id，没有可用的就返回 ''。与 executeKnowledgeTool 分开是因为下面成功那条路必须知道读的是**哪
+// 一条**，才能在面板上点名。
 function parseKnowledgeId(argsJson) {
     try {
         const id = JSON.parse(argsJson || '{}')?.id;
@@ -527,11 +468,9 @@ function pendingTurnCount() {
     return turnLog.filter(entry => entry.status === 'pending').length;
 }
 
-// A single shared status line, so it has to reflect every turn still running or the first one to
-// finish would claim the session is idle while others are still streaming.
+// 状态行只有一条，所以它必须反映所有还在跑的轮次，否则最先结束的那个会在别人还在流的时候就宣布会话空闲。
 function updateStreamingStatus() {
-    // The pause owns the status line while it is on: an answer still streaming behind it must not
-    // rewrite it back to Listening.
+    // 暂停期间状态行归暂停所有：后面还在流的回答不许把它改回 Listening。
     if (paused) {
         sendToRenderer('update-status', 'Paused');
         return;
@@ -552,10 +491,9 @@ function persistTurn(entry) {
 }
 
 async function runTurn(entry) {
-    // Snapshot synchronously: turns dispatched while this one streams must not mutate its prompt.
+    // 同步快照：这一轮流式期间派发的其他轮次不能改动它的提示词。
     const messages = buildMessages(currentSystemPrompt, entry);
-    // Roles only, never the text: the transcript is already reconstructible from the ASR events in the
-    // same log, and this is the one line that says what actually went to the model.
+    // 只记角色不记文本：字幕本来就能从同一份日志里的 ASR 事件重建，而这行说明的正是实际发给模型的东西。
     logTransportEvent('chat.request', { turnId: entry.seq, roles: messages.map(message => message.role) });
 
     try {
@@ -583,7 +521,7 @@ async function runTurn(entry) {
         entry.status = 'done';
         if (entry.generation !== sessionGeneration) return;
 
-        // The last tokens may have been swallowed by the throttle window.
+        // 最后几个 token 可能被限流窗口吞掉了。
         if (fullText !== entry.lastSentText) {
             sendToRenderer('update-response', { turnId: entry.seq, text: fullText });
         }
@@ -597,7 +535,7 @@ async function runTurn(entry) {
         console.error('[Pipeline] error:', error);
         if (entry.generation !== sessionGeneration) return;
 
-        // A request that failed before its first token has no bubble to report into.
+        // 在第一个 token 之前就失败的请求没有气泡可以报告。
         if (!entry.lastSentText) {
             sendToRenderer('new-response', { turnId: entry.seq, text: `Error: ${error.message}` });
         }
@@ -609,15 +547,12 @@ async function runTurn(entry) {
     updateStreamingStatus();
 }
 
-// An answer that streams into the side pane instead of a bubble, and nothing about it is visible to the
-// short chain: it reports only its own completion, so the status line keeps claiming the one response it
-// always did. Both answers that live in the pane go through here — the second one a question earns, and
-// the only one a screenshot gets — so a change to the streaming, the throttling, the knowledge tooling
-// or the persistence reaches both.
+// 流进侧面板而不是气泡的那个回答，精简链完全看不到它：它只报告自己完成，所以状态行仍旧只声称那一个回答。
+// 面板里的两种回答都走这里——提问得到的第二个回答，以及截图唯一得到的那个——所以流式、限流、知识库工具
+// 和落盘上的改动同时作用于两者。
 //
-// Deliberately not an async function: the prompt has to be built before the caller returns, exactly as
-// in runTurn, so that two turns dispatched back to back both see a transcript that does not yet contain
-// the other's answer. Calling an async function would do the same, but nothing here can be awaited.
+// 故意不是 async 函数：提示词必须在调用方返回前建好，与 runTurn 一样，这样背靠背派发的两个轮次看到的都是
+// 还不包含对方回答的字幕。写成 async 也一样，但这里没有任何东西可以 await。
 function startDetailStream(turnEntry, { question, thinking }) {
     const entry = {
         detailId: ++detailSeq,
@@ -669,11 +604,11 @@ function startDetailStream(turnEntry, { question, thinking }) {
                     sendToRenderer('update-detail-response', { detailId: entry.detailId, text: partial });
                 },
                 {
-                    // No directory means no tool is declared at all, so the request is the plain one it
-                    // has always been — an endpoint that does not support tools cannot even notice.
+                    // 没有目录就完全不声明工具，这个请求与从前那个普通请求一模一样——不支持工具的服务端
+                    // 根本察觉不到。
                     tools: hasKnowledge ? [KNOWLEDGE_TOOL_SPEC] : null,
                     maxToolRounds: hasKnowledge ? 1 : 0,
-                    // Only ever needed alongside the tool: without a directory there is no second round.
+                    // 只与工具配套使用：没有目录就没有第二轮。
                     followUpSystem: hasKnowledge ? currentDetailFollowUpSystemPrompt : null,
                     thinking,
                     executeTool: (name, argsJson) => {
@@ -682,9 +617,9 @@ function startDetailStream(turnEntry, { question, thinking }) {
                         if (name === KNOWLEDGE_TOOL_NAME) {
                             const requested = parseKnowledgeId(argsJson);
                             if (requested) {
-                                // Read here rather than through executeKnowledgeTool so that only a lookup
-                                // that actually resolved is named in the pane as knowledge the answer rests
-                                // on; the failures fall through to the same error text a bad call gets.
+                                // 在这里直接读而不是走 executeKnowledgeTool，是为了只有真正查到的条目才会
+                                // 在面板里被标成这条回答所依据的知识；失败的情况走的是和非法调用同样的
+                                // 错误文本。
                                 const result = readKnowledgeById(dir, requested);
                                 if (!result.ok) return result.error;
 
@@ -703,15 +638,14 @@ function startDetailStream(turnEntry, { question, thinking }) {
 
             entry.assistant = text.trim();
             entry.status = 'done';
-            // The session may have been restarted, or replaced by another one, while this streamed. It
-            // still has to finish quietly: sendToRenderer targets the first window whatever session it is
-            // showing, so an unguarded completion would land in the next session's pane.
+            // 这段流式期间会话可能被重启或被另一个会话取代。它仍然必须安静地结束：sendToRenderer 总是发
+            // 给第一个窗口，不管那窗口在显示哪个会话，所以没有守卫的完成事件会落进下一个会话的面板。
             if (entry.generation !== sessionGeneration) return;
 
             logTransportEvent('chat.completed', { turnId: entry.turnSeq, detail: true, rounds, finishReason });
             console.log('[Pipeline] detail response completed:', entry.turnSeq);
 
-            // The last tokens may have been swallowed by the throttle window.
+            // 最后几个 token 可能被限流窗口吞掉了。
             if (text !== entry.lastSentText) {
                 sendToRenderer('update-detail-response', { detailId: entry.detailId, text });
             }
@@ -723,8 +657,8 @@ function startDetailStream(turnEntry, { question, thinking }) {
                 ok: true,
                 error: '',
                 usedKnowledge: entry.usedKnowledge,
-                // A long answer is far likelier to reach the token cap than a short one, and the pane has
-                // to be able to say so: silently cut-off text is worse than text that admits it was cut.
+                // 长回答比短回答更容易撞上 token 上限，而面板必须说得出来：悄悄被截断的文本比承认自己
+                // 被截断的文本更糟。
                 truncated: finishReason === 'length',
             });
 
@@ -736,8 +670,8 @@ function startDetailStream(turnEntry, { question, thinking }) {
             console.error('[Pipeline] detail error:', error);
             if (entry.generation !== sessionGeneration) return;
 
-            // Carries the question as well: a request that failed before its first token never opened a
-            // row in the pane, so the completion is what brings the failure into view.
+            // 也带上问题：在第一个 token 前就失败的请求从没在面板里开出过一行，所以这个完成事件才是把失
+            // 败带进视野的东西。
             sendToRenderer('detail-response-complete', {
                 detailId: entry.detailId,
                 turnSeq: entry.turnSeq,
@@ -753,9 +687,8 @@ function startDetailStream(turnEntry, { question, thinking }) {
     return entry.detailId;
 }
 
-// The ordinary second answer: the same question the short chain just answered, expanded in the pane.
-// A screenshot never comes through here — its answer is the only one that turn gets, so it is started
-// below by startScreenshotAnswer instead of being paired with a short answer it does not have.
+// 常规的第二个回答：精简链刚答过的同一个问题，在面板里展开。截图从不走这里——它的回答是那一轮唯一的
+// 回答，所以由下面的 startScreenshotAnswer 启动，而不是硬配一个它并不存在的精简回答。
 function runDetailTurn(shortEntry) {
     if (!detailModeEnabled) return;
 
@@ -799,9 +732,8 @@ async function runScreenshotSummary(entry, base64Data) {
 
     let line = SCREEN_FAILED_LINE;
     try {
-        // The stream itself is not shown: this line replaces the placeholder in one piece when it is
-        // done. The prompt asks for one to three sentences and thinking is off, so the cap every other
-        // request uses is left alone here rather than narrowed to what a summary should cost.
+        // 流本身不显示：完成后这行整块替换掉占位符。提示词只要一到三句话且关掉了思考，所以这里沿用其他
+        // 请求一样的上限，不去按摘要该花多少再收窄一次。
         const { text } = await requestChat(messages, () => {}, { thinking: false });
         if (text.trim()) {
             line = `${SCREEN_PREFIX} ${text.trim()}`;
@@ -810,8 +742,7 @@ async function runScreenshotSummary(entry, base64Data) {
         console.error('[Pipeline] screenshot summary error:', error);
     }
 
-    // The session may have been replaced while this was in flight, in which case the row and the context
-    // text both belong to a transcript nobody is looking at any more.
+    // 这期间会话可能已被替换，那这一行和上下文文本都属于一份没人在看的字幕了。
     if (entry.generation !== sessionGeneration) return;
 
     // 从这一刻起，之后每个提示词都用这行文字代替那张图，所以这轮的 contextText 一开始就非空、也永远不为空。
@@ -822,32 +753,30 @@ async function runScreenshotSummary(entry, base64Data) {
     saveConversationTurn(line, '', entry.seq);
     logTransportEvent('chat.completed', { turnId: entry.seq, summary: true });
 
-    // Nothing of the screenshot is pending in turnLog, so without this the status line would sit on
-    // "Analyzing image..." for the rest of the session.
+    // 截图轮在 turnLog 里没有任何待处理的东西，不调这一下状态行会卡在「Analyzing image...」直到会话结束。
     updateStreamingStatus();
 }
 
-// Never awaited and never queued: the caller is the ASR callback and must stay responsive.
+// 从不 await、从不排队：调用方是 ASR 回调，必须保持响应。
 function dispatchTurn(text) {
     const trimmed = (text || '').trim();
     if (trimmed.length < 2) return null;
 
     logTransportEvent('asr.turn_dispatched', { text: trimmed });
-    // Whatever the candidate has said closes here, ahead of the question that interrupted it, so this
-    // turn's prompt already knows it. The block is not cut short at any earlier point.
+    // 候选人说过的话在这里关闭，排在这个打断它的提问之前，所以这一轮的提示词已经知道它了。块不会在更早
+    // 的地方被截断。
     commitCandidateSpeech();
     const entry = createTurn(trimmed, trimmed, 'conversation');
     runTurn(entry);
-    // A sibling of runTurn, not a step inside it: runTurn builds its prompt synchronously, so by the time
-    // this line runs both chains have snapshotted the same transcript.
+    // 与 runTurn 平级而不是它内部的一步：runTurn 同步建好提示词，所以走到这行时两条链已经快照了同一份
+    // 字幕。
     runDetailTurn(entry);
     updateStreamingStatus();
     return entry;
 }
 
-// A safety flush only: the server's VAD owns turn boundaries. Audio arriving proves nothing on its
-// own — only a sentence event does, and those reset the countdown in handleAsrSentence. If the
-// socket goes quiet with text pending, the final sentence it was waiting for is never coming.
+// 只是兜底：轮次边界归服务端的 VAD 管。音频到达本身说明不了什么——只有句子事件算数，而它会重置
+// handleAsrSentence 里的倒计时。socket 静下来而文本还挂着，说明它在等的那句定稿不会来了。
 function tickStreamWatchdog(source) {
     const state = streams[source];
     state.silenceMs += AUDIO_CHUNK_MS;
@@ -857,8 +786,8 @@ function tickStreamWatchdog(source) {
     }
 }
 
-// The interviewer's recognizer owns the shared status line, since it is the one the session depends
-// on. The candidate's runs alongside it and fails quietly: losing it costs context, not answers.
+// 共用的状态行归面试官那路的识别器，因为会话依赖的是它。候选人那路并行运行且安静地失败：丢了它损失的
+// 是背景，不是回答。
 function startAsrClient(source) {
     const isInterviewer = source === INTERVIEWER;
 
@@ -868,7 +797,7 @@ function startAsrClient(source) {
         onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
         onState: state => {
             if (!isInterviewer) return;
-            // Nothing the socket does is worth announcing while the user has the audio paused.
+            // 用户暂停音频期间，socket 做什么都不值得播报。
             if (paused) return;
             if (state === 'connecting') {
                 sendToRenderer('update-status', 'Connecting...');
@@ -879,14 +808,12 @@ function startAsrClient(source) {
             }
         },
         onError: error => {
-            // The reconnect backoff inside the ASR client is exhausted, so this stream has no
-            // recognizer left. The session stays up and the error is surfaced; audio is dropped
-            // rather than sent into a dead socket. The socket is already gone at this point.
+            // ASR 客户端内部的重连退避已经用尽，这一路没有识别器了。会话继续，错误照报；音频被丢弃而不
+            // 是送进一个死 socket。此时 socket 已经不在了。
             console.error(`[Pipeline] Streaming ASR failed (${source}):`, error.message);
             streams[source].asr = null;
-            // Nothing will ever finalize the text this stream was holding, and the speaker gate reads
-            // it. Left behind, a dead interviewer socket would hold the microphone shut for the rest
-            // of the session.
+            // 这一路挂着的文本再也不会有人来定稿，而说话人闸门会读它。留着的话，一个死掉的面试官 socket
+            // 会把麦克风关到会话结束。
             streams[source].turnText = '';
             streams[source].interimText = '';
 
@@ -903,9 +830,8 @@ function startAsrClient(source) {
 function startAsrClients() {
     startAsrClient(INTERVIEWER);
 
-    // 'none' is the user's explicit "don't use a microphone" choice from Settings, and it is the only
-    // thing that turns the candidate stream off: the two captures are no longer alternatives, so the
-    // speaker stream keeps running whatever the microphone dropdown says.
+    // 'none' 是设置页里「不用麦克风」的显式选择，也是唯一会关掉候选人那路的东西：两条采集不再是二选一，
+    // 所以不管麦克风下拉框选了什么，扬声器那路都照跑。
     const { audioInputDeviceId } = getPreferences();
     if (audioInputDeviceId && audioInputDeviceId !== 'none') {
         startAsrClient(CANDIDATE);
@@ -923,8 +849,7 @@ function resetAudioState() {
         state.resampleRemainder = Buffer.alloc(0);
     }
     candidateSpeech = [];
-    // Starts over with turnSeq: the renderer empties its transcript before a session's audio flows,
-    // so there is no row left for an id to collide with.
+    // 跟着 turnSeq 一起从头开始：渲染端在会话音频流入之前会清空字幕，没有留下任何行会跟 id 撞上。
     candidateBlockId = 1;
     micGated = false;
     micLevelGated = false;
@@ -935,8 +860,7 @@ function resetAudioState() {
     turnSeq = 0;
     contextFloorSeq = 0;
     paused = false;
-    // Cleared with the turn log, or a session opened after this one would start with the previous
-    // session's detailed answers still pageable in the pane.
+    // 与轮次日志一起清掉，否则之后新开的会话一上来还能在面板里翻到上一个会话的详细回答。
     detailLog = [];
     detailSeq = 0;
     sessionGeneration += 1;
@@ -948,17 +872,14 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     closeLocalSession();
     currentSystemPrompt = getSystemPrompt(customPrompt);
 
-    // Both the switch and the knowledge index are read once, here. The index is deliberately a snapshot
-    // rather than a per-turn rebuild: it would cost a directory walk in front of every answer, and the
-    // stale window is nil in practice, because the settings page that changes either one cannot be
-    // reached from a live session. A stale id still cannot produce a wrong answer — the executor below
-    // validates against the directory as it is at call time.
+    // 开关和知识库索引都在这里一次性读好。索引故意是快照而不是每轮重建：那会给每个回答前面加一次目录
+    // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
+    // 的执行器会按调用时刻的目录校验。
     const prefs = getPreferences();
     detailModeEnabled = prefs.detailMode !== false;
     detailKnowledgeEntries = detailModeEnabled ? listKnowledgeEntries(getKnowledgeDir()) : [];
     currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries));
-    // Passing an empty summary is what makes this the follow-up prompt: both the knowledge rule and the
-    // index are conditioned on it, so this is the same prompt with neither.
+    // 传空摘要就是追问用的那份提示词：知识库规则和索引都以此为前提，所以这就是两样都没有的同一份提示词。
     currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
     briefThinkingEnabled = prefs.briefThinking === true;
     detailThinkingEnabled = prefs.detailThinking !== false;
@@ -967,8 +888,8 @@ function initializeChatSession(customPrompt, selectedLanguage) {
 
     transcriptionLanguage = selectedLanguage;
 
-    // Each recognizer waits its own amount of silence before ending a sentence. The microphone gets a
-    // longer one because the candidate stutters: a short wait would cut one answer into fragments.
+    // 两个识别器各自等不同的静音时长才结束一句。麦克风那路等得更久，因为候选人会磕绊：等太短会把一个
+    // 回答切成好几段。
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
     const micMaxSentenceSilenceMs = getMicMaxSentenceSilenceMs();
     streams[INTERVIEWER].sentenceSilenceMs = maxSentenceSilenceMs;
@@ -987,7 +908,7 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     initializeNewSession(customPrompt);
     isLocalActive = true;
 
-    // The ASR client's own state owns the status bar from here: Connecting... then Listening....
+    // 从这里起状态栏归 ASR 客户端自己的状态管：先是 Connecting... 然后 Listening...。
     sendToRenderer('session-initializing', false);
     startAsrClients();
 
@@ -998,11 +919,9 @@ function initializeChatSession(customPrompt, selectedLanguage) {
 function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
 
-    // Paused: the frame is still forwarded, but as silence. The endpoint ends a task that hears
-    // nothing for long enough, and a dead socket would have to reconnect in front of the first
-    // question after the resume — so the traffic keeps the session warm and the user's audio never
-    // reaches it as speech. The gate and the watchdog are skipped rather than fed: silence measures
-    // as -inf dBFS and would open the gate, and there is no longer any text for a flush to rescue.
+    // 暂停时帧照旧转发，只是内容是静音。端点在听不到声音足够久之后会结束任务，而一个死掉的 socket 得在
+    // 恢复后的第一个问题前面重连——所以这些流量让会话保持热着，而用户的音频从不作为语音到达它。闸门和
+    // 看门狗是跳过而不是喂给它们：静音量出来是 -inf dBFS，会把闸门打开，而且已经没有文本需要兜底冲掉。
     if (paused) {
         const state = streams[source];
         if (!state || !state.asr) return;
@@ -1014,19 +933,17 @@ function processLocalAudio(monoChunk24k, source = 'system') {
         return;
     }
 
-    // Measured before the client check below: the loopback capture keeps delivering chunks even
-    // after its recognizer gave up, and a gate that never saw a quiet chunk would stay on forever.
+    // 在下面那道客户端检查之前先量：回环采集即使识别器已经放弃也照旧送块，而一个从没见过安静块的闸门
+    // 会永远开着。
     if (source === INTERVIEWER) tickMicGate(pcmRmsDb(monoChunk24k));
 
-    // The client is a pipe: audio goes straight to the recognizer. A stream with no client — the
-    // candidate stream when no microphone is configured, or any stream whose recognizer gave up —
-    // is dropped here, before the resampler, so its half-sample state stays untouched.
+    // 客户端是根管子：音频直接进识别器。没有客户端的流——没配麦克风时的候选人那路，或者任何识别器已放
+    // 弃的流——在这里就丢掉，赶在重采样之前，好让它那半个采样点的状态保持不动。
     const state = streams[source];
     if (!state || !state.asr) return;
 
-    // Gated microphone audio becomes real silence rather than a dropped chunk: the server's VAD
-    // needs frames to close the utterance the interviewer interrupted. Dropping them would leave
-    // that half-sentence pending and merge it with whatever the user says once the gate lifts.
+    // 被闸门拦下的麦克风音频变成真正的静音而不是直接丢块：服务端的 VAD 需要帧才能关掉面试官打断的这句
+    // 话。丢掉的话这半句会一直挂着，等闸门抬起后和用户接下来说的话并到一起。
     const chunk = source === CANDIDATE && micGated ? Buffer.alloc(monoChunk24k.length) : monoChunk24k;
 
     const pcm16k = resample24kTo16k(chunk, state);
@@ -1056,9 +973,8 @@ function isLocalSessionActive() {
     return isLocalActive;
 }
 
-// The sentence in flight is older than the pause and already on screen, so it is settled rather than
-// dropped: left open, whatever is said after the resume would be spliced onto the half-sentence that
-// preceded it in one bubble. Nothing is dispatched for it — it was not a finished question.
+// 在途的那句比暂停更早、且已经在屏幕上，所以定稿它而不是丢掉：开着不管的话，恢复后说的话会被并到它前
+// 面那半句上，挤在同一个气泡里。不为它派发任何轮次——它不是一个问完的问题。
 function suspendPendingText() {
     for (const source of [INTERVIEWER, CANDIDATE]) {
         const state = streams[source];
@@ -1070,8 +986,7 @@ function suspendPendingText() {
         sendBubble('transcription-final', source);
     }
 
-    // Closed either way, so the next thing the candidate says opens a new bubble instead of growing
-    // the one that was open when the pause began.
+    // 无论如何都关闭，这样候选人接下来说的话会开一个新气泡，而不是继续长暂停开始时那个开着的。
     candidateBlockId += 1;
 }
 
@@ -1090,10 +1005,9 @@ function setPaused(value) {
     }
 }
 
-// The model's view of the session starts over here. Only the prompt is affected: turnLog keeps every
-// entry, so the pending count, the prune and — through persistTurn — the history file are untouched.
-// Audio in flight is deliberately left alone. Clearing a stream's pending text would make the bubble
-// the user is watching shrink on its next update, which is the truncation this is meant to avoid.
+// 模型看到的会话从这里重新开始。受影响的只有提示词：turnLog 保留每一条记录，所以待处理计数、裁剪和
+// （经由 persistTurn 的）历史文件都不受影响。在途音频故意不碰：清掉某一路挂着的文本会让用户正看着的气泡
+// 在下一次更新时缩短，而这正是这里要避免的截断。
 function clearContext() {
     contextFloorSeq = turnSeq;
     console.log('[Pipeline] Context cleared at seq', contextFloorSeq);
@@ -1110,8 +1024,7 @@ async function sendLocalText(text) {
         return { success: false, error: 'Empty message' };
     }
 
-    // Fire and forget: a typed question must not block on an answer still streaming, and a failure
-    // surfaces as an error bubble through runTurn rather than as a return value.
+    // 发完就返回：手动输入的问题不该等一个还在流的回答，而失败会经由 runTurn 变成错误气泡，而不是返回值。
     sendToRenderer('transcription-final', { text: trimmed });
     const entry = dispatchTurn(trimmed);
     return { success: true, turnId: entry ? entry.seq : null };
@@ -1132,26 +1045,24 @@ async function sendLocalImage(base64Data) {
         },
     ];
 
-    // A screenshot is not the interviewer speaking, but it is still a new turn: the block has to close
-    // here too, or this prompt would leave out everything the candidate has said since the last question.
+    // 截图不是面试官在说话，但它仍然是一个新轮次：块也得在这里关闭，否则这个提示词会漏掉最后一个提问
+    // 之后候选人说过的所有话。
     commitCandidateSpeech();
-    // Opened with a placeholder rather than the prompt: userContent falls back to requestContent when a
-    // screen turn's contextText is empty, and for a screenshot that fallback is the whole base64 image,
-    // replayed into every later prompt. A screenshot turn's contextText is never empty, from here on.
+    // 先用占位符开行而不是用提示词：截图轮的 contextText 为空时 userContent 会退回 requestContent，而
+    // 对截图来说那个退路就是整张 base64 图，会被回放进之后每一个提示词。从这里起，截图轮的 contextText
+    // 永不为空。
     const entry = createTurn(requestContent, SCREEN_PENDING_LINE, 'screen');
-    // Nothing ever streams into this turn: the answer it would hold lives in the pane, and the summary
-    // it waits for is a request of its own. Left pending it would claim a response is on the way forever.
+    // 这一轮永远不会有东西流进来：它本该装着的回答在面板里，而它等的摘要是另一个独立请求。留在待处理状态
+    // 会永远声称有回答在路上。
     entry.status = 'done';
 
-    // The transcript says what the picture asked, in words: the row is opened now, where the image
-    // arrived, and rewritten in place when the summary comes back — an image taken while the interviewer
-    // is still talking must not have its line pushed below the question that followed it.
+    // 字幕要用文字说出图里问的是什么：行在图到达时就开好，摘要回来时原地改写——在面试官还在说话时拍的图，
+    // 它的那行不能被挤到后面那个提问的下面。
     sendToRenderer('transcription-update', { text: SCREEN_PENDING_LINE, speaker: 'screen', blockId: entry.seq });
     sendToRenderer('update-status', 'Analyzing image...');
 
     startScreenshotAnswer(entry);
-    // Never awaited, and started before the answer so the two requests overlap: the summary is one small
-    // request with thinking off, the answer a long one with it on.
+    // 不 await，而且先于回答启动，让两个请求重叠：摘要是关掉思考的一个小请求，回答是开着思考的一个长请求。
     runScreenshotSummary(entry, base64Data);
 
     return { success: true, model: getChatModel(), turnId: entry.seq };

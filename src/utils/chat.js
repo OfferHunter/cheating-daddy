@@ -1,8 +1,8 @@
 const { getConfig, getDeepseekApiKey, getChatMaxTokens } = require('../storage');
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
-// Covers the whole streamed response, not just the headers. Without it a stalled stream would
-// leave the caller's in-flight guard latched forever and silently eat every later turn.
+// 覆盖整条流式响应而不只是头。它是**总预算**（请求发出时创建），不是空闲超时：思考的时间也算在里面，
+// 一张截图加一整道题有可能把 120s 全烧在推理上，最后什么都没返回。
 const CHAT_TIMEOUT_MS = 120000;
 
 function getChatBaseUrl() {
@@ -19,8 +19,7 @@ async function readStreamingResponse(response, onText) {
     let pendingText = '';
     let fullText = '';
     let finishReason = '';
-    // Keyed by the call's `index`, because that is the only field guaranteed to be present on every
-    // fragment — `id` arrives once, with the first one.
+    // 按 `index` 归并，因为这是每个分片都一定带的字段——`id` 只在第一片里出现。
     const toolCallsByIndex = new Map();
 
     for await (const chunk of response.body) {
@@ -36,7 +35,7 @@ async function readStreamingResponse(response, onText) {
 
             let choice;
             try {
-                // Thinking models emit delta.reasoning_content first; only the final answer is shown.
+                // 推理模型先吐 reasoning_content，这里只用最终的 content（提词器不显示思考过程）。
                 choice = JSON.parse(data).choices?.[0];
             } catch {
                 continue;
@@ -45,9 +44,8 @@ async function readStreamingResponse(response, onText) {
 
             const delta = choice.delta || {};
 
-            // Accumulate content only when there is some. Nothing below may skip the chunk on an empty
-            // token: a tool-calling chunk carries `tool_calls` and `finish_reason` and no content at all,
-            // so an early `continue` here would swallow the entire tool call.
+            // 有内容才累积，但下面任何一步都不能因为「这个分片没有 content」而提前 continue：调用工具的
+            // 那个分片只有 tool_calls 和 finish_reason，没有 content，提前 continue 会整条丢掉这次调用。
             const token = delta.content || '';
             if (token) {
                 fullText += token;
@@ -62,7 +60,7 @@ async function readStreamingResponse(response, onText) {
                     toolCallsByIndex.set(index, slot);
                 }
                 if (call.id) slot.id = call.id;
-                // Both arrive as fragments to be concatenated, not whole values.
+                // 名字和参数都是分片，要拼接，不是整值。
                 if (call.function?.name) slot.function.name += call.function.name;
                 if (call.function?.arguments) slot.function.arguments += call.function.arguments;
             }
@@ -92,8 +90,7 @@ async function streamOnce(body, onText) {
     if (!response.ok || !response.body) {
         const errorText = await response.text().catch(() => '');
         const error = new Error(`Chat API returned HTTP ${response.status}${errorText ? `: ${errorText}` : ''}`);
-        // Kept for the caller: only a body that names the offending field can tell a server that
-        // does not support `tools` from one rejecting the request for another reason.
+        // 留给调用方：只有正文点名了哪个字段，才能区分「这个服务不支持 tools」和「请求因别的原因被拒」。
         error.status = response.status;
         error.body = errorText;
         throw error;
@@ -102,26 +99,22 @@ async function streamOnce(body, onText) {
     return readStreamingResponse(response, onText);
 }
 
-// `onText` receives the whole text so far on every token, never a delta — including the text of any
-// rounds that already finished, since the returned `text` accumulates across tool rounds too.
+// `onText` 每次收到的是**到此为止的全部文本**，不是增量——包括已经结束的那几轮，因为返回的 `text`
+// 也是跨轮累积的。
 //
-// tools/maxToolRounds/executeTool/maxTokens/thinking/followUpSystem are all optional.
-// With none of them this is a single plain request, byte for byte the same body as before the
-// knowledge feature existed, save for the token cap coming from Settings rather than a constant.
+// tools/maxToolRounds/executeTool/maxTokens/thinking/followUpSystem 全部可选，都不传就是一次普通请求。
 //
-// `maxToolRounds` counts *tool* rounds, not requests: 1 means the model may call a tool once and is
-// then given one more request to answer in, with tools still declared but `tool_choice: 'none'`.
-// Dropping the field instead would leave `tool_calls`/`tool` messages in the context with nothing
-// declaring them, which some strict OpenAI-compatible servers reject with a 400.
+// `maxToolRounds` 数的是**工具**轮而不是请求数：1 表示模型可以调一次工具，然后额外拿到一次请求来作答
+// （tools 仍然声明着，但 tool_choice 变成 'none'）。这里不能改成直接撤掉 tools：上下文里留着
+// tool_calls/tool 消息却没有任何声明，严格的 OpenAI 兼容服务会直接 400。
 async function requestChat(messages, onText, options = {}) {
     const {
         tools = null,
         maxToolRounds = 0,
         executeTool = null,
-        // Read per call rather than captured once, so a change in Settings reaches the very next turn.
-        // It caps the answer and the reasoning behind it together: a thinking request is charged for
-        // its reasoning from this same budget, and on a hard question the reasoning alone can spend
-        // all of it, which reaches the caller as a response with no text in it at all.
+        // 每次调用现读，不缓存：设置里改完下一个回答就生效。
+        // 它同时管住回答和回答背后的思考——开了 thinking 的请求，推理也从这笔预算里扣，难题光是推理就能
+        // 把它花光，于是调用方收到的是一条没有任何文本的响应。
         maxTokens = getChatMaxTokens(),
         thinking,
         followUpSystem = null,
@@ -133,34 +126,27 @@ async function requestChat(messages, onText, options = {}) {
     }
 
     const convo = [...messages];
-    // Two separate questions: whether the request declares `tools` at all, and whether the model is
-    // allowed to call one. They part ways on the last round.
+    // 两个不同的问题：这次请求要不要声明 `tools`，以及模型准不准调工具。两者只在最后一轮分道扬镳。
     let declareTools = Boolean(tools && tools.length);
-    // `thinking` says the same thing in both directions now that every chain has a setting of its own:
-    // `true` asks for the reasoning mode, `false` asks for it to be off. Leaving it `undefined` is the
-    // one way to say nothing and take the endpoint's own default — which is also what a request with no
-    // thinking field at all used to mean, so an endpoint that refuses the field still gets a usable body
-    // out of the retry below. It used to be the off switch alone, with a second flag carrying the
-    // explicit on for the one chain that needed it regardless of the user's settings; that flag is gone.
+    // `thinking` 是三态：`true` 要推理模式，`false` 关掉它，`undefined` 是**什么都不说**、用端点自己的
+    // 默认值——也就是请求里干脆不带这个字段，所以下面剥字段重试时，端点照样能拿到一个可用的 body。
     let thinkingBody = thinking === true ? { type: 'enabled' } : thinking === false ? { type: 'disabled' } : null;
-    // Dropped for the rest of the call once an endpoint has refused the value.
+    // 端点一旦拒过这个字段，本次调用剩下的轮次都不再带它。
     let sendMaxTokens = true;
     let rounds = 0;
-    // Text from every round that has already finished, joined by a blank line.
+    // 已经结束的每一轮的文本，用空行拼接。
     let committed = '';
     let text = '';
     let finishReason = '';
     let toolCalls = [];
 
     for (;;) {
-        // Rounds are joined by a blank line, in the streamed text as much as in the returned one: a
-        // prefix applied only at the end would make the caller's text visibly jump when a round closes.
+        // 各轮之间用空行拼接，流式文本和最终返回的文本都一样：只在结束时补前缀会让调用方的文字在轮次
+        // 切换时可见地跳一下。
         const prefix = committed ? `${committed}\n\n` : '';
 
-        // The follow-up must not repeat the knowledge rule and index the model has already acted on:
-        // the entry itself is in the conversation by then, and showing the index again invites a
-        // lookup that `tool_choice: 'none'` would refuse anyway. Guarded on the role so a caller
-        // whose first message is not a system prompt is left alone rather than losing it.
+        // 追问轮不能再重复模型已经用过的知识库规则和索引：条目本身已经在对话里了，再给一遍索引等于邀请它
+        // 去查，而 tool_choice: 'none' 反正会拒掉。判角色是为了不误伤第一条消息不是 system 的调用方。
         if (rounds > 0 && followUpSystem && convo[0]?.role === 'system') {
             convo[0] = { role: 'system', content: followUpSystem };
         }
@@ -184,12 +170,10 @@ async function requestChat(messages, onText, options = {}) {
         try {
             round = await streamOnce(body, partial => onText(prefix + partial));
         } catch (error) {
-            // `tools`, `thinking` and the token cap are all things the app can live without, and a 400
-            // that names one of them says exactly which. Strip every field the message complains about
-            // and retry once — together, not as nested retries, or a body rejected for both would
-            // only shed whichever field the inner handler happened to look at. The cap is the one the
-            // user can set higher than an endpoint allows, and without this a number typed into
-            // Settings would break every request until it was changed back.
+            // `tools`、`thinking`、token 上限这三样少了都能活，而点名其中之一的 400 正好说了是哪个。
+            // 把正文抱怨的字段一次全剥掉、重试一次——不能写成嵌套重试，否则同时被拒两个字段时只会剥掉内层
+            // 那一个。上限是用户能设成超过端点允许值的那一项，没有这段，设置里打错一个数字会让之后每个
+            // 请求都失败，直到改回去为止。
             const errorBody = error.body || '';
             const rejected = error.status === 400 && errorBody;
             const dropTools = rejected && declareTools && /tools|tool_choice/i.test(errorBody);
@@ -219,8 +203,7 @@ async function requestChat(messages, onText, options = {}) {
             round = await streamOnce(body, partial => onText(prefix + partial));
         }
 
-        // A round that only calls a tool often has no text of its own; it contributes nothing rather
-        // than leaving a stray blank line in front of the answer.
+        // 只调工具的那一轮往往没有自己的文本，那就不带上它，免得正式回答前面多出一个空行。
         if (round.text) {
             text = prefix + round.text;
             committed = text;
@@ -231,7 +214,7 @@ async function requestChat(messages, onText, options = {}) {
         const canContinue =
             finishReason === 'tool_calls' &&
             calls.length > 0 &&
-            // Every call must be answered by id, so a fragment without one cannot be continued past.
+            // 每个调用都要用 id 回填结果，所以缺 id 的分片没法往下续。
             calls.every(call => call.id) &&
             typeof executeTool === 'function' &&
             rounds < maxToolRounds;
@@ -244,8 +227,7 @@ async function requestChat(messages, onText, options = {}) {
             try {
                 output = await executeTool(call.function.name, call.function.arguments);
             } catch (error) {
-                // One round only, so there is no retry to protect: the model gets the failure as the
-                // tool's result and answers around it instead.
+                // 只有这一轮，没有重试要保护：把失败当工具结果交回去，让模型自己绕开它作答。
                 output = `工具执行失败：${error.message}`;
             }
             convo.push({ role: 'tool', tool_call_id: call.id, content: output });

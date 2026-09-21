@@ -1,13 +1,9 @@
 const { spawnSync } = require('child_process');
 
-// Windows consoles default to the OEM code page (936 on a zh-CN machine), which misreads the UTF-8
-// bytes Node writes, so Chinese transcripts print as mojibake. Node has no binding for
-// SetConsoleOutputCP, so shell out to chcp. The code page is a property of the console rather than
-// the process, which is why this reaches the terminal that launched the app.
-//
-// Deliberately no `windowsHide`: it maps to CREATE_NO_WINDOW, which can stop the child from
-// inheriting the parent's console and silently turn this into a no-op. Verified on Windows 11 that
-// a child spawned this way does move the shared console to 65001.
+// Windows 控制台默认是 OEM 代码页（中文机器上是 936），会把 Node 写出的 UTF-8 字节读成乱码，中文
+// 字幕在终端里全是花屏。Node 没有 SetConsoleOutputCP 的绑定，只能起进程跑 chcp。
+// 故意不传 `windowsHide`：它对应 CREATE_NO_WINDOW，会让子进程继承不到父进程的控制台，使这行变成
+// 静默的空操作。已在 Windows 11 上验证过这样起进程确实把控制台切到了 65001。
 function enableUtf8Console() {
     if (process.platform !== 'win32') return;
 
