@@ -115,7 +115,12 @@ const STREAM_SEND_INTERVAL_MS = 40;
 // that arrives with nothing after it, so untagged it reads as "the user has just asked this" and the
 // model answers *it* instead of the question that was actually asked next.
 const SCREEN_PREFIX = '[屏幕截图]';
-const SCREEN_CONTEXT_PREFIX = '[屏幕共享的题目（此前已作答，仅作参考）]';
+// The label the turn being answered carries. Without it the current image is the one message in the
+// prompt with no label at all — it is a request addressed to the assistant rather than something anyone
+// said, so it never gets a speaker tag — and the context rule, which used to name the last [面试官:]
+// message as the only thing to answer, pointed past it at whatever had been asked out loud before. The
+// two labels are named together in CONTEXT_RULE, as are the interviewer's two.
+const SCREEN_CONTEXT_PREFIX = '[屏幕共享的题目（已回答，仅参考）]';
 const SCREEN_PENDING_LINE = `${SCREEN_PREFIX} （识别中…）`;
 const SCREEN_FAILED_LINE = `${SCREEN_PREFIX} （图片内容识别失败）`;
 
@@ -436,22 +441,44 @@ function commitCandidateSpeech() {
 
 // Who said a line, since every line is a `user` message and the model cannot tell the two speakers
 // apart otherwise. Bracketed and on its own line prefix so it reads as a label, not as content.
-const SPEAKER_TAG = { interviewer: '[面试官:]', candidate: '[面试者:]' };
+//
+// The interviewer's words carry two labels, because only one of them is still waiting for an answer:
+// the turn being requested now, and everything asked before it. Naming both is the same guard as the
+// screen labels below and exists for the same reason — a question that has already been answered reads
+// as an outstanding task when nothing in the prompt says otherwise, and the model answers it again.
+// The candidate's words never take the current label: nothing he says is a question for this assistant,
+// it is what he has already said, so they stay context whatever their position.
+const SPEAKER_TAG = { interviewer: '[面试官（已回答，仅参考）:]', candidate: '[面试者:]' };
+const CURRENT_QUESTION_TAG = '[面试官（当前问题，请作答）:]';
 
 // History replays a turn as text — a screenshot's prompt text stands in for its image, which is what
 // createTurn already keeps in contextText — and only the turn being requested keeps everything it was
 // created with. Screenshot turns are requests addressed to the assistant rather than speech, so they
-// carry no speaker label; they get the reference label instead (see SCREEN_CONTEXT_PREFIX).
+// carry no speaker label: the ones being replayed
+// SCREEN_CONTEXT_PREFIX, and CONTEXT_RULE names both.
 function userContent(entry, isCurrent = false) {
     const content = isCurrent ? entry.requestContent : entry.contextText || entry.requestContent;
 
     if (entry.persistKind === 'screen') {
-        // The turn being answered carries the image itself, so there is nothing to label; the ones being
-        // replayed carry the transcription and are relabelled as a past record.
-        if (isCurrent || typeof content !== 'string' || !content.startsWith(SCREEN_PREFIX)) return content;
+        // The turn being answered carries the image itself, so the label goes on the text part beside it
+        // rather than replacing it: the picture is what the question is, and the label is what says so.
+        if (isCurrent) {
+            let tagged = false;
+            return content.map(part => {
+                if (tagged || part.type !== 'text') return part;
+                tagged = true;
+                return { ...part, text: `${part.text}` };
+            });
+        }
+        // The ones being replayed carry the transcription instead of the image, and are relabelled as a
+        // past record.
+        if (typeof content !== 'string' || !content.startsWith(SCREEN_PREFIX)) return content;
         return `${SCREEN_CONTEXT_PREFIX} ${content.slice(SCREEN_PREFIX.length).trim()}`;
     }
-    return `${SPEAKER_TAG[entry.speaker]} ${content}`;
+    // Only the turn being requested can be a question to answer now: every other entry in the log is
+    // either an earlier question or something the candidate said, and both are context by then.
+    const tag = isCurrent && entry.speaker === 'interviewer' ? CURRENT_QUESTION_TAG : SPEAKER_TAG[entry.speaker];
+    return `${tag} ${content}`;
 }
 
 // The user side of the transcript only: the interviewer's questions and the candidate's own words, in

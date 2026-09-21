@@ -6,11 +6,17 @@ const LANGUAGE_RULE = `**语言要求：**必须使用对方提问所用的语�
 
 // The transcript is replayed as a run of `user` messages with the model's own earlier answers left out,
 // so a long piece of text in there looks like something still waiting to be done. The screenshot line is
-// the one that suffers from this — it is a whole problem statement, it carries no speaker tag, and it is
-// the only user message with no answer after it — and the model was answering *it* instead of the
-// question that followed. Naming the rule is what this is for; the label itself is applied when the
-// prompt is built (see SCREEN_CONTEXT_PREFIX in pipeline.js).
-const CONTEXT_RULE = `**上下文约定：**历史里带 [面试官:]/[面试者:] 标记的是过去说过的话。**只有最后一条 [面试官:] 消息才是你现在要回答的问题**；更早的内容只是背景，不要替它们补作答，也不要因为其中出现了题目就自动去解题或写代码。带 [屏幕共享的题目（此前已作答，仅作参考）] 标记的是之前屏幕上出现过的题目，已经被处理过了，仅在当前问题确实与它相关时才参考。`;
+// the one that suffers from this — it is a whole problem statement and it is the only user message with
+// no answer after it — and the model was answering *it* instead of the question that followed. Naming the
+// rule is what this is for; the labels themselves are applied when the prompt is built (see the three
+// SCREEN_*_PREFIX constants in pipeline.js).
+//
+// The rule has to name every current label, not just the spoken one. An image turn carries no speaker
+// tag — it is a request addressed to the assistant, not speech — so once this rule said the last
+// [面试官:] message was the only thing to answer, every screenshot was answered with the question that had
+// been asked out loud before it. The labels are a pair per kind: what is being asked now, and what has
+// been answered already, and both halves have to be named or the unnamed one falls back to the other.
+const CONTEXT_RULE = `**上下文约定：**历史里带 [面试官（已回答，仅参考）]/[面试者:] 标记的是过去的内容。**你现在要回答的是最后一条消息**：带 [面试官（当前问题，请作答）:] 标记的那句提问，或者带 [屏幕共享的题目（当前问题，请作答）] 标记的那张图；其余内容都只是背景，不要替它们补作答，也不要因为其中出现了题目就自动去解题或写代码。带 [屏幕共享的题目（已回答，仅参考）] 标记的是之前屏幕上出现过的题目，已经被处理过了，仅在当前问题确实与它相关时才参考。`;
 
 // One persona only: the app is an interview teleprompter and nothing else is maintained.
 const interviewPrompt = {
@@ -136,7 +142,7 @@ function getScreenshotSummaryPrompt() {
 - 题目编号、难度标签、通过率、按钮、导航栏、页面上的其他界面文字。
 - 与题目无关的闲聊或广告。
 
-禁止：**不要作答**、不要给思路、不要写代码、不要给建议、不要描述版式或颜色。
+注意：**不要作答**、不要给思路、不要写代码、不要给建议、不要描述版式或颜色。
 只输出题目内容本身，不要任何开场白或标题。如果有多道题，都写上；如果没有题目，输出**截图中无可见题目**。
 **语言要求：**用图中题目所用的语言；图里没有可辨认的文字时用简体中文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
 }
