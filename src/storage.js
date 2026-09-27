@@ -392,6 +392,25 @@ function getAllSessions() {
                 const sessionId = file.replace('.json', '');
                 const data = readJsonFile(path.join(historyDir, file), null);
                 if (data) {
+                    const searchableValues = [];
+                    const collectSearchableValues = value => {
+                        if (typeof value === 'string') {
+                            searchableValues.push(value);
+                            return;
+                        }
+                        if (Array.isArray(value)) {
+                            value.forEach(collectSearchableValues);
+                            return;
+                        }
+                        if (value && typeof value === 'object') {
+                            Object.values(value).forEach(collectSearchableValues);
+                        }
+                    };
+                    collectSearchableValues(data.customPrompt);
+                    collectSearchableValues(data.conversationHistory);
+                    collectSearchableValues(data.detailHistory);
+                    collectSearchableValues(data.candidateHistory);
+
                     return {
                         sessionId,
                         createdAt: data.createdAt,
@@ -400,6 +419,7 @@ function getAllSessions() {
                         detailCount: data.detailHistory?.length || 0,
                         profile: data.profile || null,
                         customPrompt: data.customPrompt || null,
+                        searchText: searchableValues.join('\n'),
                     };
                 }
                 return null;

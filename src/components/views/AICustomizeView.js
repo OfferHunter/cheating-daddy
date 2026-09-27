@@ -1,5 +1,5 @@
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement } from '../../utils/i18n.js';
+import { LocalizedLitElement, isChinese, t } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 export class AICustomizeView extends LocalizedLitElement {
@@ -161,7 +161,7 @@ export class AICustomizeView extends LocalizedLitElement {
             const result = await cheatingDaddy.knowledge.list();
             this._knowledgeDir = result.success ? result.dir : '';
             this._knowledgeEntries = result.success ? result.entries : [];
-            this._knowledgeError = result.success ? '' : result.error || '读取知识目录失败';
+            this._knowledgeError = result.success ? '' : result.error || t('Could not read the knowledge folder', '读取知识目录失败');
         } catch (error) {
             this._knowledgeError = error.message;
         }
@@ -182,7 +182,7 @@ export class AICustomizeView extends LocalizedLitElement {
                 await this._loadKnowledge();
                 return;
             }
-            if (!result.canceled) this._knowledgeError = result.error || '选择目录失败';
+            if (!result.canceled) this._knowledgeError = result.error || t('Could not select the folder', '选择目录失败');
         } catch (error) {
             this._knowledgeError = error.message;
         } finally {
@@ -212,7 +212,11 @@ export class AICustomizeView extends LocalizedLitElement {
         // 读得慢：结果不能落进一个已经关掉或切走的预览里。
         if (this._openPreview !== id) return;
 
-        this._previewBody = result.success ? result.body : `读取失败：${result.error || ''}`;
+        this._previewBody = result.success
+            ? result.body
+            : isChinese()
+              ? `读取失败：${result.error || ''}`
+              : `Could not read the file: ${result.error || ''}`;
         this.requestUpdate();
     }
 
@@ -246,8 +250,14 @@ export class AICustomizeView extends LocalizedLitElement {
                     <section class="surface auto">
                         <div class="surface-title">Knowledge</div>
                         <div class="surface-subtitle">
-                            A folder of <code>.md</code> files, one entry each. Its frontmatter (<code>name</code> / <code>description</code>) becomes
-                            the summary the model sees; the body is loaded only when the detailed answer asks for it.
+                            ${
+                                isChinese()
+                                    ? html`知识库目录中的每个 <code>.md</code> 文件代表一个条目。文件头的 <code>name</code> 和
+                                          <code>description</code> 会作为模型可见的摘要；只有详细回答需要时才会读取正文。`
+                                    : html`A folder of <code>.md</code> files, one entry each. Its frontmatter (<code>name</code> /
+                                          <code>description</code>) becomes the summary the model sees; the body is loaded only when the detailed
+                                          answer asks for it.`
+                            }
                         </div>
 
                         <div class="dir-row">
@@ -278,7 +288,12 @@ export class AICustomizeView extends LocalizedLitElement {
         if (!this._knowledgeEntries.length) {
             return html`
                 <div class="entry-row">
-                    <span class="entry-desc">目录里没有可读的 .md 文件（目录可能已被移动或改名）。</span>
+                    <span class="entry-desc" data-no-localize>
+                        ${t(
+                            'There are no readable .md files in this folder (the folder may have been moved or renamed).',
+                            '目录里没有可读的 .md 文件（目录可能已被移动或改名）。'
+                        )}
+                    </span>
                 </div>
             `;
         }
@@ -290,14 +305,16 @@ export class AICustomizeView extends LocalizedLitElement {
                         <div class="entry-row">
                             <div class="entry-text">
                                 <div class="entry-name">${entry.name}</div>
-                                <div class="entry-desc"><span class="entry-id">${entry.id}</span> · ${entry.description || '（无摘要）'}</div>
+                                <div class="entry-desc" data-no-localize>
+                                    <span class="entry-id">${entry.id}</span> · ${entry.description || t('(No summary)', '（无摘要）')}
+                                </div>
                             </div>
                             <button class="control btn-inline" @click=${() => this._togglePreview(entry.id)}>
                                 ${this._openPreview === entry.id ? 'Close' : 'Preview'}
                             </button>
                             <button class="control btn-inline" @click=${() => this._revealKnowledgeFile(entry.id)}>Show file</button>
                         </div>
-                        ${this._openPreview === entry.id ? html`<pre class="preview">${this._previewBody || '读取中…'}</pre>` : ''}
+                        ${this._openPreview === entry.id ? html`<pre class="preview">${this._previewBody || t('Loading…', '读取中…')}</pre>` : ''}
                     </div>
                 `
             )}

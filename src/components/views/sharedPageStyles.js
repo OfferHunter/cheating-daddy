@@ -4,8 +4,8 @@ import { css } from '../../assets/lit-core-2.7.4.min.js';
 // 作用域，组件把它放进自己的 static styles 即可。
 export const scrollbarStyles = css`
     ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+        width: 4px;
+        height: 4px;
     }
 
     ::-webkit-scrollbar-track {

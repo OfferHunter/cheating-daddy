@@ -31,8 +31,34 @@ export class CustomizeView extends LocalizedLitElement {
             .toggle-input {
                 width: 14px;
                 height: 14px;
+                margin: 0;
+                appearance: none;
+                display: grid;
+                place-content: center;
+                flex-shrink: 0;
+                border: 1px solid var(--border-strong);
+                border-radius: 50%;
+                background: var(--bg-surface);
                 accent-color: var(--text-primary);
                 cursor: pointer;
+            }
+
+            .toggle-input::after {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--text-primary);
+                transform: scale(0);
+                transition: transform var(--transition);
+            }
+
+            .toggle-input:checked {
+                border-color: var(--text-primary);
+            }
+
+            .toggle-input:checked::after {
+                transform: scale(1);
             }
 
             .toggle-label {
@@ -781,7 +807,7 @@ export class CustomizeView extends LocalizedLitElement {
                         />
                         <div class="form-help">
                             The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into
-                            several fragments on screen. Only affects your column. 200-6000.
+                            several fragments on screen. Only affects your column. 200-6000. Takes effect on the next session.
                         </div>
                     </div>
                     <div class="form-group vertical">

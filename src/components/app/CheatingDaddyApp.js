@@ -8,7 +8,6 @@ import { HistoryView } from '../views/HistoryView.js';
 import { AssistantView } from '../views/AssistantView.js';
 import { OnboardingView } from '../views/OnboardingView.js';
 import { AICustomizeView } from '../views/AICustomizeView.js';
-import { FeedbackView } from '../views/FeedbackView.js';
 
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
 const { ipcRenderer } = window.require('electron');
@@ -101,12 +100,19 @@ export class CheatingDaddyApp extends LocalizedLitElement {
             .icon-btn svg {
                 width: 14px;
                 height: 14px;
+                display: block;
+                flex: none;
             }
 
             .icon-btn.danger:hover {
-                background: var(--danger);
+                background: color-mix(in srgb, var(--danger) 50%, transparent);
                 border-color: transparent;
                 color: #fff;
+            }
+
+            .icon-btn.danger svg {
+                width: 13px;
+                height: 13px;
             }
 
             /* 暂停态全靠这圈描边：软暂停时麦克风指示灯仍然亮着，亮着本身不表示还在收音。 */
@@ -868,9 +874,6 @@ export class CheatingDaddyApp extends LocalizedLitElement {
                     ></customize-view>
                 `;
 
-            case 'feedback':
-                return html`<feedback-view></feedback-view>`;
-
             case 'help':
                 return html`<help-view .onExternalLinkClick=${url => this.handleExternalLinkClick(url)}></help-view>`;
 
@@ -947,22 +950,12 @@ export class CheatingDaddyApp extends LocalizedLitElement {
                 </svg>`,
             },
             {
-                id: 'feedback',
-                label: 'Feedback',
+                id: 'help',
+                label: 'Help & Support',
                 icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24">
                     <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
                         <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-5l-5 3v-3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM9.5 9h.01m4.99 0h.01" />
                         <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
-                    </g>
-                </svg>`,
-            },
-            {
-                id: 'help',
-                label: 'Help',
-                icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24">
-                    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
-                        <path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9s-9-1.8-9-9s1.8-9 9-9m0 13v.01" />
-                        <path d="M12 13a2 2 0 0 0 .914-3.782a1.98 1.98 0 0 0-2.414.483" />
                     </g>
                 </svg>`,
             },

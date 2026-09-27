@@ -140,8 +140,31 @@ export class HistoryView extends LocalizedLitElement {
                 height: 15px;
                 margin: 0;
                 flex-shrink: 0;
-                accent-color: var(--accent);
+                appearance: none;
+                display: grid;
+                place-content: center;
+                border: 1px solid var(--border-strong);
+                border-radius: 50%;
+                background: var(--bg-surface);
                 cursor: pointer;
+            }
+
+            .session-check::after {
+                content: '';
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: var(--text-primary);
+                transform: scale(0);
+                transition: transform var(--transition);
+            }
+
+            .session-check:checked {
+                border-color: var(--text-primary);
+            }
+
+            .session-check:checked::after {
+                transform: scale(1);
             }
 
             .selection-bar {
@@ -575,11 +598,13 @@ export class HistoryView extends LocalizedLitElement {
 
     getFilteredSessions() {
         if (!this.searchQuery.trim()) return this.sessions;
-        const q = this.searchQuery.toLowerCase();
+        const q = this.searchQuery.trim().toLocaleLowerCase();
         return this.sessions.filter(session => {
-            const preview = this.getSessionPreview(session).toLowerCase();
-            const date = this.formatDate(session.createdAt).toLowerCase();
-            return preview.includes(q) || date.includes(q);
+            const searchableContent = [this.getSessionPreview(session), this.formatDate(session.createdAt), session.customPrompt, session.searchText]
+                .filter(Boolean)
+                .join('\n')
+                .toLocaleLowerCase();
+            return searchableContent.includes(q);
         });
     }
 
@@ -799,7 +824,13 @@ export class HistoryView extends LocalizedLitElement {
                     <circle cx="11" cy="11" r="8" />
                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
-                <input class="control" type="text" placeholder="Search sessions..." .value=${this.searchQuery} @input=${this.handleSearchInput} />
+                <input
+                    class="control"
+                    type="text"
+                    placeholder="Search conversation content..."
+                    .value=${this.searchQuery}
+                    @input=${this.handleSearchInput}
+                />
             </div>
 
             <section class="list-shell">

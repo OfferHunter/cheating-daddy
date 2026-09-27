@@ -9,18 +9,20 @@ const zh = {
     History: '历史记录',
     Settings: '设置',
     Help: '帮助',
+    'Help & Support': '帮助和支持',
     Feedback: '反馈',
     Customize: '自定义',
     'AI Settings': 'AI 设置',
     'AI Customization': 'AI 自定义',
     'AI Context': 'AI 上下文',
     'New Session': '新建会话',
+    'Start Session': '开始会话',
     'End Session': '结束会话',
     'Clear context': '清除上下文',
     'Toggle pause': '暂停或继续',
     'Hide window': '隐藏窗口',
     'Quit application': '退出应用',
-    'Search sessions...': '搜索会话…',
+    'Search conversation content...': '搜索对话内容…',
     'Loading sessions...': '正在加载会话…',
     'No matching sessions.': '没有匹配的会话。',
     'Session Detail': '会话详情',
@@ -101,8 +103,8 @@ const zh = {
         '扬声器音频始终使用 Windows 默认播放设备。启用麦克风后，你的声音会显示在右侧栏；它不会单独触发回答，只用于告诉助手你已经说过什么。',
     'How much silence ends a question and sends it. Lower is faster but may split it. 200-6000.':
         '一段静音持续多久后结束并发送问题。数值越低响应越快，但可能拆分句子。范围 200–6000。',
-    'The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into several fragments on screen. Only affects your column. 200-6000.':
-        '麦克风使用的静音等待时间，通常建议稍长；说话停顿可能把一条回答拆成多个片段。仅影响你的内容。范围 200–6000。',
+    'The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into several fragments on screen. Only affects your column. 200-6000. Takes effect on the next session.':
+        '麦克风使用的静音等待时间，通常建议稍长；说话停顿可能把一条回答拆成多个片段。仅影响你的内容。范围 200–6000，下次会话生效。',
     "While the speaker is louder than this the microphone is ignored, so the interviewer's voice cannot leak into your column. Higher (closer to 0) gates more aggressively; -80 effectively turns it off.":
         '扬声器音量高于此值时忽略麦克风，防止面试官声音混入你的内容。数值越接近 0，抑制越强；-80 相当于关闭。',
     'How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still mid-sentence, whatever the level does.':
@@ -113,10 +115,14 @@ const zh = {
     'Thinking in the fast reply': '简短回答启用思考',
     'Thinking in the detailed reply': '详细回答启用思考',
     'Thinking in the screenshot reply': '截图回答启用思考',
+    'Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come back empty. Takes effect on the next session.':
+        '回答前思考会增加少量等待，但通常能提高质量。建议简短回答关闭、详细回答开启。截图回答单独控制，因为图片请求的思考也占用超时时间；复杂截图可能在输出正文前就耗尽时间。下次会话生效。',
     'Context Turns': '上下文轮数',
     'How many previous turns are replayed to the model, in both the fast and the detailed answer. Higher keeps more of the interview in view but makes every request larger and slower. 1-100. Takes effect on the next session.':
         '简短和详细回答会向模型重放的历史轮数。数值越高，保留的面试内容越多，但请求更大、更慢。范围 1–100，下次会话生效。',
     'Max Tokens': '最大 Token 数',
+    'The ceiling on a single reply, thinking included — a thinking reply is charged for its reasoning from this same number, and a hard question can spend all of a low one before writing anything, which arrives as an empty answer. Leave it high and the model stops on its own. Takes effect on the next turn.':
+        '单次回答的 Token 上限，思考过程也计入其中。上限过低时，复杂问题可能在输出正文前耗尽额度，最终显示为空回答。建议保持较高数值，让模型自行停止。下一轮生效。',
     'Component Transparency': '控件透明度',
     'Panels, bubbles, inputs and borders. Lower means more of what is behind the window shows through.':
         '控制面板、气泡、输入框和边框的透明度。数值越低，窗口后方内容越清晰。',
@@ -139,6 +145,7 @@ const zh = {
     Latest: '最新',
     Detailed: '详细回答',
     Reference: '参考资料',
+    'Reference:': '参考资料：',
     'Answer cut off at the length limit': '回答因长度限制被截断',
     'Previous detailed answer': '上一条详细回答',
     'Next detailed answer': '下一条详细回答',
@@ -165,6 +172,10 @@ const zh = {
     Preview: '预览',
     Close: '关闭',
     'Show file': '显示文件',
+    'Could not read the knowledge folder': '读取知识目录失败',
+    'Could not select the folder': '选择目录失败',
+    '(No summary)': '（无摘要）',
+    'Loading…': '读取中…',
     Browse: '浏览',
     Remove: '移除',
     'Choose Folder': '选择文件夹',
@@ -176,6 +187,11 @@ const zh = {
     'Need help?': '需要帮助？',
     Support: '支持',
     Website: '网站',
+    'Contact Us': '联系我们',
+    'QQ Group: To be added': 'QQ群：待补充',
+    'Frequently Asked Questions': '常见问题和解答',
+    'How do I start a session?': '如何开始一次会话？',
+    'Configure the chat and transcription API keys on the Home page, then click Start.': '在主页配置对话和语音转录 API 密钥，然后点击“开始”。',
     'Feedback Form': '反馈表单',
     'OpenAI-compatible chat with live transcription': '支持实时转录的 AI 对话助手',
     'Chat model': '对话模型',
@@ -196,6 +212,8 @@ const zh = {
     'Add context': '添加上下文',
     'Resume, job description, notes...': '简历、职位描述、备注…',
     'Get Started': '开始使用',
+    Continue: '继续',
+    Back: '返回',
     'Real-time AI that listens, watches, and helps during interviews, meetings, and exams.':
         '实时聆听、观察，并在面试、会议和考试中提供帮助的 AI 助手。',
     'Paste your resume or any info the AI should know. You can skip this and add it later.':
@@ -214,9 +232,28 @@ const zh = {
     'Toggle Light/Dark Theme': '切换明暗主题',
     'Emergency Erase': '紧急清除',
     Quit: '退出',
+    Pause: '暂停',
+    Resume: '继续',
+    'Update available': '有可用更新',
+    'Connecting...': '正在连接…',
+    'Listening...': '正在聆听…',
+    'Reconnecting...': '正在重新连接…',
+    'Reconnecting transcription...': '正在重新连接语音转录…',
+    Paused: '已暂停',
+    Live: '实时',
+    'Generating response...': '正在生成回答…',
+    'Analyzing image...': '正在分析图像…',
+    'Message sent...': '消息已发送…',
+    error: '错误',
+    '[click through]': '［鼠标穿透］',
+    Session: '会话',
+    'Empty session': '空会话',
 };
 
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
+const normalize = value => value.replace(/\s+/g, ' ').trim();
+const normalizedZh = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [normalize(english), chinese]));
+const normalizedEn = Object.fromEntries(Object.entries(en).map(([chinese, english]) => [normalize(chinese), english]));
 
 export function getUiLanguage() {
     return uiLanguage;
@@ -237,11 +274,12 @@ export function setUiLanguage(language, { notify = true } = {}) {
 }
 
 function translateValue(value) {
-    const map = isChinese() ? zh : en;
+    const map = isChinese() ? normalizedZh : normalizedEn;
     if (map[value]) return map[value];
     const trimmed = value.trim();
-    if (!map[trimmed]) return value;
-    return value.replace(trimmed, map[trimmed]);
+    const translated = map[normalize(trimmed)];
+    if (!translated) return value;
+    return value.replace(trimmed, translated);
 }
 
 export function localizeTree(root) {
@@ -272,8 +310,8 @@ const baseStyles = css`
     }
 
     ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+        width: 4px;
+        height: 4px;
     }
 
     ::-webkit-scrollbar-track {

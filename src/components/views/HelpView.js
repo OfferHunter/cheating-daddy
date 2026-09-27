@@ -2,170 +2,111 @@ import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
+const PROJECT_URL = 'https://github.com/OfferHunter/cheating-daddy';
+
 export class HelpView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
         scrollbarStyles,
         css`
-            .shortcut-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: var(--space-sm);
-            }
-
-            .shortcut-row {
+            .row {
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                gap: var(--space-sm);
-                padding: var(--space-sm);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                background: var(--bg-elevated);
+                gap: var(--space-md);
             }
 
-            .shortcut-label {
-                color: var(--text-secondary);
-                font-size: var(--font-size-xs);
-            }
-
-            .shortcut-keys {
-                display: inline-flex;
-                gap: 4px;
-                flex-wrap: wrap;
-                justify-content: flex-end;
-            }
-
-            .key {
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                padding: 2px 6px;
-                font-size: var(--font-size-xs);
-                color: var(--text-primary);
-                background: var(--bg-surface);
-                font-family: var(--font-mono);
-            }
-
-            .list {
-                display: grid;
-                gap: var(--space-sm);
-            }
-
-            .list-item {
-                padding: var(--space-sm);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
+            .row-text {
                 color: var(--text-secondary);
                 font-size: var(--font-size-sm);
-                line-height: 1.45;
-                background: var(--bg-elevated);
-            }
-
-            .link-row {
-                display: flex;
-                flex-wrap: wrap;
-                gap: var(--space-sm);
             }
 
             .link-button {
+                flex-shrink: 0;
                 border: 1px solid var(--border);
                 border-radius: var(--radius-sm);
-                padding: 8px 10px;
+                padding: 8px 12px;
                 background: var(--bg-elevated);
                 color: var(--text-primary);
                 font-size: var(--font-size-sm);
                 cursor: pointer;
                 transition:
                     border-color var(--transition),
-                    color var(--transition),
                     background var(--transition);
             }
 
             .link-button:hover {
-                color: var(--text-primary);
                 border-color: var(--accent);
-                background: rgba(63, 125, 229, 0.14);
+                background: var(--bg-hover);
             }
 
-            @media (max-width: 820px) {
-                .shortcut-grid {
-                    grid-template-columns: 1fr;
-                }
+            .faq-list {
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-sm);
+            }
+
+            .faq-item {
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                background: var(--bg-elevated);
+                overflow: hidden;
+            }
+
+            .faq-question {
+                padding: 10px 12px;
+                color: var(--text-primary);
+                font-size: var(--font-size-sm);
+                cursor: pointer;
+            }
+
+            .faq-question::marker {
+                color: var(--text-muted);
+            }
+
+            .faq-answer {
+                padding: 0 12px 12px 28px;
+                color: var(--text-secondary);
+                font-size: var(--font-size-sm);
+                line-height: 1.55;
             }
         `,
     ];
 
     static properties = {
         onExternalLinkClick: { type: Function },
-        keybinds: { type: Object },
     };
 
     constructor() {
         super();
         this.onExternalLinkClick = () => {};
-        this.keybinds = cheatingDaddy.getDefaultKeybinds();
-        this._loadKeybinds();
-    }
-
-    async _loadKeybinds() {
-        try {
-            const keybinds = await cheatingDaddy.storage.getKeybinds();
-            if (keybinds) {
-                this.keybinds = { ...cheatingDaddy.getDefaultKeybinds(), ...keybinds };
-                this.requestUpdate();
-            }
-        } catch (error) {
-            console.error('Error loading keybinds:', error);
-        }
-    }
-
-    _formatKeybind(keybind) {
-        return keybind.split('+').map(key => html`<span class="key">${key}</span>`);
-    }
-
-    _open(url) {
-        this.onExternalLinkClick(url);
     }
 
     render() {
-        const shortcutRows = [
-            ['Move Window Up', this.keybinds.moveUp],
-            ['Move Window Down', this.keybinds.moveDown],
-            ['Move Window Left', this.keybinds.moveLeft],
-            ['Move Window Right', this.keybinds.moveRight],
-            ['Toggle Visibility', this.keybinds.toggleVisibility],
-            ['Toggle Click-through', this.keybinds.toggleClickThrough],
-            ['Ask Next Step', this.keybinds.nextStep],
-            ['Scroll Response Up', this.keybinds.scrollUp],
-            ['Scroll Response Down', this.keybinds.scrollDown],
-            ['Quit', this.keybinds.quit],
-        ];
-
         return html`
             <div class="unified-page">
                 <div class="unified-wrap">
-                    <div class="page-title">Help</div>
+                    <div class="page-title">Help & Support</div>
 
                     <section class="surface">
-                        <div class="surface-title">Support</div>
-                        <div class="link-row">
-                            <button class="link-button" @click=${() => this._open('https://cheatingdaddy.com')}>Website</button>
-                            <button class="link-button" @click=${() => this._open('https://github.com/sohzm/cheating-daddy')}>GitHub</button>
-                            <button class="link-button" @click=${() => this._open('https://discord.gg/GCBdubnXfJ')}>Discord</button>
+                        <div class="row">
+                            <div class="surface-title">Website</div>
+                            <button class="link-button" @click=${() => this.onExternalLinkClick(PROJECT_URL)}>GitHub</button>
                         </div>
                     </section>
 
                     <section class="surface">
-                        <div class="surface-title">Keyboard Shortcuts</div>
-                        <div class="shortcut-grid">
-                            ${shortcutRows.map(
-                                ([label, keys]) => html`
-                                    <div class="shortcut-row">
-                                        <span class="shortcut-label">${label}</span>
-                                        <span class="shortcut-keys">${this._formatKeybind(keys)}</span>
-                                    </div>
-                                `
-                            )}
+                        <div class="surface-title">Contact Us</div>
+                        <div class="row-text">QQ Group: To be added</div>
+                    </section>
+
+                    <section class="surface">
+                        <div class="surface-title">Frequently Asked Questions</div>
+                        <div class="faq-list">
+                            <details class="faq-item">
+                                <summary class="faq-question">How do I start a session?</summary>
+                                <div class="faq-answer">Configure the chat and transcription API keys on the Home page, then click Start.</div>
+                            </details>
                         </div>
                     </section>
                 </div>
