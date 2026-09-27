@@ -1,6 +1,7 @@
 const { BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('node:path');
 const storage = require('../storage');
+const { getDefaultKeybinds } = require('./keybinds');
 
 let mouseEventsIgnored = false;
 
@@ -85,30 +86,9 @@ function createWindow(sendToRenderer) {
     return mainWindow;
 }
 
-function getDefaultKeybinds() {
-    const isMac = process.platform === 'darwin';
-    return {
-        moveUp: isMac ? 'Alt+Up' : 'Ctrl+Up',
-        moveDown: isMac ? 'Alt+Down' : 'Ctrl+Down',
-        moveLeft: isMac ? 'Alt+Left' : 'Ctrl+Left',
-        moveRight: isMac ? 'Alt+Right' : 'Ctrl+Right',
-        toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
-        toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
-        nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-        scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
-        scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
-        // 用方括号而非方向键：上下键已经用来滚动字幕，而 Ctrl+Alt+Up/Down 在 Windows 上被显卡驱动占用做屏幕旋转。
-        detailPrev: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+[',
-        detailNext: isMac ? 'Cmd+Shift+]' : 'Ctrl+Shift+]',
-        emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
-        toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
-        quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
-    };
-}
-
 function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
-    // 必须与默认表合并，不能直接信传入的：设置页自己抄了一份默认键位表，两边漂移时缺键不是中性的——下面
-    // 每处注册都被 `if (keybinds.X)` 守着，缺的那个会静默地永不注册。
+    // 必须与默认表合并，不能直接信传入的：设置页存的是用户改过的那几项，缺键不是中性的——下面每处注册都被
+    // `if (keybinds.X)` 守着，缺的那个会静默地永不注册。
     keybinds = { ...getDefaultKeybinds(), ...(keybinds || {}) };
 
     console.log('Updating global shortcuts with:', keybinds);
@@ -360,7 +340,6 @@ function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
 
 module.exports = {
     createWindow,
-    getDefaultKeybinds,
     updateGlobalShortcuts,
     setupWindowIpcHandlers,
 };

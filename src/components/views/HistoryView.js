@@ -1,12 +1,11 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
-import { conversationStyles, renderMarkdown } from './conversationStyles.js';
+import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
 
 export class HistoryView extends LitElement {
     static styles = [
         unifiedPageStyles,
-        // The transcript's look, shared with the live view: a recorded session is shown as the same
-        // conversation, so the two must not be able to drift apart. The local rules below come last.
+        // 转录的外观与实时视图共用：录下来的会话要显示成同一场对话，两边不能漂移。本地规则放在后面。
         conversationStyles,
         css`
             .unified-page {
@@ -71,8 +70,7 @@ export class HistoryView extends LitElement {
                 background: var(--bg-hover);
             }
 
-            /* Takes the free space so the label sits next to the checkbox and the badge is pushed to the
-               far edge; space-between alone would centre the label between the two. */
+            /* 占掉剩余空间：标签贴着复选框，徽章被推到最右。只用 space-between 会把标签居中。 */
             .session-left {
                 flex: 1;
                 min-width: 0;
@@ -154,11 +152,8 @@ export class HistoryView extends LitElement {
                 background: var(--bg-elevated);
             }
 
-            /* The basis is what keeps the sentence readable. With flex:1 (= basis 0) and a row that does
-               not wrap, the buttons below — all nowrap, so unshrinkable past their own text — leave the
-               count only its min-content width, and the confirmation sentence stacks one word per line. A
-               240px basis the row cannot meet pushes the buttons onto their own line instead, so the
-               sentence gets the whole width. */
+            /* 这个 basis 决定确认句还读不读得通：换成 flex:1（basis 0）又不换行时，下面那排 nowrap 按钮压不掉
+               自身文字宽度，计数只剩 min-content，句子会一词一行。240px 撑不下时按钮被顶到下一行，句子独占整宽。 */
             .selection-count {
                 flex: 1 1 240px;
                 min-width: 0;
@@ -166,7 +161,7 @@ export class HistoryView extends LitElement {
                 font-size: var(--font-size-sm);
             }
 
-            /* One item, so a wrap moves the whole set down rather than splitting it. */
+            /* 整组只有一个元素，所以换行时它整体下移，而不会被拆开。 */
             .bar-actions {
                 display: flex;
                 align-items: center;
@@ -218,9 +213,8 @@ export class HistoryView extends LitElement {
                 color: var(--danger);
             }
 
-            /* Sized and selectable exactly like the live transcript, which carries both on its own scroll
-               container rather than on the bubbles: a recorded session then reads at the size and leading
-               the same session was read at, and follows the font-size setting. */
+            /* 字号与可选中范围跟实时转录一模一样（那也是挂在滚动容器上而非气泡上）：录下来的会话读起来和当时
+               一致，并且跟随字号设置。 */
             .details-scroll {
                 overflow-y: auto;
                 flex: 1;
@@ -244,8 +238,8 @@ export class HistoryView extends LitElement {
                 cursor: pointer;
             }
 
-            /* One turn: its parts, each of which is a meta line over a bubble. The bubble look itself —
-               sides, chrome, markdown — comes from conversationStyles, the same rules the live view uses. */
+            /* 一轮：若干 part，每个是 meta 行 + 气泡。气泡本身（朝向、外观、markdown）来自 conversationStyles，
+               与实时视图是同一份规则。 */
             .turn {
                 display: flex;
                 flex-direction: column;
@@ -257,9 +251,8 @@ export class HistoryView extends LitElement {
                 flex-direction: column;
             }
 
-            /* The label, the time and the references sit above the bubble rather than inside it: an answer
-               is markdown, and rendering it replaces the body's contents wholesale, so anything written
-               into the body would be lost on the next pass. */
+            /* 标签、时间和引用放在气泡上方而不是里面：回答是 markdown，渲染时整块替换正文，写进正文的内容下一
+               轮就没了。 */
             .meta-row {
                 display: flex;
                 align-items: baseline;
@@ -291,8 +284,8 @@ export class HistoryView extends LitElement {
                 border: 1px solid var(--border);
                 border-radius: var(--radius-sm);
                 background: var(--bg-elevated);
-                /* overflow:hidden drops the automatic content-based minimum, so without flex-shrink:0 this
-                   collapses to its 1px border in the timeline's flex column and clips the toggle away. */
+                /* overflow:hidden 去掉了基于内容的自动最小高度：没有 flex-shrink:0 它会在时间线的 flex 列里缩成
+                   1px 边框，把开关裁掉。 */
                 overflow: hidden;
                 flex-shrink: 0;
             }
@@ -397,8 +390,7 @@ export class HistoryView extends LitElement {
         try {
             this.loading = true;
             this.sessions = await cheatingDaddy.storage.getAllSessions();
-            // A deleted session must not keep counting towards the toolbar, and a selection built before
-            // a reload must never refer to an id the list no longer shows.
+            // 删掉的会话不能继续计入工具栏；刷新前建立的选中项也不能指向列表里已经没有的 id。
             this.selectedIds = this.selectedIds.filter(id => this.sessions.some(session => session.sessionId === id));
         } catch (error) {
             console.error('Error loading sessions:', error);
@@ -445,8 +437,7 @@ export class HistoryView extends LitElement {
         this.statusMessage = '';
     }
 
-    // Applies to the rows the search is currently showing, so "all" means what the user can see rather
-    // than every session on disk.
+    // 只作用于搜索当前显示出来的行：所以「全选」指的是用户看得见的那些，而不是磁盘上的全部会话。
     toggleSelectAll(visibleSessions) {
         const visibleIds = visibleSessions.map(session => session.sessionId);
         const allSelected = visibleIds.length > 0 && visibleIds.every(id => this.isSelected(id));
@@ -463,7 +454,7 @@ export class HistoryView extends LitElement {
         this.statusMessage = '';
     }
 
-    // The row body opens the session; the checkbox inside it is the one click that must not.
+    // 行主体打开会话；里面的复选框是唯一不该打开的那次点击。
     handleCardClick(event, sessionId) {
         if (event.target.closest('.session-check')) return;
         this.openSession(sessionId);
@@ -496,7 +487,7 @@ export class HistoryView extends LitElement {
         if (!this.selectedIds.length) return;
         try {
             const result = await cheatingDaddy.storage.exportSessions(this.selectedIds);
-            // A cancelled dialog is not an outcome worth reporting; the selection stays as it was.
+            // 取消对话框不算需要报告的结果；选中状态保持不变。
             if (result.canceled) return;
             this.statusType = result.success ? 'success' : 'error';
             this.statusMessage = result.success
@@ -567,24 +558,19 @@ export class HistoryView extends LitElement {
         });
     }
 
-    // The stored lists are parts of one conversation, not separate ones: a brief turn, its detailed twin
-    // and the screenshot summary of an image question all carry that question's sequence number as
-    // `order`, and a block of the candidate's own speech carries the one it was committed with. So rows
-    // are grouped by `order` and read as one timeline.
+    // 落盘的几份列表是同一场对话的不同部分，不是彼此独立的：精简轮、它的详细孪生、以及对图片提问的截图摘要，
+    // 都带着那个问题的序号 `order`；面试者自己的一段话带着它提交时的序号。所以行按 `order` 分组，读作一条时间线。
     //
-    // Ordering the rows by `order` rather than by timestamp is deliberate. Answers stream concurrently and
-    // finish out of order, so a timestamp sort would replay the interview in the order the model happened
-    // to finish answering rather than the order the questions were asked — orders 3 and 5 in one recorded
-    // session are a real instance of the two disagreeing.
+    // 按 `order` 而不是时间戳排序是刻意的：回答并发流式返回、结束顺序是乱的，按时间戳排就会按「模型答完」的顺序
+    // 回放面试，而不是按提问顺序；某个已录会话里 order 3 和 5 就是两者不一致的真实例子。
     //
-    // The candidate's speech keeps its place because the pipeline allocates its sequence number before
-    // the question that interrupted it: the block reads above that question, exactly where it was seen.
+    // 面试者的话能留在原位，是因为 pipeline 在打断它的那个问题之前就把它的序号分配好了：这段话读起来就在那个
+    // 问题上面，和当时看到的位置一致。
     collectTimeline(session) {
         const groups = new Map();
         const groupFor = (order, timestamp) => {
-            // `order` is absent or zero only in sessions written before it existed. Those fall back to
-            // being keyed by their own timestamp, so they stay separate rows instead of collapsing into
-            // one, and they sort last rather than jumping to the front.
+            // `order` 缺失或为 0 只出现在引入它之前写下的会话里：那些按自身时间戳做 key，于是仍是各自独立的一行
+            // 而不是挤成一坨，并且排在最后，而不是跳到最前。
             const numbered = Number.isFinite(order) && order > 0;
             const key = numbered ? `o${order}` : `t${timestamp}`;
             if (!groups.has(key)) {
@@ -593,8 +579,7 @@ export class HistoryView extends LitElement {
             return groups.get(key);
         };
 
-        // The transcript and the detail turn both store the same question text for the same `order`, so
-        // only the first one seen is kept: the alternative is the page showing every question twice.
+        // 转录和详细轮为同一个 `order` 都存了同一句提问，所以只留先见到的那个：否则页面上每个问题会出现两次。
         const parts = [
             ...(session.conversationHistory || []).map(turn => ({
                 role: 'question',
@@ -621,8 +606,7 @@ export class HistoryView extends LitElement {
                 order: turn.order,
                 usedKnowledge: turn.used_knowledge || [],
             })),
-            // Absent from sessions recorded before the candidate's own speech was written out, which is
-            // why this list is tolerated missing rather than treated as a broken file.
+            // 在面试者发言开始落盘之前录下的会话里没有这份列表，所以这里容忍它缺失，而不是当成损坏的文件。
             ...(session.candidateHistory || []).map(entry => ({
                 role: 'candidate',
                 content: entry.text,
@@ -638,17 +622,15 @@ export class HistoryView extends LitElement {
             group.parts.push(part);
         });
 
-        // The question opens its row; the answers follow in the order they were actually produced, which
-        // is why the screenshot summary can sit ahead of the detailed answer for the same image.
+        // 提问开一行，回答按实际产生的先后跟在后面——所以截图摘要可以排在同一张图的详细回答前面。
         const rank = part => (part.role === 'question' ? 0 : 1);
         return [...groups.values()]
             .filter(group => group.parts.length > 0)
             .sort((a, b) => a.order - b.order || this._firstTimestamp(a) - this._firstTimestamp(b))
             .map(group => {
                 group.parts.sort((a, b) => rank(a) - rank(b) || a.timestamp - b.timestamp);
-                // Where the markdown pass finds each answer again. The parts are already in their final
-                // order here, so position is enough to tell two of the same role apart, and the pass
-                // recomputes the same list, which is what makes the key stable between the two.
+                // markdown 那一轮靠这个 key 把每个回答找回来。此时顺序已定，位置就足以区分同角色的两条；那一轮
+                // 会重算出同一个列表，这正是两边 key 稳定的原因。
                 group.parts.forEach((part, index) => {
                     part.key = `${group.order}:${part.role}:${index}`;
                 });
@@ -656,10 +638,8 @@ export class HistoryView extends LitElement {
             });
     }
 
-    // An answer is markdown, and markdown cannot be expressed in the template without re-parsing it on
-    // every update, so the body is filled in after the fact — the same pass the live view runs, minus the
-    // streaming: a recorded session renders once, and the memo keeps a selection or a search from
-    // re-parsing anything that has not changed.
+    // 回答是 markdown，写进模板就意味着每次更新都重解析，所以正文事后填充——和实时视图同一套，只是没有流式：
+    // 录下来的会话只渲染一次，memo 让选中和搜索都不会重解析没变过的内容。
     updated() {
         if (!this.selectedSession) return;
 
@@ -667,11 +647,7 @@ export class HistoryView extends LitElement {
             for (const part of group.parts) {
                 if (part.role === 'question' || part.role === 'candidate') continue;
 
-                const el = this.renderRoot.querySelector(`[data-timeline-id="${part.key}"]`);
-                if (!el || el._renderedText === part.content) continue;
-
-                el.innerHTML = renderMarkdown(part.content);
-                el._renderedText = part.content;
+                syncMarkdownInto(this.renderRoot.querySelector(`[data-timeline-id="${part.key}"]`), part.content, part.content);
             }
         }
     }
@@ -680,8 +656,7 @@ export class HistoryView extends LitElement {
         return Math.min(...group.parts.map(part => part.timestamp || 0));
     }
 
-    // Folded away by default: the profile and prompt are what the session was set up with, not part of
-    // what was said in it, and every session of this app carries the same profile anyway.
+    // 默认折叠：profile 和 prompt 是会话建立时的设定，不是说过的话；何况这个应用每个会话的档位都一样。
     renderContextStrip() {
         const profile = this.selectedSession.profile;
         const prompt = this.selectedSession.customPrompt;
@@ -717,14 +692,12 @@ export class HistoryView extends LitElement {
     renderTimeline() {
         const rows = this.collectTimeline(this.selectedSession);
         if (!rows.length) return html`<div class="empty">No conversation data.</div>`;
-        // Grouped so the gap between turns is the timeline's own and not the one that would otherwise
-        // open up between a meta line and the bubble it belongs to.
+        // 这样轮与轮之间的间距属于时间线本身，而不是 meta 行和它所属气泡之间多出来的那道缝。
         return rows.map(group => html`<div class="turn">${group.parts.map(part => this.renderPart(part))}</div>`);
     }
 
-    // The sides are the live transcript's: the interviewer on the left, the candidate's own speech and the
-    // assistant's answers on the right. Without the label the two answers would read as one interrupted
-    // answer, since they are two replies to the same question.
+    // 两侧与实时转录一致：面试官在左，面试者自己的话和助手的回答在右。没有标签，同一问题的两份回答会读成一份
+    // 被打断的回答。
     renderPart(part) {
         const time = this.formatTime(part.timestamp);
 
@@ -812,9 +785,8 @@ export class HistoryView extends LitElement {
         `;
     }
 
-    // Only there once something is selected, and the delete button's first click only arms it: the second
-    // click is the confirmation. There is no separate dialog to escape from, which matters in a window
-    // that floats above everything else.
+    // 只有选中了东西才出现；删除按钮首次点击只是上膛，第二次才是确认。没有单独的对话框要退出——对一个浮在所有
+    // 窗口之上的窗口来说，这点很重要。
     renderSelectionBar(filteredSessions) {
         if (this.statusMessage && !this.selectedIds.length) {
             return html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>`;

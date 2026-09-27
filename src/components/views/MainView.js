@@ -43,8 +43,6 @@ export class MainView extends LitElement {
             margin-bottom: var(--space-md);
         }
 
-        /* ── Form controls ── */
-
         .form-group {
             display: flex;
             flex-direction: column;
@@ -168,8 +166,6 @@ export class MainView extends LitElement {
             text-decoration: underline;
         }
 
-        /* ── Start button ── */
-
         .start-button {
             background: #e8e8e8;
             color: #111111;
@@ -218,7 +214,6 @@ export class MainView extends LitElement {
         onStart: { type: Function },
         onExternalLink: { type: Function },
         isInitializing: { type: Boolean },
-        // Internal state
         _chatBaseUrl: { state: true },
         _chatKey: { state: true },
         _chatModel: { state: true },
@@ -278,8 +273,6 @@ export class MainView extends LitElement {
         }
     }
 
-    // ── Persistence ──
-
     async _saveChatBaseUrl(val) {
         this._chatBaseUrl = val;
         this._keyError = false;
@@ -315,8 +308,6 @@ export class MainView extends LitElement {
         this.requestUpdate();
     }
 
-    // ── Start ──
-
     _handleStart() {
         if (this.isInitializing) return;
 
@@ -337,8 +328,6 @@ export class MainView extends LitElement {
             this.requestUpdate();
         }, 2000);
     }
-
-    // ── Render helpers ──
 
     _renderStartButton() {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -408,8 +397,6 @@ export class MainView extends LitElement {
         `;
     }
 
-    // ── Chat model ──
-
     _renderChatMode() {
         const hasError = this._keyError ? 'error' : '';
 
@@ -465,8 +452,6 @@ export class MainView extends LitElement {
         `;
     }
 
-    // ── Transcription ──
-
     _renderTranscriptionSection() {
         const hasError = this._keyError ? 'error' : '';
 
@@ -509,8 +494,6 @@ export class MainView extends LitElement {
             </details>
         `;
     }
-
-    // ── Main render ──
 
     render() {
         return html`

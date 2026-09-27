@@ -1,5 +1,27 @@
 import { css } from '../../assets/lit-core-2.7.4.min.js';
 
+// 滚动条只此一份：之前三处各写一遍，而且 hover 颜色已经漂移成两种。选择器故意不带前缀——影子根就是它的
+// 作用域，组件把它放进自己的 static styles 即可。
+export const scrollbarStyles = css`
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--border-strong);
+        border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #444444;
+    }
+`;
+
 export const unifiedPageStyles = css`
     * {
         box-sizing: border-box;

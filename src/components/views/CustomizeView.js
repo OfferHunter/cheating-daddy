@@ -1,7 +1,10 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
 import { unifiedPageStyles } from './sharedPageStyles.js';
 
-// Fast enough to follow speech, slow enough that the page is not repainting constantly.
+// 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
+const { ipcRenderer } = window.require('electron');
+
+// 快得跟得上说话，又不至于让页面一直在重绘。
 const METER_POLL_MS = 80;
 const METER_BAR_COUNT = [0, 1, 2, 3];
 
@@ -102,15 +105,14 @@ export class CustomizeView extends LitElement {
                 border-bottom: none;
             }
 
-            /* Label plus its level meter, kept as one left-hand cluster so the meter sits next to
-               the text instead of being pushed against the control on the right. */
+            /* 标签和它的电平表捆成左侧一组：否则表会被挤到右边贴着控件，离开它描述的那行字。 */
             .audio-source {
                 display: flex;
                 align-items: center;
                 gap: 10px;
             }
 
-            /* Four bars growing left to right, like a signal strength indicator. */
+            /* 四根柱子从左往右长，像信号强度那样。 */
             .meter {
                 display: flex;
                 align-items: flex-end;
@@ -226,7 +228,7 @@ export class CustomizeView extends LitElement {
         this.selectedLanguage = 'cmn-CN';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
-        this.keybinds = this.getDefaultKeybinds();
+        this.keybinds = cheatingDaddy.getDefaultKeybinds();
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
@@ -237,9 +239,8 @@ export class CustomizeView extends LitElement {
         this.backgroundTransparency = 0.48;
         this.textTransparency = 0.83;
         this.fontSize = 16;
-        // 'none' until the stored choice is read: the meters start on connect, which happens before
-        // _loadFromStorage resolves, and a placeholder of 'default' would open the system microphone on
-        // the way in even for a user who turned it off. The real device arrives via _refreshMicMeter.
+        // 读到存过的选择之前先填 'none'：电平表在 connectedCallback 里就启动，早于 _loadFromStorage 落地，
+        // 这期间若填 'default' 会把系统麦克风打开——哪怕用户已经关掉了它。真实设备由 _refreshMicMeter 补上。
         this.audioInputDeviceId = 'none';
         this.audioInputDevices = [];
         this.customPrompt = '';
@@ -257,8 +258,7 @@ export class CustomizeView extends LitElement {
         this._loadFromStorage();
     }
 
-    // The meters only run while this page is on screen: the preview captures are opened here and
-    // closed on the way out, so nothing is recorded while the user is looking at something else.
+    // 电平表只在本页可见时运行：预览采集在这里开、在离开时关，所以用户看别的页面时什么都不会被录。
     connectedCallback() {
         super.connectedCallback();
         this._isConnected = true;
@@ -276,15 +276,14 @@ export class CustomizeView extends LitElement {
     async _startAudioMeters() {
         if (!cheatingDaddy.audioMeter) return;
 
-        // Bars are painted straight into the DOM rather than through a reactive property: this
-        // would otherwise re-render the whole settings page several times a second.
+        // 柱子直接写进 DOM 而不走响应式属性：否则每秒会把整个设置页重渲好几次。
         clearInterval(this._meterTimer);
         this._meterTimer = setInterval(() => this._paintAudioMeters(), METER_POLL_MS);
 
         await cheatingDaddy.audioMeter.start(this.audioInputDeviceId);
     }
 
-    // Called again after the device list loads, which is usually later than the page mount.
+    // 设备列表加载完还要再调一次——它通常晚于页面挂载。
     _refreshMicMeter() {
         if (!this._isConnected || !cheatingDaddy.audioMeter) return;
         cheatingDaddy.audioMeter.setMic(this.audioInputDeviceId);
@@ -325,7 +324,7 @@ export class CustomizeView extends LitElement {
             this.chatContextTurns = prefs.chatContextTurns ?? 15;
             this.chatMaxTokens = prefs.chatMaxTokens ?? 128000;
             if (keybinds) {
-                this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
+                this.keybinds = { ...cheatingDaddy.getDefaultKeybinds(), ...keybinds };
             }
             this.updateAppearance();
             this.updateFontSize();
@@ -373,26 +372,6 @@ export class CustomizeView extends LitElement {
         ];
     }
 
-    getDefaultKeybinds() {
-        const isMac = cheatingDaddy.isMacOS || navigator.platform.includes('Mac');
-        return {
-            moveUp: isMac ? 'Alt+Up' : 'Ctrl+Up',
-            moveDown: isMac ? 'Alt+Down' : 'Ctrl+Down',
-            moveLeft: isMac ? 'Alt+Left' : 'Ctrl+Left',
-            moveRight: isMac ? 'Alt+Right' : 'Ctrl+Right',
-            toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
-            toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
-            nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-            scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
-            scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
-            detailPrev: isMac ? 'Cmd+Shift+[' : 'Ctrl+Shift+[',
-            detailNext: isMac ? 'Cmd+Shift+]' : 'Ctrl+Shift+]',
-            emergencyErase: isMac ? 'Cmd+Shift+E' : 'Ctrl+Shift+E',
-            toggleTheme: isMac ? 'Cmd+Shift+L' : 'Ctrl+Shift+L',
-            quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
-        };
-    }
-
     getKeybindActions() {
         return [
             { key: 'moveUp', name: 'Move Window Up', description: 'Move the app window up' },
@@ -426,10 +405,7 @@ export class CustomizeView extends LitElement {
 
     async saveKeybinds() {
         await cheatingDaddy.storage.setKeybinds(this.keybinds);
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.send('update-keybinds', this.keybinds);
-        }
+        ipcRenderer.send('update-keybinds', this.keybinds);
     }
 
     handleLanguageSelect(e) {
@@ -472,8 +448,7 @@ export class CustomizeView extends LitElement {
         await cheatingDaddy.storage.updatePreference('screenshotThinking', checked);
     }
 
-    // Chromium already exposes the system defaults as entries with deviceId 'default' and
-    // 'communications', so they are kept as-is and only their labels are tidied up.
+    // Chromium 本来就以 deviceId 'default' / 'communications' 暴露了系统默认设备，所以原样留着，只整理标签。
     async loadAudioDevices() {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -492,8 +467,7 @@ export class CustomizeView extends LitElement {
 
     async handleAudioInputDeviceChange(e) {
         this.audioInputDeviceId = e.target.value;
-        // The dropdown only controls the candidate's own channel: "Don't use Microphone" leaves the
-        // speaker path alone, and any concrete device adds the microphone alongside it.
+        // 这个下拉只管面试者自己那一路：「不使用麦克风」不动扬声器那路，选具体设备则是在它旁边加上麦克风。
         await cheatingDaddy.storage.updatePreference('audioInputDeviceId', this.audioInputDeviceId);
         this._refreshMicMeter();
         this.requestUpdate();
@@ -516,8 +490,7 @@ export class CustomizeView extends LitElement {
         this.requestUpdate();
     }
 
-    // Dragging only rewrites the two alpha variables; every token references them, so the change
-    // lands in one frame without rebuilding colour strings.
+    // 拖拽只改写那两个透明度变量；所有颜色 token 都引用它们，所以一帧内就生效，无需重建颜色字符串。
     async handleBackgroundTransparencyChange(e) {
         this.backgroundTransparency = parseFloat(e.target.value);
         await cheatingDaddy.storage.updatePreference('backgroundTransparency', this.backgroundTransparency);
@@ -589,8 +562,8 @@ export class CustomizeView extends LitElement {
             case 'Backslash':
                 mainKey = '\\';
                 break;
-            // Taken from e.code, not e.key: with Shift held these produce '{' and '}', which is a
-            // different string from the default 'Ctrl+Shift+[' and would never register.
+            // 取自 e.code 而不是 e.key：按住 Shift 时它们变成 '{' 和 '}'，与默认的 'Ctrl+Shift+[' 不是同一个
+            // 字符串，永远不会注册成功。
             case 'BracketLeft':
                 mainKey = '[';
                 break;
@@ -612,12 +585,9 @@ export class CustomizeView extends LitElement {
     }
 
     async resetKeybinds() {
-        this.keybinds = this.getDefaultKeybinds();
+        this.keybinds = cheatingDaddy.getDefaultKeybinds();
         await cheatingDaddy.storage.setKeybinds(null);
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.send('update-keybinds', this.keybinds);
-        }
+        ipcRenderer.send('update-keybinds', this.keybinds);
         this.requestUpdate();
     }
 
@@ -628,11 +598,9 @@ export class CustomizeView extends LitElement {
         this.clearStatusType = '';
         this.requestUpdate();
         try {
-            // Mirror of DEFAULT_PREFERENCES in src/storage.js, kept in sync by hand. customPrompt and
-            // knowledgeDir are deliberately absent: they are the preferences that hold content the user
-            // supplied — instructions and a pointer to their own files — rather than knobs, so a reset
-            // leaves them alone. detailMode and the three thinking switches are knobs, so they reset with
-            // the rest.
+            // 手抄的 src/storage.js 里那份 DEFAULT_PREFERENCES，改一边必须改另一边。customPrompt 和
+            // knowledgeDir 故意不在其中：它们装的是用户自己给的内容（指令、以及指向他自己文件的路径）而不是
+            // 旋钮，所以「恢复默认」不碰它们；detailMode 和三个 thinking 开关是旋钮，跟着一起重置。
             const defaults = {
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
@@ -657,15 +625,10 @@ export class CustomizeView extends LitElement {
                 await cheatingDaddy.storage.updatePreference(key, value);
             }
 
-            // Restore keybinds
-            this.keybinds = this.getDefaultKeybinds();
+            this.keybinds = cheatingDaddy.getDefaultKeybinds();
             await cheatingDaddy.storage.setKeybinds(null);
-            if (window.require) {
-                const { ipcRenderer } = window.require('electron');
-                ipcRenderer.send('update-keybinds', this.keybinds);
-            }
+            ipcRenderer.send('update-keybinds', this.keybinds);
 
-            // Apply to local state
             this.selectedLanguage = defaults.selectedLanguage;
             this.selectedImageQuality = defaults.selectedImageQuality;
             this.audioInputDeviceId = defaults.audioInputDeviceId;
@@ -684,11 +647,9 @@ export class CustomizeView extends LitElement {
             this.chatContextTurns = defaults.chatContextTurns;
             this.chatMaxTokens = defaults.chatMaxTokens;
 
-            // Notify parent callbacks
             this.onLanguageChange(defaults.selectedLanguage);
             this.onImageQualityChange(defaults.selectedImageQuality);
 
-            // Apply visual changes
             this.updateFontSize();
             await cheatingDaddy.theme.save(defaults.theme, defaults.backgroundTransparency, defaults.textTransparency);
 
@@ -719,10 +680,7 @@ export class CustomizeView extends LitElement {
                 this.clearStatusMessage = 'Closing application...';
                 this.requestUpdate();
                 setTimeout(async () => {
-                    if (window.require) {
-                        const { ipcRenderer } = window.require('electron');
-                        await ipcRenderer.invoke('quit-application');
-                    }
+                    await ipcRenderer.invoke('quit-application');
                 }, 1000);
             }, 2000);
         } catch (error) {
@@ -735,7 +693,7 @@ export class CustomizeView extends LitElement {
         }
     }
 
-    // Bars are lit by class, not by a binding, so the per-frame update can skip Lit entirely.
+    // 柱子靠 class 点亮而不是靠绑定，这样每帧的更新可以完全绕过 Lit。
     renderMeter(kind) {
         return html`
             <div class="meter" data-meter=${kind}>${METER_BAR_COUNT.map(() => html`<span class="meter-bar"></span>`)}</div>

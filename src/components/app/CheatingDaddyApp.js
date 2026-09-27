@@ -1,4 +1,5 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
+import { scrollbarStyles } from '../views/sharedPageStyles.js';
 import { MainView } from '../views/MainView.js';
 import { CustomizeView } from '../views/CustomizeView.js';
 import { HelpView } from '../views/HelpView.js';
@@ -8,8 +9,12 @@ import { OnboardingView } from '../views/OnboardingView.js';
 import { AICustomizeView } from '../views/AICustomizeView.js';
 import { FeedbackView } from '../views/FeedbackView.js';
 
+// 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
+const { ipcRenderer } = window.require('electron');
+
 export class CheatingDaddyApp extends LitElement {
-    static styles = css`
+    static styles = [
+        css`
         * {
             box-sizing: border-box;
             font-family: var(--font);
@@ -28,8 +33,6 @@ export class CheatingDaddyApp extends LitElement {
             background: var(--bg-app);
             color: var(--text-primary);
         }
-
-        /* ── Full app shell: top bar + sidebar/content ── */
 
         .app-shell {
             display: flex;
@@ -63,7 +66,7 @@ export class CheatingDaddyApp extends LitElement {
             display: none;
         }
 
-        /* Hide / quit, at the top right of every page. The drag region takes the space in front of them. */
+        /* 隐藏 / 退出，固定在每页右上角；它们前面的那片空白归拖拽区。 */
         .window-controls {
             display: flex;
             align-items: center;
@@ -72,8 +75,7 @@ export class CheatingDaddyApp extends LitElement {
             -webkit-app-region: no-drag;
         }
 
-        /* The one button shape in the header: circular, quiet until hovered. Used for the session
-           controls on the left of the live bar and the window controls on the right. */
+        /* 顶栏里唯一的按钮形状：圆形，不悬停时几乎看不见。直播栏左侧的会话按钮和右侧的窗口按钮都用它。 */
         .icon-btn {
             display: flex;
             align-items: center;
@@ -106,7 +108,7 @@ export class CheatingDaddyApp extends LitElement {
             color: #fff;
         }
 
-        /* Paused: the ring is the whole indicator, since the mic light stays on through a soft pause. */
+        /* 暂停态全靠这圈描边：软暂停时麦克风指示灯仍然亮着，亮着本身不表示还在收音。 */
         .icon-btn.active {
             color: var(--accent);
             border-color: var(--accent);
@@ -255,8 +257,6 @@ export class CheatingDaddyApp extends LitElement {
             padding: var(--space-xs) var(--space-md);
         }
 
-        /* ── Main content area ── */
-
         .content {
             flex: 1;
             overflow: hidden;
@@ -265,7 +265,6 @@ export class CheatingDaddyApp extends LitElement {
             background: var(--bg-app);
         }
 
-        /* Live mode top bar */
         .live-bar {
             position: relative;
             display: flex;
@@ -321,7 +320,6 @@ export class CheatingDaddyApp extends LitElement {
             color: var(--text-primary);
         }
 
-        /* Content inner */
         .content-inner {
             flex: 1;
             overflow-y: auto;
@@ -334,32 +332,15 @@ export class CheatingDaddyApp extends LitElement {
             flex-direction: column;
         }
 
-        /* Onboarding fills everything */
         .fullscreen {
             position: fixed;
             inset: 0;
             z-index: 100;
             background: var(--bg-app);
         }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--border-strong);
-            border-radius: 3px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #444444;
-        }
-    `;
+        `,
+        scrollbarStyles,
+    ];
 
     static properties = {
         currentView: { type: String },
@@ -368,8 +349,7 @@ export class CheatingDaddyApp extends LitElement {
         sessionActive: { type: Boolean },
         selectedLanguage: { type: String },
         messages: { type: Array },
-        // Held here rather than in the assistant view, which is rebuilt on every navigation: the
-        // detailed answers have to outlive a trip to another page, exactly like the transcript does.
+        // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
         detailCurrent: { type: Number },
         selectedScreenshotInterval: { type: String },
@@ -392,18 +372,15 @@ export class CheatingDaddyApp extends LitElement {
         this.layoutMode = 'normal';
         this.messages = [];
         this._msgSeq = 0;
-        // Soft pause: the main process keeps feeding the recognizer silence, so resuming is instant and
-        // nothing has to be reconnected.
+        // 软暂停：主进程持续给识别器喂静音，所以恢复是瞬时的，什么都不用重连。
         this._paused = false;
-        // Sequence numbers below which the main process has forgotten. Only ever used to refuse opening a
-        // new bubble for a turn dispatched before the clear — a bubble that already exists keeps updating,
-        // because it may be mid-stream and freezing it is exactly the truncation to avoid.
+        // 低于该序号的轮次主进程已经忘了。只用来拒绝为「清空之前派发的轮次」开新气泡——已存在的气泡照旧更新，
+        // 因为它可能正在流式，冻住它恰恰就是那个必须避免的截断。
         this._turnFloorId = 0;
         this._detailFloorId = 0;
         this.detailMessages = [];
         this.detailCurrent = null;
-        // Follow the newest detailed answer until the user pages back to an older one, at which point a
-        // new one must not yank the pane away from what they are reading.
+        // 一直跟随最新的详细回答，直到用户翻回旧的一条——此后新回答不能再把面板从正在读的那条上拽走。
         this._detailFollowing = true;
         this._isClickThrough = false;
         this._storageLoaded = false;
@@ -434,7 +411,7 @@ export class CheatingDaddyApp extends LitElement {
                 this.requestUpdate();
             }
         } catch (e) {
-            // silently ignore
+            // 检查更新失败无所谓，静默。
         }
     }
 
@@ -460,52 +437,43 @@ export class CheatingDaddyApp extends LitElement {
     connectedCallback() {
         super.connectedCallback();
 
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
-            ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
-            ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
-            ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
-            ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
-            ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
-            ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
-                this._isClickThrough = isEnabled;
-            });
-            ipcRenderer.on('reconnect-failed', (_, data) => this.addNewResponse(data.message));
-            ipcRenderer.on('new-detail-response', (_, data) => this.addDetailResponse(data));
-            ipcRenderer.on('update-detail-response', (_, data) => this.updateDetailResponse(data));
-            ipcRenderer.on('detail-response-complete', (_, data) => this.completeDetailResponse(data));
-            ipcRenderer.on('detail-tool-used', (_, data) => this.handleDetailToolUsed(data));
-            // Registered here rather than in the assistant view: the shortcuts have to be caught while
-            // another page is showing too, and only the app element is around for the whole session.
-            ipcRenderer.on('detail-prev', () => this.stepDetail(-1));
-            ipcRenderer.on('detail-next', () => this.stepDetail(1));
-        }
+        ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
+        ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
+        ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
+        ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
+        ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
+        ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
+        ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
+            this._isClickThrough = isEnabled;
+        });
+        ipcRenderer.on('reconnect-failed', (_, data) => this.addNewResponse(data.message));
+        ipcRenderer.on('new-detail-response', (_, data) => this.addDetailResponse(data));
+        ipcRenderer.on('update-detail-response', (_, data) => this.updateDetailResponse(data));
+        ipcRenderer.on('detail-response-complete', (_, data) => this.completeDetailResponse(data));
+        ipcRenderer.on('detail-tool-used', (_, data) => this.handleDetailToolUsed(data));
+        // 挂在 app 元素而不是实时视图上：快捷键在别的页面显示时也要生效，而整个会话里只有 app 元素始终在。
+        ipcRenderer.on('detail-prev', () => this.stepDetail(-1));
+        ipcRenderer.on('detail-next', () => this.stepDetail(1));
     }
 
     disconnectedCallback() {
         super.disconnectedCallback();
         this._stopTimer();
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            ipcRenderer.removeAllListeners('new-response');
-            ipcRenderer.removeAllListeners('update-response');
-            ipcRenderer.removeAllListeners('response-complete');
-            ipcRenderer.removeAllListeners('transcription-update');
-            ipcRenderer.removeAllListeners('transcription-final');
-            ipcRenderer.removeAllListeners('update-status');
-            ipcRenderer.removeAllListeners('click-through-toggled');
-            ipcRenderer.removeAllListeners('reconnect-failed');
-            ipcRenderer.removeAllListeners('new-detail-response');
-            ipcRenderer.removeAllListeners('update-detail-response');
-            ipcRenderer.removeAllListeners('detail-response-complete');
-            ipcRenderer.removeAllListeners('detail-tool-used');
-            ipcRenderer.removeAllListeners('detail-prev');
-            ipcRenderer.removeAllListeners('detail-next');
-        }
+        ipcRenderer.removeAllListeners('new-response');
+        ipcRenderer.removeAllListeners('update-response');
+        ipcRenderer.removeAllListeners('response-complete');
+        ipcRenderer.removeAllListeners('transcription-update');
+        ipcRenderer.removeAllListeners('transcription-final');
+        ipcRenderer.removeAllListeners('update-status');
+        ipcRenderer.removeAllListeners('click-through-toggled');
+        ipcRenderer.removeAllListeners('reconnect-failed');
+        ipcRenderer.removeAllListeners('new-detail-response');
+        ipcRenderer.removeAllListeners('update-detail-response');
+        ipcRenderer.removeAllListeners('detail-response-complete');
+        ipcRenderer.removeAllListeners('detail-tool-used');
+        ipcRenderer.removeAllListeners('detail-prev');
+        ipcRenderer.removeAllListeners('detail-next');
     }
-
-    // ── Timer ──
 
     _startTimer() {
         this._stopTimer();
@@ -532,30 +500,23 @@ export class CheatingDaddyApp extends LitElement {
         return `${m}:${pad(s)}`;
     }
 
-    // ── Status & Responses ──
-
     setStatus(text) {
         this.statusText = text;
     }
 
-    // The transcript arrives as a whole-turn snapshot: rewrite the bubble that is still open, or
-    // start a new one. A settled bubble is never touched again. Both speakers stream at once, so the
-    // search runs from the end for the matching role — an open bubble of one speaker is never
-    // rewritten by the other, and a bubble keeps the position where its speaker started talking.
+    // 转录是以「整轮快照」到达的：要么改写还开着的那条气泡，要么新开一条；已落定的气泡永不再动。两个说话人
+    // 同时流式，所以查找从尾部开始并按角色匹配——一个人的开着的某条气泡不会被另一个人改写，气泡也保留在它主人
+    // 开始说话时的位置。
     upsertTranscription(text, final, speaker = 'interviewer', blockId = null) {
         const role = speaker === 'user' ? 'user' : 'interviewer';
-        // `final` settles a row for the walk below. It means that for a screenshot's question line, but
-        // not for the candidate's plain text: the next fragment continues the same bubble, so the flag
-        // has no meaning there and is held down whatever the event says.
+        // `final` 是给下面那个遍历看的落定标记。它对截图那行问题有意义，对面试者的普通文本没有：下一个片段接
+        // 着同一条气泡写，标记在那里没有含义，所以无论事件怎么说都按下不表。
         const settled = role === 'user' ? false : final;
 
-        // A row that arrived with a block id belongs to that block and is rewritten in place, never by
-        // position: a question recognized while the block was still open is appended below it, and the
-        // block's own final has to find its row again, above that question. The pipeline hands out a new
-        // id when a question closes the block, so the next thing said still starts a new bubble. Two
-        // kinds of row work this way — the candidate's own speech, and the line a screenshot's question
-        // is written up as, which is found by its id rather than by role since it is shown as the
-        // interviewer's.
+        // 带 block id 到达的行属于那个块，只按 id 原地改写，绝不按位置：块还没关时识别出的一句话会被追加在它
+        // 下面，而这个块自己的 final 必须越过那句话再找回自己的行。问题关掉块时流水线会发一个新 id，所以接下
+        // 来说的话仍然开一条新气泡。有两类行走这条路——面试者自己的发言，以及截图问题写成的那行；后者因为它显示
+        // 成面试官的样子，只能靠 id 而不是靠角色找到。
         if (role === 'user' || blockId !== null) {
             for (let i = this.messages.length - 1; i >= 0; i--) {
                 const message = this.messages[i];
@@ -574,8 +535,7 @@ export class CheatingDaddyApp extends LitElement {
             const message = this.messages[i];
             if (message.role !== role) continue;
             if (message.final) break;
-            // An open row that belongs to a block is not this speaker's open row, so it is stepped over
-            // rather than rewritten. A settled one still stops the walk above, exactly as before.
+            // 属于某个块的开着的行不是这个说话人的开口行，跳过而不是改写。已落定的行仍然像以前一样终止遍历。
             if (message.blockId != null) continue;
 
             const next = [...this.messages];
@@ -600,13 +560,11 @@ export class CheatingDaddyApp extends LitElement {
         this.requestUpdate();
     }
 
-    // Turns stream concurrently, so a bubble can no longer be located by being the last one: an
-    // interviewer bubble is appended between two live answers. `turnId` is what routes a token to
-    // its own bubble. A bare string still arrives from the reconnect handler, which has no turn behind it.
+    // 各轮并发流式，所以气泡不能再靠「最后一条」来定位：面试官的气泡会被插在两条同时进行的回答之间。把 token
+    // 路由到它自己的气泡靠的是 `turnId`。重连处理函数仍会送来裸字符串——它背后没有轮次。
     addNewResponse(data) {
         const { turnId = null, text = '', final = false } = typeof data === 'string' ? { text: data, final: true } : data;
-        // A turn dispatched before the context was cleared must not reappear after it. Only creation is
-        // blocked; a bubble that already exists is still updated by the two callers below.
+        // 清空上下文之前派发的轮次不得在清空之后重新出现。只拦创建；已存在的气泡由下面两个调用方继续更新。
         if (turnId !== null && turnId <= this._turnFloorId) return;
         this.messages = [...this.messages, { id: ++this._msgSeq, turnId, role: 'assistant', text, ts: Date.now(), final }];
         this.requestUpdate();
@@ -614,7 +572,7 @@ export class CheatingDaddyApp extends LitElement {
 
     updateCurrentResponse(data) {
         const { turnId = null, text = '' } = typeof data === 'string' ? { text: data } : data || {};
-        // Without an id there is no bubble to target, so fall back to appending a finished one.
+        // 没有 id 就没有可瞄准的气泡，退化成追加一条已完成的。
         if (turnId === null) {
             this.addNewResponse({ text, final: true });
             return;
@@ -639,19 +597,16 @@ export class CheatingDaddyApp extends LitElement {
         this._replaceMessage(index, { final: true });
     }
 
-    // ── Detailed answers ──
-
     _detailIndex(detailId) {
         return this.detailMessages.findIndex(m => m.detailId === detailId);
     }
 
-    // Detailed answers are keyed by their own id, never by position: the main process drops all but the
-    // last few, and a position that shifts under the pane would silently show the wrong answer.
+    // 详细回答一律按自己的 id 索引，绝不按位置：主进程会丢掉除最后几条以外的全部，而位置在面板眼皮底下变化
+    // 会悄无声息地显示错的那条回答。
     _ensureDetailRow(detailId, turnSeq, question) {
         const index = this._detailIndex(detailId);
         if (index !== -1) return index;
-        // Same rule as the transcript: an answer that was requested before the clear may not open a row
-        // afterwards. A row that already exists was checked above and keeps updating to completion.
+        // 和转录同一条规则：清空之前请求的回答不得在清空之后开行。已存在的行上面已经返回，会一直更新到完成。
         if (detailId <= this._detailFloorId) return -1;
 
         this.detailMessages = [
@@ -700,8 +655,8 @@ export class CheatingDaddyApp extends LitElement {
         const { detailId = null, turnSeq = null, question = '', ok = true, error = '', usedKnowledge = [], truncated = false } = data || {};
         if (detailId === null) return;
 
-        // A request that failed before its first token never opened a row, so the completion is what has
-        // to bring the failure into view rather than being dropped for want of somewhere to land.
+        // 在第一个 token 之前就失败的请求从没开过行，所以得由完成事件把这次失败带进视野，而不是因为没有落点
+        // 被丢掉。
         const index = this._ensureDetailRow(detailId, turnSeq, question);
         if (index === -1) return;
         this._replaceDetail(index, { final: true, ok, error, usedKnowledge, truncated });
@@ -718,7 +673,7 @@ export class CheatingDaddyApp extends LitElement {
         this._replaceDetail(index, { usedKnowledge: [...row.usedKnowledge, id] });
     }
 
-    // The pane's ‹ › buttons and their shortcuts land here. One step per press, clamped at both ends.
+    // 面板的 ‹ › 按钮和它们的快捷键都落到这里。每次按一下走一步，两端都夹住。
     stepDetail(delta) {
         if (!this.detailMessages.length) return;
 
@@ -728,13 +683,10 @@ export class CheatingDaddyApp extends LitElement {
         const next = Math.max(0, Math.min(ids.length - 1, from + delta));
 
         this.detailCurrent = ids[next];
-        // Stepping back stops the pane following new answers; stepping forward to the newest resumes it,
-        // since that is the same bargain as scrolling the transcript back to its bottom by hand.
+        // 往回翻就停止跟随新回答；再翻到最新一条则恢复跟随——这跟手动把转录滚回底部是一回事。
         this._detailFollowing = next === ids.length - 1;
         this.requestUpdate();
     }
-
-    // ── Navigation ──
 
     navigate(view) {
         this.currentView = view;
@@ -744,61 +696,43 @@ export class CheatingDaddyApp extends LitElement {
     async handleClose() {
         if (this.currentView === 'assistant') {
             cheatingDaddy.stopCapture();
-            if (window.require) {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('close-session');
-            }
+            await ipcRenderer.invoke('close-session');
             this._paused = false;
             this.sessionActive = false;
             this._stopTimer();
             this.currentView = 'main';
         } else {
-            if (window.require) {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('quit-application');
-            }
+            await ipcRenderer.invoke('quit-application');
         }
     }
 
     async handleHideToggle() {
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('toggle-window-visibility');
-        }
+        await ipcRenderer.invoke('toggle-window-visibility');
     }
 
-    // The close button proper: tear the live session down the way the back arrow does — stop capturing,
-    // close the session so the transcript is flushed — and then quit. Quitting without it would cut the
-    // session short on disk, since nothing else would tell the main process the session had ended.
+    // 真正的关闭按钮：像返回箭头那样把实时会话拆掉——停止采集、关闭会话让转录落盘——然后退出。少了这一步
+    // 直接退出，会话会在磁盘上被截断，因为没有别的东西会告诉主进程会话已经结束。
     async handleQuit() {
         if (this.currentView === 'assistant' && this.sessionActive) {
             cheatingDaddy.stopCapture();
-            if (window.require) {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('close-session');
-            }
+            await ipcRenderer.invoke('close-session');
             this.sessionActive = false;
             this._stopTimer();
         }
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('quit-application');
-        }
+        await ipcRenderer.invoke('quit-application');
     }
 
     async togglePause() {
         this._paused = !this._paused;
         const res = await cheatingDaddy.setPaused(this._paused);
-        // The main process is the one that actually decides; a refusal (no live session) puts the button
-        // back rather than leaving it showing a state that was never entered.
+        // 真正说了算的是主进程；被拒（没有实时会话）就把按钮恢复原状，而不是停在一个从未进入过的状态上。
         if (!res?.success) this._paused = false;
         this.requestUpdate();
     }
 
-    // Drops both what the model has seen and the settled bubbles that show it. Anything still in flight is
-    // kept and left to finish: freezing a half-recognized sentence or a half-streamed answer where it
-    // stands is a truncation, and that is the one thing this must not do. The floors above then stop the
-    // dropped turns from reappearing when their replies finally land.
+    // 既丢掉模型看过的内容，也丢掉显示这些内容的已落定气泡。还在飞行中的一律留着跑完：把半句识别结果或半截
+    // 流式回答冻在原地就是截断，而这是唯一绝不能做的事。上面那两个 floor 则拦住被丢掉的轮次在回答最终落地时
+    // 重新冒出来。
     async handleClearContext() {
         const res = await cheatingDaddy.clearContext();
         if (!res?.success) return;
@@ -806,8 +740,7 @@ export class CheatingDaddyApp extends LitElement {
         this._turnFloorId = res.turnSeq;
         this._detailFloorId = res.detailSeq;
 
-        // A candidate row is written as one growing block and never carries a settled flag, so the block
-        // that is still open — the highest id among them — is the only one there is to keep.
+        // 面试者的行是一个不断变长的块，从不带落定标记，所以唯一能留的就是那个还开着的块——id 最大的那个。
         const openBlockId = Math.max(0, ...this.messages.filter(m => m.role === 'user').map(m => m.blockId));
         this.messages = this.messages.filter(m => (m.role === 'user' ? m.blockId === openBlockId : m.final !== true));
         this.detailMessages = this.detailMessages.filter(m => m.final !== true);
@@ -816,10 +749,8 @@ export class CheatingDaddyApp extends LitElement {
         this.requestUpdate();
     }
 
-    // ── Session start ──
-
     async handleStart() {
-        // Only the key for the selected recognizer is required; the chat key is always DeepSeek's.
+        // 只要求有所选识别器的那把 key；对话那把永远是 DeepSeek 的。
         const [chatKey, asrKey] = await Promise.all([cheatingDaddy.storage.getDeepseekApiKey(), cheatingDaddy.storage.getBailianApiKey()]);
 
         if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
@@ -842,13 +773,11 @@ export class CheatingDaddyApp extends LitElement {
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
         this.messages = [];
         this._paused = false;
-        // The floors track the main process's own counters, which resetAudioState takes back to zero, so
-        // carrying them over would put every id of the new session under the old floor and silently
-        // suppress it.
+        // floor 跟随的是主进程自己的计数器，而 resetAudioState 会把它们归零，所以沿用旧值会让新会话的每个
+        // id 都落在旧 floor 之下，被静默压制。
         this._turnFloorId = 0;
         this._detailFloorId = 0;
-        // Cleared with the transcript: the main process drops its own detail log when the session
-        // restarts, so keeping these would page into answers that no longer exist.
+        // 跟着转录一起清空：主进程重启会话时会丢掉自己的详细回答日志，留着这些会翻到已经不存在的回答。
         this.detailMessages = [];
         this.detailCurrent = null;
         this._detailFollowing = true;
@@ -857,8 +786,6 @@ export class CheatingDaddyApp extends LitElement {
         this.currentView = 'assistant';
         this._startTimer();
     }
-
-    // ── Settings handlers ──
 
     async handleLanguageChange(language) {
         this.selectedLanguage = language;
@@ -882,10 +809,7 @@ export class CheatingDaddyApp extends LitElement {
     }
 
     async handleExternalLinkClick(url) {
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('open-external', url);
-        }
+        await ipcRenderer.invoke('open-external', url);
     }
 
     async handleSendText(message) {
@@ -904,19 +828,14 @@ export class CheatingDaddyApp extends LitElement {
     updated(changedProperties) {
         super.updated(changedProperties);
 
-        if (changedProperties.has('currentView') && window.require) {
-            const { ipcRenderer } = window.require('electron');
+        if (changedProperties.has('currentView')) {
             ipcRenderer.send('view-changed', this.currentView);
         }
     }
 
-    // ── Helpers ──
-
     _isLiveMode() {
         return this.currentView === 'assistant';
     }
-
-    // ── Render ──
 
     renderCurrentView() {
         switch (this.currentView) {
@@ -1093,9 +1012,8 @@ export class CheatingDaddyApp extends LitElement {
         `;
     }
 
-    // The same two shapes at the top right of every page: a dash that hides the window (Ctrl+\ brings
-    // it back) and an x that quits. Windows users read those instantly, which is the point of dropping
-    // the macOS dots — and it is why they sit on the live page too, where the drag bar is hidden.
+    // 每页右上角都是这两个形状：一条横杠隐藏窗口（Ctrl+\ 唤回），一个叉退出。Windows 用户一眼就认，这正是
+    // 弃用 macOS 那三个圆点的原因——也是它们出现在直播页的原因，那里没有拖拽栏。
     renderWindowButtons() {
         return html`
             <div class="window-controls">
@@ -1157,8 +1075,7 @@ export class CheatingDaddyApp extends LitElement {
     }
 
     render() {
-        // Onboarding is fullscreen, no sidebar. It gets the drag bar anyway: without it there is no way
-        // out of a fullscreen page but a global shortcut the user may not know.
+        // 引导页是全屏、没有侧栏的，但仍然给它拖拽栏：否则离开一个全屏页面只能靠用户未必知道的全局快捷键。
         if (this.currentView === 'onboarding') {
             return html`
                 <div class="top-drag-bar">

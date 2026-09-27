@@ -1,17 +1,19 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { conversationStyles, renderMarkdown } from './conversationStyles.js';
+import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
+import { scrollbarStyles } from './sharedPageStyles.js';
 
-// How wide the detailed-answer pane is, as a fraction of the split, and the bounds a drag is clamped to.
-// The pane is a fixed-width flex item beside a flexible one, so both bounds are real: below the minimum
-// the pane is a column of single characters, and above the maximum the transcript has no room left.
+// 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
+const { ipcRenderer } = window.require('electron');
+
+// 详细回答面板占整条分栏的比例，以及拖拽的钳制上下限。面板是紧挨着弹性项的定宽 flex 项，所以两个边界都是真的：
+// 低于下限面板会变成一列单个字符，高于上限转录就没有地方了。
 const PANE_DEFAULT_FRACTION = 0.38;
 const PANE_MIN_FRACTION = 0.18;
 const PANE_MAX_FRACTION = 0.72;
 
-// Read once per app run rather than per mount: this view is rebuilt on every navigation, and a per-mount
-// read would show the default width for the frame between the render and the read resolving. A stored
-// value outside the clamps is treated as absent rather than clamped, so a hand-edited file cannot pin the
-// pane at a size no drag could have produced.
+// 每次运行只读一次，而不是每次挂载都读：这个视图每次导航都会被重建，按挂载读会让读取结果落地前的那一帧显示
+// 默认宽度。超出钳制范围的值按「没有存过」处理而不是夹到边界，这样手改过的配置文件也无法把面板钉在一个拖不出来
+// 的尺寸上。
 let paneFraction = PANE_DEFAULT_FRACTION;
 let paneFractionLoading = null;
 
@@ -35,7 +37,7 @@ function loadPaneFraction() {
 const clampPaneFraction = value => Math.min(PANE_MAX_FRACTION, Math.max(PANE_MIN_FRACTION, value));
 
 export class AssistantView extends LitElement {
-    // Three parts, in this order, so the rules keep the cascade they had as one template.
+    // 按这个顺序分成几段，是为了让层叠顺序和它们原本在同一份模板里时保持一致。
     static styles = [
         css`
         :host {
@@ -43,9 +45,8 @@ export class AssistantView extends LitElement {
             display: flex;
             flex-direction: column;
 
-            /* The transcript's side inset, and the only knob for it: the shell around this view
-               contributes a single 3px line, so everything visible on the left is this value. The
-               input bar shares it, which is what lines the pill up with the bubbles above it. */
+            /* 转录的左右内缩，也是唯一的旋钮：外层壳只贡献一条 3px 的线，所以左边看得见的都是这个值。输入栏
+               共用它，这就是输入胶囊和上方气泡对齐的原因。 */
             --chat-gutter: 8px;
         }
 
@@ -53,10 +54,6 @@ export class AssistantView extends LitElement {
             font-family: var(--font);
             cursor: default;
         }
-
-        /* ── Chat transcript ── */
-
-        /* ── Live split: the transcript and the detailed answers side by side ── */
 
         .live-split {
             flex: 1;
@@ -67,15 +64,13 @@ export class AssistantView extends LitElement {
         .chat-wrap {
             position: relative;
             flex: 1;
-            /* Without this the column refuses to shrink below the width of its own content and pushes the
-               pane off the right edge instead of sharing the row with it. */
+            /* 没有它，这一列不肯缩到自身内容宽度以下，会把面板挤出右边缘，而不是和它分这一行。 */
             min-width: 0;
             min-height: 0;
             display: flex;
         }
 
-        /* No background of its own: the transcript sits directly on the shell that the opacity
-           slider already controls, so live mode is exactly as see-through as every other page. */
+        /* 自己没有背景：转录直接坐在外层壳上，而透明度滑块管的就是那层壳，这样实时模式和别的页面一样透。 */
         .chat-scroll {
             flex: 1;
             overflow-y: auto;
@@ -94,23 +89,6 @@ export class AssistantView extends LitElement {
 
         .chat-scroll a {
             cursor: pointer;
-        }
-
-        .chat-scroll::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .chat-scroll::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .chat-scroll::-webkit-scrollbar-thumb {
-            background: var(--border-strong);
-            border-radius: 3px;
-        }
-
-        .chat-scroll::-webkit-scrollbar-thumb:hover {
-            background: var(--text-muted);
         }
 
         .chat-list {
@@ -132,12 +110,10 @@ export class AssistantView extends LitElement {
         }
 
         `,
-        // The transcript's own look, shared with the History page: it shows a recorded session as the
-        // same conversation, so both views take the bubbles and the markdown from one place.
+        // 转录的外观与历史页共用：历史页把录下来的会话显示成同一场对话，所以两边从同一处取气泡和 markdown。
         conversationStyles,
+        scrollbarStyles,
         css`
-
-        /* ── Jump to latest ── */
 
         .jump-latest {
             position: absolute;
@@ -164,8 +140,6 @@ export class AssistantView extends LitElement {
             width: 12px;
             height: 12px;
         }
-
-        /* ── Bottom input bar ── */
 
         .input-bar {
             display: flex;
@@ -258,13 +232,9 @@ export class AssistantView extends LitElement {
             pointer-events: none;
         }
 
-        /* ── Detailed answer pane ── */
-
-        /* The divider between the transcript and the pane, and the thing that resizes them. Six pixels of
-           hit area with the visible line drawn inside it, so the line the eye sees is the line the pointer
-           has to land on; the line itself moves from the pane's border to here, or the two would double up.
-           touch-action keeps the drag from being read as a scroll, and the pointer is captured on press so
-           the drag survives leaving this six-pixel strip. */
+        /* 转录与面板之间的分隔条，也是调整两者宽度的抓手。6px 的命中区，可见的线画在里面——眼睛看到的线就是指针
+           必须落上去的线；这条线从面板边框挪到了这里，否则会画成两条。touch-action 防止拖拽被当成滚动，按下时
+           捕获指针，拖拽离开这 6px 条也还能继续。 */
         .split-handle {
             flex: none;
             width: 6px;
@@ -296,15 +266,12 @@ export class AssistantView extends LitElement {
 
         .detail-pane {
             flex: none;
-            /* Border-box because the width is also set from a drag, and the drag reads the pane's box back
-               with getBoundingClientRect: on the default content box the padding would be counted on one
-               side of that round trip only, and every drag would push the divider past the pointer by it. */
+            /* 用 border-box 是因为宽度也会被拖拽直接写入，而拖拽会用 getBoundingClientRect 把面板的盒子读回来：
+               默认的 content box 下，内边距只在这次往返的一侧被算进去，每拖一次分隔条都会多跑出内边距那么远。 */
             box-sizing: border-box;
             width: 38%;
-            /* Both bounds are load-bearing: the pane is a fixed-width flex item, so without the minimum a
-               drag to the left edge leaves a column too narrow to read, and without the maximum a drag on a
-               wide window can push the transcript — and its bubbles — off the left of the view. They are CSS
-               rather than JS clamps so that resizing the window keeps them without a resize listener. */
+            /* 两个边界都吃重：面板是定宽 flex 项，没有下限时往左拖到底就剩一条读不了的窄栏；没有上限时在宽窗口上
+               拖能把转录连同气泡顶出视图左边。写成 CSS 而不是 JS 钳制，是为了窗口缩放时不用监听 resize 也仍然有效。 */
             min-width: 180px;
             max-width: 72%;
             display: flex;
@@ -326,8 +293,7 @@ export class AssistantView extends LitElement {
             font-size: var(--font-size-xs);
         }
 
-        /* Quoted, not repeated as a heading: it is there to say which question the answer belongs to when
-           the user has paged back, not to compete with the answer itself. */
+        /* 做成引用而不是重复一遍标题：它的作用是用户翻回去时说明这个回答属于哪个问题，不跟回答本身抢注意力。 */
         .detail-question {
             margin-bottom: var(--space-sm);
             padding-left: var(--space-sm);
@@ -347,21 +313,8 @@ export class AssistantView extends LitElement {
             cursor: text;
         }
 
-        .detail-scroll::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .detail-scroll::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .detail-scroll::-webkit-scrollbar-thumb {
-            background: var(--border-strong);
-            border-radius: 3px;
-        }
-
-        /* The pane body carries the transcript's markdown class so there is exactly one set of markdown
-           rules to keep in step; only the bubble chrome is undone, a panel not being a bubble. */
+        /* 面板正文带着转录的 markdown class，这样只需要维护一套 markdown 规则；这里只撤掉气泡的外观——这是面板，
+           不是气泡。 */
         .detail-body.message-body {
             max-width: none;
             padding: 0;
@@ -423,9 +376,8 @@ export class AssistantView extends LitElement {
         messages: { type: Array },
         onSendText: { type: Function },
         isAnalyzing: { type: Boolean, state: true },
-        // The detailed answers and which one is showing. Both are owned by the app element rather than
-        // this view, because this view is torn down and rebuilt on every navigation while the answers
-        // have to survive it — the same reason `messages` lives up there.
+        // 详细回答以及当前显示哪一条：两者都由 app 元素持有而不是本视图，因为每次导航本视图都会被拆掉重建，而
+        // 回答必须活下来——`messages` 放在上层也是同一个原因。
         detailMessages: { type: Array },
         detailCurrent: { type: Number },
         onDetailPrev: { type: Function },
@@ -444,57 +396,38 @@ export class AssistantView extends LitElement {
         this._animFrame = null;
         this._pinned = true;
         this._detailAtBottom = true;
-        // The turn the screenshot on the button belongs to, while it is being answered. It is what the
-        // busy state follows: the answer lands in the pane, keyed by this turn, and nothing else in the
-        // view moves when it arrives.
+        // 按钮上那张截图所属的轮次，在它被回答期间有效。忙碌态就跟它走：答案以这个轮次为 key 落进面板，它到达时
+        // 视图里没有别的东西会动。
         this._screenTurnId = null;
     }
 
-    // Shared with the History page so both views render an answer identically.
-    renderMarkdown(content) {
-        return renderMarkdown(content);
-    }
-
-    // The screenshot's answer landing in the pane is the only signal that it finished, so the busy state
-    // watches that row itself being settled. Counting answers instead would let a first screenshot's
-    // completion clear the busy state while a second one was still on its way.
+    // 截图回答落进面板是它完成的唯一信号，所以忙碌态盯的就是那一行自己落定。改成数回答个数的话，第一张截图的
+    // 完成会在第二张还在路上时就把忙碌态清掉。
     _screenAnswerSettled() {
         if (this._screenTurnId === null) return false;
         const row = this.detailMessages.find(m => m.turnSeq === this._screenTurnId);
         return Boolean(row && row.final);
     }
 
-    // Only the bubble whose text actually changed is re-parsed, so a streaming answer costs one
-    // markdown pass per token instead of one per bubble.
+    // 只有文字真的变了的那个气泡会重新解析：流式回答的开销因此是每个 token 一次 markdown，而不是每个气泡一次。
     _syncMarkdown() {
         for (const message of this.messages) {
             if (message.role !== 'assistant') continue;
 
-            const el = this.shadowRoot.querySelector(`[data-msg-id="${message.id}"]`);
-            if (!el || el._renderedText === message.text) continue;
-
-            el.innerHTML = this.renderMarkdown(message.text);
-            el._renderedText = message.text;
+            syncMarkdownInto(this.shadowRoot.querySelector(`[data-msg-id="${message.id}"]`), message.text, message.text);
         }
     }
 
-    // The pane shows one answer at a time, so this cannot ride on _syncMarkdown above: that one walks
-    // this.messages, which holds no detailed answers at all. Keyed on the row id as well as the text,
-    // because paging between two answers has to re-render even when their text happens to match.
+    // 面板一次只显示一条回答，所以不能搭上面那个 _syncMarkdown 的便车：它遍历的 this.messages 里根本没有详细
+    // 回答。
     _syncDetailMarkdown() {
-        const el = this.shadowRoot.querySelector('[data-detail-id]');
-        if (!el) return;
-
         const row = this._currentDetail();
-        const key = `${row ? row.detailId : 0}:${row ? row.text : ''}`;
-        if (el._renderedKey === key) return;
-
-        el.innerHTML = this.renderMarkdown(row ? row.text : '');
-        el._renderedKey = key;
+        const id = row ? row.detailId : 0;
+        const text = row ? row.text : '';
+        syncMarkdownInto(this.shadowRoot.querySelector('[data-detail-id]'), `${id}:${text}`, text);
     }
 
-    // The row being shown, or the newest one when the selection is stale — an answer that has been
-    // dropped by the cap on retained turns must not blank the pane.
+    // 当前显示的那条；选中项过期时退回最新的一条——被保留轮次上限丢掉的那条回答不能把面板清空。
     _currentDetail() {
         if (!this.detailMessages.length) return null;
         return this.detailMessages.find(row => row.detailId === this.detailCurrent) || this.detailMessages[this.detailMessages.length - 1];
@@ -504,8 +437,6 @@ export class AssistantView extends LitElement {
         const row = this._currentDetail();
         return row ? this.detailMessages.indexOf(row) : -1;
     }
-
-    // ── Scrolling ──
 
     handleScroll() {
         const container = this.shadowRoot.querySelector('.chat-scroll');
@@ -531,8 +462,7 @@ export class AssistantView extends LitElement {
         this.requestUpdate();
     }
 
-    // The pane has no jump button — a single answer is nothing to lose your place in — so this only
-    // decides whether streaming text should drag the view down with it.
+    // 面板没有「回到最新」按钮——一条回答没什么可迷路的——所以这里只决定流式文字要不要把视图一起往下带。
     handleDetailScroll() {
         const container = this.shadowRoot.querySelector('.detail-scroll');
         if (!container) return;
@@ -563,47 +493,37 @@ export class AssistantView extends LitElement {
     connectedCallback() {
         super.connectedCallback();
 
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
+        this.handleScrollUp = () => this.scrollResponseUp();
+        this.handleScrollDown = () => this.scrollResponseDown();
 
-            this.handleScrollUp = () => this.scrollResponseUp();
-            this.handleScrollDown = () => this.scrollResponseDown();
-
-            ipcRenderer.on('scroll-response-up', this.handleScrollUp);
-            ipcRenderer.on('scroll-response-down', this.handleScrollDown);
-        }
+        ipcRenderer.on('scroll-response-up', this.handleScrollUp);
+        ipcRenderer.on('scroll-response-down', this.handleScrollDown);
     }
 
     disconnectedCallback() {
         super.disconnectedCallback();
         this._stopWaveformAnimation();
 
-        if (window.require) {
-            const { ipcRenderer } = window.require('electron');
-            if (this.handleScrollUp) ipcRenderer.removeListener('scroll-response-up', this.handleScrollUp);
-            if (this.handleScrollDown) ipcRenderer.removeListener('scroll-response-down', this.handleScrollDown);
-        }
+        if (this.handleScrollUp) ipcRenderer.removeListener('scroll-response-up', this.handleScrollUp);
+        if (this.handleScrollDown) ipcRenderer.removeListener('scroll-response-down', this.handleScrollDown);
     }
 
-    // Unconditional, not guarded on the pane being visible: the first answer of a session is what makes the
-    // pane appear, and by then the stored width has to be in memory already or the pane would open at the
-    // default and stay there.
+    // 无条件读，不判断面板是否可见：让面板出现的是本场第一条回答，那时存的宽度必须已经在内存里，否则面板会以默认
+    // 宽度打开并一直停在那里。
     async firstUpdated() {
         await loadPaneFraction();
         this.requestUpdate();
     }
 
-    // Dragging writes the pane's width straight onto the element and only commits to reactive state on
-    // release. A pointermove per frame through render() would re-render the whole transcript — bubbles,
-    // markdown and scroll position — to move one divider.
+    // 拖拽直接把宽度写到元素上，只在松手时才提交到响应式状态。让每帧的 pointermove 走 render()，会为了挪一条分隔
+    // 条把整份转录（气泡、markdown、滚动位置）重渲一遍。
     _onSplitPointerDown(event) {
         if (event.button !== 0) return;
         const live = this.renderRoot.querySelector('.live-split');
         const pane = this.renderRoot.querySelector('.detail-pane');
         if (!live || !pane) return;
 
-        // The pointer is captured by the handle so the drag keeps working after it leaves the 6px strip —
-        // without it a fast drag loses the pointer the moment it outruns the divider.
+        // 由抓手捕获指针，拖拽离开这 6px 条后仍然有效；没有它，拖快一点就会在超过分隔条的瞬间丢掉指针。
         event.currentTarget.setPointerCapture(event.pointerId);
         event.currentTarget.classList.add('dragging');
         event.preventDefault();
@@ -613,7 +533,7 @@ export class AssistantView extends LitElement {
             handle: event.currentTarget,
             startX: event.clientX,
             startFraction: pane.getBoundingClientRect().width / live.getBoundingClientRect().width,
-            // null until the pointer actually moves, so a plain click on the divider changes nothing.
+            // 指针真的动过之前保持 null，所以单纯点一下分隔条什么都不会发生。
             fraction: null,
         };
     }
@@ -624,9 +544,8 @@ export class AssistantView extends LitElement {
 
         const width = drag.live.getBoundingClientRect().width;
         if (!width) return;
-        // The pane is on the right, so dragging the divider left widens it. The width is written both to
-        // the element and to the drag record: an answer streaming in mid-drag re-renders the split, and
-        // that render has to repaint the divider where the pointer left it rather than where it started.
+        // 面板在右侧，所以往左拖是加宽。宽度同时写到元素和拖拽记录上：拖到一半有回答流式到达会重渲分栏，那次渲染
+        // 必须把分隔条画在指针离开的位置，而不是起始位置。
         drag.fraction = clampPaneFraction(drag.startFraction - (event.clientX - drag.startX) / width);
         drag.pane.style.width = `${drag.fraction * 100}%`;
     }
@@ -638,13 +557,11 @@ export class AssistantView extends LitElement {
         drag.handle.classList.remove('dragging');
         if (drag.handle.hasPointerCapture(event.pointerId)) drag.handle.releasePointerCapture(event.pointerId);
 
-        // A click with no movement is a no-op: it must not rewrite the preference, and it must not leave
-        // the pane carrying an inline width the next render would have to agree with.
+        // 没有移动的点击是无操作：既不能改写偏好，也不能让面板留下一个内联宽度，逼下一次渲染跟着它走。
         if (drag.fraction === null) return;
 
         paneFraction = drag.fraction;
-        // Rounded to three places: the fraction only has to survive a round trip through the config file,
-        // and a raw ratio would write a meaningless amount of digits into it.
+        // 保留三位小数：这个比例只需要经得起配置文件的一次往返，原始比值会往文件里写一堆没有意义的位数。
         cheatingDaddy.storage.updatePreference('detailPaneWidth', Math.round(paneFraction * 1000) / 1000).catch(error => {
             console.warn('Could not save the detail pane width:', error);
         });
@@ -671,9 +588,8 @@ export class AssistantView extends LitElement {
         if (this.isAnalyzing || !window.captureManualScreenshot) return;
 
         this.isAnalyzing = true;
-        // Awaited because the capture can decline to send anything at all — no stream, or a video that
-        // has not produced a frame yet. Those paths return no turn, which means no answer is coming and
-        // the busy state has to end here rather than wait for a completion that will never arrive.
+        // 必须 await：截图可能压根没发出去——没有采集流，或者视频还没出过一帧。这些路径不返回轮次，也就是不会
+        // 有回答，忙碌态要在这里结束，而不是等一个永远不会到的完成信号。
         const result = await window.captureManualScreenshot();
         if (!result?.success) {
             this.isAnalyzing = false;
@@ -681,7 +597,7 @@ export class AssistantView extends LitElement {
         }
 
         this._screenTurnId = result.turnId;
-        // The answer may have landed before this promise resolved.
+        // 回答有可能在这个 promise 落地前就已经到了。
         if (this._screenAnswerSettled()) {
             this.isAnalyzing = false;
             this._screenTurnId = null;
@@ -701,27 +617,27 @@ export class AssistantView extends LitElement {
 
         const dangerColor = getComputedStyle(this).getPropertyValue('--danger').trim() || '#EF4444';
         const startTime = performance.now();
-        const FADE_IN = 0.5; // seconds
-        const PARTICLE_SPREAD = 4; // px inward from border
+        const FADE_IN = 0.5; // 秒
+        const PARTICLE_SPREAD = 4; // 距边框向内多少像素
         const PARTICLE_COUNT = 250;
 
-        // Pill perimeter helpers
+        // 胶囊形周长的换算
         const w = rect.width;
         const h = rect.height;
-        const r = h / 2; // pill radius = half height
+        const r = h / 2; // 胶囊圆角 = 高度的一半
         const straightLen = w - 2 * r;
         const arcLen = Math.PI * r;
         const perimeter = 2 * straightLen + 2 * arcLen;
 
-        // Given a distance along the perimeter, return {x, y, nx, ny} (position + inward normal)
+        // 给定沿周长走过的距离，返回 {x, y, nx, ny}（位置 + 指向内侧的法线）
         const pointOnPerimeter = (d) => {
             d = ((d % perimeter) + perimeter) % perimeter;
-            // Top straight: left to right
+            // 上直边：从左到右
             if (d < straightLen) {
                 return { x: r + d, y: 0, nx: 0, ny: 1 };
             }
             d -= straightLen;
-            // Right arc
+            // 右半圆
             if (d < arcLen) {
                 const angle = -Math.PI / 2 + (d / arcLen) * Math.PI;
                 return {
@@ -732,12 +648,12 @@ export class AssistantView extends LitElement {
                 };
             }
             d -= arcLen;
-            // Bottom straight: right to left
+            // 下直边：从右到左
             if (d < straightLen) {
                 return { x: w - r - d, y: h, nx: 0, ny: -1 };
             }
             d -= straightLen;
-            // Left arc
+            // 左半圆
             const angle = Math.PI / 2 + (d / arcLen) * Math.PI;
             return {
                 x: r + Math.cos(angle) * r,
@@ -747,7 +663,7 @@ export class AssistantView extends LitElement {
             };
         };
 
-        // Pre-seed random offsets for stable particles
+        // 预先播下随机种子，粒子才会稳定而不是每帧乱跳。
         const seeds = [];
         for (let i = 0; i < PARTICLE_COUNT; i++) {
             seeds.push({ pos: Math.random(), drift: Math.random(), depthSeed: Math.random() });
@@ -759,7 +675,6 @@ export class AssistantView extends LitElement {
 
             ctx.clearRect(0, 0, w, h);
 
-            // ── Particle border ──
             ctx.fillStyle = dangerColor;
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const s = seeds[i];
@@ -780,7 +695,6 @@ export class AssistantView extends LitElement {
                 ctx.fill();
             }
 
-            // ── Waveform ──
             const midY = h / 2;
             const waves = [
                 { freq: 3, amp: 0.35, speed: 2.5, opacity: 0.9, width: 1.8 },
@@ -831,7 +745,7 @@ export class AssistantView extends LitElement {
         this._syncMarkdown();
         this._syncDetailMarkdown();
 
-        // Instant, not smooth: a per-token smooth scroll never catches up and fights itself.
+        // 用瞬移而不是平滑滚动：每个 token 触发一次平滑滚动永远追不上自己，还会和上一次动画互相打断。
         if (this._pinned) {
             this._scrollToBottom();
         }
@@ -839,15 +753,13 @@ export class AssistantView extends LitElement {
         const detail = this._currentDetail();
         if (detail) {
             if (this._lastDetailId !== detail.detailId) {
-                // Landing on a different answer starts from one end of it: the bottom while it is still
-                // arriving, the top once it is finished and there is something to read in order.
+                // 换到另一条回答时总是从它的一头开始：还在流式就停在底部，已完成就回到顶部按顺序读。
                 this._lastDetailId = detail.detailId;
                 this._detailAtBottom = !detail.final;
                 const container = this.shadowRoot.querySelector('.detail-scroll');
                 if (container) container.scrollTop = detail.final ? 0 : container.scrollHeight;
             } else if (!detail.final && this._detailAtBottom) {
-                // Only a growing answer drags the view down with it, and only while the user has not
-                // scrolled away from the end of it.
+                // 只有正在变长的回答把视图一起往下带，而且只在这条回答仍然贴底时——用户往回翻过就不该被拽回底部。
                 this._scrollDetailToBottom();
             }
         }
@@ -860,9 +772,8 @@ export class AssistantView extends LitElement {
             }
         }
 
-        // The pane's own row is what ends the busy state, and only for the turn this view started:
-        // another answer finishing alongside it says nothing about the screenshot. A failed request
-        // arrives as a settled row too, so an error ends the wait rather than leaving it turning.
+        // 只有本视图发起的那个轮次落定才算数：旁边同时完成的另一条回答和截图无关。失败的请求也是以「已落定」的
+        // 行到达的，所以报错同样结束等待，而不是让它一直转下去。
         if (changedProperties.has('detailMessages') && this.isAnalyzing && this._screenAnswerSettled()) {
             this.isAnalyzing = false;
             this._screenTurnId = null;
@@ -878,7 +789,7 @@ export class AssistantView extends LitElement {
             `;
         }
 
-        // Plain text like the interviewer's rows: markdown rendering is only wired for the answers.
+        // 和面试官那几行一样按纯文本处理：markdown 只给回答接上了。
         if (message.role === 'user') {
             return html`
                 <div class="message-row user">
@@ -937,8 +848,7 @@ export class AssistantView extends LitElement {
     }
 
     render() {
-        // A drag in progress owns the width until it is released, so a re-render driven by a streaming
-        // answer cannot fight the pointer.
+        // 拖拽未松手时宽度归指针管：否则流式回答引发的那次重渲会把分隔条弹回原位，和指针打架。
         const paneWidth = `${((this._splitDrag?.fraction ?? paneFraction) * 100).toFixed(1)}%`;
 
         return html`

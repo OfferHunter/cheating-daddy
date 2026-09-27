@@ -99,7 +99,7 @@ export class HelpView extends LitElement {
     constructor() {
         super();
         this.onExternalLinkClick = () => {};
-        this.keybinds = this.getDefaultKeybinds();
+        this.keybinds = cheatingDaddy.getDefaultKeybinds();
         this._loadKeybinds();
     }
 
@@ -107,28 +107,12 @@ export class HelpView extends LitElement {
         try {
             const keybinds = await cheatingDaddy.storage.getKeybinds();
             if (keybinds) {
-                this.keybinds = { ...this.getDefaultKeybinds(), ...keybinds };
+                this.keybinds = { ...cheatingDaddy.getDefaultKeybinds(), ...keybinds };
                 this.requestUpdate();
             }
         } catch (error) {
             console.error('Error loading keybinds:', error);
         }
-    }
-
-    getDefaultKeybinds() {
-        const isMac = cheatingDaddy.isMacOS || navigator.platform.includes('Mac');
-        return {
-            moveUp: isMac ? 'Alt+Up' : 'Ctrl+Up',
-            moveDown: isMac ? 'Alt+Down' : 'Ctrl+Down',
-            moveLeft: isMac ? 'Alt+Left' : 'Ctrl+Left',
-            moveRight: isMac ? 'Alt+Right' : 'Ctrl+Right',
-            toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
-            toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
-            nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
-            scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
-            scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
-            quit: isMac ? 'Cmd+Shift+Q' : 'Ctrl+Shift+Q',
-        };
     }
 
     _formatKeybind(keybind) {

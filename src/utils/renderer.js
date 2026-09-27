@@ -1,4 +1,6 @@
 const { ipcRenderer } = require('electron');
+// 渲染端的相对路径以 index.html 所在目录 (src/) 为基准，而不是本文件所在目录。
+const { getDefaultKeybinds } = require('./utils/keybinds');
 
 let mediaStream = null;
 let screenshotInterval = null;
@@ -1174,6 +1176,8 @@ const cheatingDaddy = {
     refreshPreferencesCache: loadPreferencesCache,
 
     isMacOS: isMacOS,
+
+    getDefaultKeybinds,
 };
 
 window.cheatingDaddy = cheatingDaddy;

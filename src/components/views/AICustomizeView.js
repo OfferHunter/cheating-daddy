@@ -5,11 +5,9 @@ export class AICustomizeView extends LitElement {
     static styles = [
         unifiedPageStyles,
         css`
-            /* The wrap keeps the shared 'min-height: 100%' and is never pinned to it: with two surfaces
-               a long entry list has to make the page grow and scroll, and a wrap clamped at 100% would
-               instead take the extra height out of the instructions box above it.
-               The knowledge surface is likewise sized by its own content — give it flex:1 too and the
-               two would split the leftover height, squeezing the instructions box to nothing. */
+            /* wrap 保留共用的 min-height: 100% 而不锁死在它上面：条目一多，页面必须长高并滚动；锁死则多出来的
+               高度会从上面的说明框里扣。知识区同理按内容自撑——给它也加 flex:1，两块就会分掉剩余高度，把说明框
+               挤没。 */
             section.surface {
                 flex: 1;
                 display: flex;
@@ -28,8 +26,7 @@ export class AICustomizeView extends LitElement {
                 display: flex;
                 flex-direction: column;
             }
-            /* A floor, not 'min-height: 0': when the entry list is long this is the height the box holds
-               while the page scrolls, instead of collapsing to a sliver. */
+            /* 是下限而不是 min-height: 0：条目长时这句话框在页面滚动过程中保持这个高度，不会被压成一条缝。 */
             textarea.control {
                 flex: 1;
                 resize: none;
@@ -89,7 +86,7 @@ export class AICustomizeView extends LitElement {
                 font-size: var(--font-size-sm);
             }
 
-            /* One line always: the whole point of the list is that a hundred entries stay scannable. */
+            /* 永远一行：这个列表的意义就是上百条也能一眼扫完。 */
             .entry-desc {
                 color: var(--text-muted);
                 font-size: var(--font-size-xs);
@@ -210,7 +207,7 @@ export class AICustomizeView extends LitElement {
         this.requestUpdate();
 
         const result = await cheatingDaddy.knowledge.preview(id);
-        // A slow read must not land in a preview that has already been closed or switched away from.
+        // 读得慢：结果不能落进一个已经关掉或切走的预览里。
         if (this._openPreview !== id) return;
 
         this._previewBody = result.success ? result.body : `读取失败：${result.error || ''}`;

@@ -1,11 +1,8 @@
 import { css } from '../../assets/lit-core-2.7.4.min.js';
 
-// The transcript's own look — bubbles and the markdown inside them — shared by the live view and the
-// History page, which shows a recorded session as the same conversation rather than as a list of parts.
-// Every colour resolves from a theme token, so both views follow the theme and the two alpha sliders.
+// 转录的外观（气泡 + 其中的 markdown），实时视图与历史页共用——历史页把录下来的会话显示成同一场对话，
+// 而不是一串零件。颜色全取自主题 token，所以两个视图都自动跟随主题与两个透明度滑块。
 export const conversationStyles = css`
-    /* ── Bubbles ── */
-
     .message-row {
         display: flex;
     }
@@ -18,9 +15,7 @@ export const conversationStyles = css`
         justify-content: flex-end;
     }
 
-    /* Well above the 78% this used to be: that cap, not the gutter, is what decided where an answer
-       wrapped, and a long answer reached the cap on almost every line. Kept under 100% so a bubble
-       still reads as one side of a conversation. */
+    /* 上限压在 100% 以下：气泡得看得出是对话的一侧。真正决定长回答在哪换行的是这个值，不是 gutter。 */
     .message-body {
         max-width: 92%;
         padding: 8px 12px;
@@ -30,11 +25,9 @@ export const conversationStyles = css`
         overflow-wrap: anywhere;
     }
 
-    /* The two speakers are told apart by outline, not just by a lightness step: in light themes
-       --bg-surface and --bg-elevated are ~12 units apart, which is nearly invisible. The answer
-       gets the theme accent as a soft ring; --border-strong is opaque, hence the color-mix.
-       Inset shadow rather than border: a real border would grow every bubble by 2px unless the
-       shadow root has a border-box reset, and one of the two views importing this does not. */
+    /* 两个说话人靠描边而不只是明暗区分：亮色主题下 --bg-surface 与 --bg-elevated 只差约 12 个色阶，几乎看不见。
+       用 inset shadow 而非 border——后者会让每个气泡往外长 2px，除非影子根有 border-box 重置，而引入本文件的
+       两个视图里有一个没有。 */
     .message-row.interviewer .message-body {
         background: var(--bg-surface);
         box-shadow: inset 0 0 0 1px var(--border);
@@ -47,9 +40,8 @@ export const conversationStyles = css`
         border-top-right-radius: 2px;
     }
 
-    /* The candidate's own speech sits on the answers' side, told apart by a dashed outline and no
-       fill, so the eye still lands on the answer. Only a real border can be dashed, hence the
-       explicit border-box. */
+    /* 面试者自己的发言和回答同侧，靠虚线、无填充区分，让视线仍然先落在回答上。虚线只能是真 border，
+       所以这里要显式写 border-box。 */
     .message-row.user {
         justify-content: flex-end;
     }
@@ -62,8 +54,7 @@ export const conversationStyles = css`
         color: var(--text-secondary);
     }
 
-    /* Several answers can stream at once, so each shows its own caret until it settles.
-       Bound to the row: the markdown body has no child bindings and must stay untouched. */
+    /* 多个回答会同时流式落地，各自带一个光标。挂在行上而不是正文上：正文是 markdown 直写节点，不能有子绑定。 */
     .message-row.assistant.streaming .message-body::after {
         content: '▍';
         margin-left: 1px;
@@ -73,9 +64,6 @@ export const conversationStyles = css`
     @keyframes caret-blink {
         50% { opacity: 0; }
     }
-
-    /* ── Markdown (all colours resolve from theme tokens, so every theme and both alpha
-       sliders apply here without extra rules) ── */
 
     .message-body > :first-child {
         margin-top: 0;
@@ -185,10 +173,18 @@ export const conversationStyles = css`
     }
 `;
 
-// Answers are written by the model as markdown, and both views render it the same way. `marked` is
-// loaded globally by index.html, so nothing is imported here and a missing parser degrades to the
-// raw text rather than to an empty bubble.
-export function renderMarkdown(content) {
+// 三个视图（实时精简、实时详细、历史）都做同一件事：把 markdown 写进一个模板里已经存在的节点。它不能直接
+// 写在模板里，否则每次渲染都要重解析。`memo` 存在节点自身上，调用方因此不用另建一张表；`key` 与渲染出的
+// 文本分开，因为详细面板翻页时两个回答的正文可能一模一样，却必须重画。
+export function syncMarkdownInto(el, key, content) {
+    if (!el || el._renderedKey === key) return;
+    el.innerHTML = renderMarkdown(content);
+    el._renderedKey = key;
+}
+
+// 用户的背景资料和答案都是 markdown；`marked` 由 index.html 全局加载，这里不导入，解析器缺失时退化成原文而
+// 不是空白气泡。
+function renderMarkdown(content) {
     if (typeof window !== 'undefined' && window.marked) {
         try {
             window.marked.setOptions({
