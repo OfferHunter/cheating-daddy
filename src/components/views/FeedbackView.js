@@ -1,11 +1,13 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { unifiedPageStyles } from './sharedPageStyles.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement } from '../../utils/i18n.js';
+import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 const FEEDBACK_FORM_URL = 'https://forms.gle/1JPoh81mUPkJMvje7';
 
-export class FeedbackView extends LitElement {
+export class FeedbackView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
+        scrollbarStyles,
         css`
             .feedback-embed {
                 width: 100%;
@@ -33,11 +35,7 @@ export class FeedbackView extends LitElement {
 
                     <section class="surface">
                         <div class="feedback-embed">
-                            <iframe
-                                class="feedback-iframe"
-                                src=${FEEDBACK_FORM_URL}
-                                title="Feedback Form"
-                            ></iframe>
+                            <iframe class="feedback-iframe" src=${FEEDBACK_FORM_URL} title="Feedback Form"></iframe>
                         </div>
                     </section>
                 </div>

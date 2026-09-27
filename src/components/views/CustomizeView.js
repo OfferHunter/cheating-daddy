@@ -1,5 +1,6 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { unifiedPageStyles } from './sharedPageStyles.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement, getUiLanguage, setUiLanguage } from '../../utils/i18n.js';
+import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
 const { ipcRenderer } = window.require('electron');
@@ -8,9 +9,10 @@ const { ipcRenderer } = window.require('electron');
 const METER_POLL_MS = 80;
 const METER_BAR_COUNT = [0, 1, 2, 3];
 
-export class CustomizeView extends LitElement {
+export class CustomizeView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
+        scrollbarStyles,
         css`
             .danger-surface {
                 border-color: var(--danger);
@@ -128,13 +130,21 @@ export class CustomizeView extends LitElement {
                 transition: opacity 120ms linear;
             }
 
-            .meter-bar:nth-child(1) { height: 5px; }
+            .meter-bar:nth-child(1) {
+                height: 5px;
+            }
 
-            .meter-bar:nth-child(2) { height: 8px; }
+            .meter-bar:nth-child(2) {
+                height: 8px;
+            }
 
-            .meter-bar:nth-child(3) { height: 11px; }
+            .meter-bar:nth-child(3) {
+                height: 11px;
+            }
 
-            .meter-bar:nth-child(4) { height: 14px; }
+            .meter-bar:nth-child(4) {
+                height: 14px;
+            }
 
             .meter-bar.on {
                 background: var(--text-primary);
@@ -194,6 +204,7 @@ export class CustomizeView extends LitElement {
     ];
 
     static properties = {
+        uiLanguage: { type: String },
         selectedLanguage: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
@@ -225,6 +236,7 @@ export class CustomizeView extends LitElement {
 
     constructor() {
         super();
+        this.uiLanguage = getUiLanguage();
         this.selectedLanguage = 'cmn-CN';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
@@ -323,6 +335,8 @@ export class CustomizeView extends LitElement {
             this.screenshotThinking = prefs.screenshotThinking === true;
             this.chatContextTurns = prefs.chatContextTurns ?? 15;
             this.chatMaxTokens = prefs.chatMaxTokens ?? 128000;
+            this.uiLanguage = prefs.uiLanguage || 'zh-CN';
+            setUiLanguage(this.uiLanguage);
             if (keybinds) {
                 this.keybinds = { ...cheatingDaddy.getDefaultKeybinds(), ...keybinds };
             }
@@ -335,7 +349,6 @@ export class CustomizeView extends LitElement {
             console.error('Error loading settings:', error);
         }
     }
-
 
     getLanguages() {
         return [
@@ -411,6 +424,12 @@ export class CustomizeView extends LitElement {
     handleLanguageSelect(e) {
         this.selectedLanguage = e.target.value;
         this.onLanguageChange(this.selectedLanguage);
+    }
+
+    async handleUiLanguageSelect(e) {
+        this.uiLanguage = e.target.value;
+        await cheatingDaddy.storage.updatePreference('uiLanguage', this.uiLanguage);
+        setUiLanguage(this.uiLanguage);
     }
 
     handleImageQualitySelect(e) {
@@ -602,6 +621,7 @@ export class CustomizeView extends LitElement {
             // knowledgeDir 故意不在其中：它们装的是用户自己给的内容（指令、以及指向他自己文件的路径）而不是
             // 旋钮，所以「恢复默认」不碰它们；detailMode 和三个 thinking 开关是旋钮，跟着一起重置。
             const defaults = {
+                uiLanguage: 'zh-CN',
                 selectedLanguage: 'cmn-CN',
                 selectedScreenshotInterval: '5',
                 selectedImageQuality: 'medium',
@@ -630,6 +650,8 @@ export class CustomizeView extends LitElement {
             ipcRenderer.send('update-keybinds', this.keybinds);
 
             this.selectedLanguage = defaults.selectedLanguage;
+            this.uiLanguage = defaults.uiLanguage;
+            setUiLanguage(defaults.uiLanguage);
             this.selectedImageQuality = defaults.selectedImageQuality;
             this.audioInputDeviceId = defaults.audioInputDeviceId;
             this.fontSize = defaults.fontSize;
@@ -695,9 +717,7 @@ export class CustomizeView extends LitElement {
 
     // 柱子靠 class 点亮而不是靠绑定，这样每帧的更新可以完全绕过 Lit。
     renderMeter(kind) {
-        return html`
-            <div class="meter" data-meter=${kind}>${METER_BAR_COUNT.map(() => html`<span class="meter-bar"></span>`)}</div>
-        `;
+        return html` <div class="meter" data-meter=${kind}>${METER_BAR_COUNT.map(() => html`<span class="meter-bar"></span>`)}</div> `;
     }
 
     renderAudioSection() {
@@ -719,12 +739,13 @@ export class CustomizeView extends LitElement {
                             </div>
                             <select class="control" .value=${this.audioInputDeviceId} @change=${this.handleAudioInputDeviceChange}>
                                 <option value="none">Don't use Microphone</option>
-                                ${this.audioInputDevices.map(
-                                    d => html`<option value=${d.deviceId}>${d.label}</option>`
-                                )}
+                                ${this.audioInputDevices.map(d => html`<option value=${d.deviceId}>${d.label}</option>`)}
                             </select>
                         </div>
-                        <div class="form-help">Speaker audio always follows the Windows default playback device. A microphone here adds your own voice as a second, right-hand column: it never triggers an answer on its own, it only tells the assistant what you have already said.</div>
+                        <div class="form-help">
+                            Speaker audio always follows the Windows default playback device. A microphone here adds your own voice as a second,
+                            right-hand column: it never triggers an answer on its own, it only tells the assistant what you have already said.
+                        </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Image Quality</label>
@@ -758,7 +779,10 @@ export class CustomizeView extends LitElement {
                             .value=${this.micMaxSentenceSilenceMs}
                             @change=${e => this.handleNumberPreferenceInput('micMaxSentenceSilenceMs', e.target.value)}
                         />
-                        <div class="form-help">The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into several fragments on screen. Only affects your column. 200-6000.</div>
+                        <div class="form-help">
+                            The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into
+                            several fragments on screen. Only affects your column. 200-6000.
+                        </div>
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Speaker Gate (dBFS)</label>
@@ -771,7 +795,10 @@ export class CustomizeView extends LitElement {
                             .value=${this.micGateDb}
                             @change=${e => this.handleNumberPreferenceInput('micGateDb', e.target.value)}
                         />
-                        <div class="form-help">While the speaker is louder than this the microphone is ignored, so the interviewer's voice cannot leak into your column. Higher (closer to 0) gates more aggressively; -80 effectively turns it off.</div>
+                        <div class="form-help">
+                            While the speaker is louder than this the microphone is ignored, so the interviewer's voice cannot leak into your column.
+                            Higher (closer to 0) gates more aggressively; -80 effectively turns it off.
+                        </div>
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Speaker Gate Hold (ms)</label>
@@ -784,7 +811,11 @@ export class CustomizeView extends LitElement {
                             .value=${this.micGateDwellMs}
                             @change=${e => this.handleNumberPreferenceInput('micGateDwellMs', e.target.value)}
                         />
-                        <div class="form-help">How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still mid-sentence, whatever the level does.</div>
+                        <div class="form-help">
+                            How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is
+                            steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still
+                            mid-sentence, whatever the level does.
+                        </div>
                     </div>
                 </div>
             </section>
@@ -796,6 +827,13 @@ export class CustomizeView extends LitElement {
             <section class="surface">
                 <div class="surface-title">Language</div>
                 <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Interface Language</label>
+                        <select class="control" .value=${this.uiLanguage} @change=${this.handleUiLanguageSelect}>
+                            <option value="zh-CN">中文</option>
+                            <option value="en-US">English</option>
+                        </select>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">Speech Language</label>
                         <select class="control" .value=${this.selectedLanguage} @change=${this.handleLanguageSelect}>
@@ -822,8 +860,8 @@ export class CustomizeView extends LitElement {
                         <span class="toggle-label">Detailed side answer</span>
                     </label>
                     <div class="form-help">
-                        Answer each question twice: a short line for the transcript, and a longer one in the side pane that
-                        may consult the knowledge folder. Takes effect on the next session.
+                        Answer each question twice: a short line for the transcript, and a longer one in the side pane that may consult the knowledge
+                        folder. Takes effect on the next session.
                     </div>
                     <label class="toggle-row">
                         <input
@@ -853,11 +891,10 @@ export class CustomizeView extends LitElement {
                         <span class="toggle-label">Thinking in the screenshot reply</span>
                     </label>
                     <div class="form-help">
-                        Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which
-                        is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The
-                        screenshot reply has its own switch because it is the one request carrying an image, and its thinking is
-                        spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come
-                        back empty. Takes effect on the next session.
+                        Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the
+                        moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch
+                        because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a
+                        whole problem statement can run out the clock and come back empty. Takes effect on the next session.
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Context Turns</label>
@@ -870,7 +907,10 @@ export class CustomizeView extends LitElement {
                             .value=${this.chatContextTurns}
                             @change=${e => this.handleNumberPreferenceInput('chatContextTurns', e.target.value)}
                         />
-                        <div class="form-help">How many previous turns are replayed to the model, in both the fast and the detailed answer. Higher keeps more of the interview in view but makes every request larger and slower. 1-100. Takes effect on the next session.</div>
+                        <div class="form-help">
+                            How many previous turns are replayed to the model, in both the fast and the detailed answer. Higher keeps more of the
+                            interview in view but makes every request larger and slower. 1-100. Takes effect on the next session.
+                        </div>
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Max Tokens</label>
@@ -883,9 +923,9 @@ export class CustomizeView extends LitElement {
                             @change=${e => this.handleNumberPreferenceInput('chatMaxTokens', e.target.value)}
                         />
                         <div class="form-help">
-                            The ceiling on a single reply, thinking included — a thinking reply is charged for its reasoning from this same
-                            number, and a hard question can spend all of a low one before writing anything, which arrives as an empty answer.
-                            Leave it high and the model stops on its own. Takes effect on the next turn.
+                            The ceiling on a single reply, thinking included — a thinking reply is charged for its reasoning from this same number,
+                            and a hard question can spend all of a low one before writing anything, which arrives as an empty answer. Leave it high
+                            and the model stops on its own. Takes effect on the next turn.
                         </div>
                     </div>
                 </div>
@@ -960,20 +1000,22 @@ export class CustomizeView extends LitElement {
         return html`
             <section class="surface">
                 <div class="surface-title">Keyboard Shortcuts</div>
-                ${this.getKeybindActions().map(action => html`
-                    <div class="keybind-row">
-                        <span class="keybind-name">${action.name}</span>
-                        <input
-                            type="text"
-                            class="control keybind-input"
-                            .value=${this.keybinds[action.key]}
-                            data-action=${action.key}
-                            @keydown=${this.handleKeybindInput}
-                            @focus=${this.handleKeybindFocus}
-                            readonly
-                        />
-                    </div>
-                `)}
+                ${this.getKeybindActions().map(
+                    action => html`
+                        <div class="keybind-row">
+                            <span class="keybind-name">${action.name}</span>
+                            <input
+                                type="text"
+                                class="control keybind-input"
+                                .value=${this.keybinds[action.key]}
+                                data-action=${action.key}
+                                @keydown=${this.handleKeybindInput}
+                                @focus=${this.handleKeybindFocus}
+                                readonly
+                            />
+                        </div>
+                    `
+                )}
                 <div style="margin-top: var(--space-sm);">
                     <button class="control" style="width:auto;padding:8px 10px;" @click=${this.resetKeybinds}>Reset to defaults</button>
                 </div>
@@ -993,9 +1035,6 @@ export class CustomizeView extends LitElement {
                         ${this.isClearing ? 'Clearing...' : 'Delete all data'}
                     </button>
                 </div>
-                ${this.clearStatusMessage ? html`
-                    <div class="status ${this.clearStatusType === 'success' ? 'success' : 'error'}">${this.clearStatusMessage}</div>
-                ` : ''}
             </section>
         `;
     }
@@ -1003,14 +1042,17 @@ export class CustomizeView extends LitElement {
     render() {
         return html`
             <div class="unified-page">
+                ${
+                    this.clearStatusMessage
+                        ? html`<div class="page-toast ${this.clearStatusType === 'success' ? 'success' : 'error'}" role="status">
+                              ${this.clearStatusMessage}
+                          </div>`
+                        : ''
+                }
                 <div class="unified-wrap">
                     <div class="page-title">Settings</div>
-                    ${this.renderAudioSection()}
-                    ${this.renderLanguageSection()}
-                    ${this.renderAnswerSection()}
-                    ${this.renderAppearanceSection()}
-                    ${this.renderKeyboardSection()}
-                    ${this.renderPrivacySection()}
+                    ${this.renderAudioSection()} ${this.renderLanguageSection()} ${this.renderAnswerSection()} ${this.renderAppearanceSection()}
+                    ${this.renderKeyboardSection()} ${this.renderPrivacySection()}
                 </div>
             </div>
         `;

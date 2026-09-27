@@ -1,10 +1,11 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement } from '../../utils/i18n.js';
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_CHAT_MODEL = 'deepseek-flash';
 const DEFAULT_BAILIAN_MODEL = 'paraformer-realtime-v2';
 
-export class MainView extends LitElement {
+export class MainView extends LocalizedLitElement {
     static styles = css`
         * {
             font-family: var(--font);

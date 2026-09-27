@@ -24,6 +24,7 @@ const DEFAULT_CREDENTIALS = {
 // directory all come up ready to use instead of generic. The comments below each key explain what
 // the value means, not why it is this one.
 const DEFAULT_PREFERENCES = {
+    uiLanguage: 'zh-CN',
     customPrompt: ``,
     // A directory the user owns, holding one .md per knowledge entry. The model sees only the summaries;
     // the content is read on demand. Empty means the feature is off, and nothing else reads it — which

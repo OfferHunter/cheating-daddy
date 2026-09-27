@@ -129,7 +129,9 @@ export const unifiedPageStyles = css`
         border-radius: var(--radius-sm);
         padding: 8px 12px;
         font-size: var(--font-size-sm);
-        transition: border-color var(--transition), box-shadow var(--transition);
+        transition:
+            border-color var(--transition),
+            box-shadow var(--transition);
     }
 
     .control:hover:not(:focus) {
@@ -184,6 +186,45 @@ export const unifiedPageStyles = css`
 
     .danger {
         color: var(--danger);
+    }
+
+    .page-toast {
+        position: fixed;
+        top: 50px;
+        left: 50%;
+        z-index: 1000;
+        transform: translateX(-50%);
+        width: max-content;
+        max-width: min(560px, calc(100vw - 32px));
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+        font-size: var(--font-size-sm);
+        line-height: 1.45;
+        pointer-events: none;
+        animation: toast-in 160ms ease-out;
+    }
+
+    .page-toast.success {
+        border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+    }
+
+    .page-toast.error {
+        border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    }
+
+    @keyframes toast-in {
+        from {
+            opacity: 0;
+            transform: translate(-50%, -8px);
+        }
+        to {
+            opacity: 1;
+            transform: translate(-50%, 0);
+        }
     }
 
     @media (max-width: 640px) {

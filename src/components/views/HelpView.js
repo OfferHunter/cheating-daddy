@@ -1,9 +1,11 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { unifiedPageStyles } from './sharedPageStyles.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement } from '../../utils/i18n.js';
+import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
-export class HelpView extends LitElement {
+export class HelpView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
+        scrollbarStyles,
         css`
             .shortcut-grid {
                 display: grid;
@@ -73,7 +75,10 @@ export class HelpView extends LitElement {
                 color: var(--text-primary);
                 font-size: var(--font-size-sm);
                 cursor: pointer;
-                transition: border-color var(--transition), color var(--transition), background var(--transition);
+                transition:
+                    border-color var(--transition),
+                    color var(--transition),
+                    background var(--transition);
             }
 
             .link-button:hover {
@@ -87,7 +92,6 @@ export class HelpView extends LitElement {
                     grid-template-columns: 1fr;
                 }
             }
-
         `,
     ];
 
@@ -154,12 +158,14 @@ export class HelpView extends LitElement {
                     <section class="surface">
                         <div class="surface-title">Keyboard Shortcuts</div>
                         <div class="shortcut-grid">
-                            ${shortcutRows.map(([label, keys]) => html`
-                                <div class="shortcut-row">
-                                    <span class="shortcut-label">${label}</span>
-                                    <span class="shortcut-keys">${this._formatKeybind(keys)}</span>
-                                </div>
-                            `)}
+                            ${shortcutRows.map(
+                                ([label, keys]) => html`
+                                    <div class="shortcut-row">
+                                        <span class="shortcut-label">${label}</span>
+                                        <span class="shortcut-keys">${this._formatKeybind(keys)}</span>
+                                    </div>
+                                `
+                            )}
                         </div>
                     </section>
                 </div>

@@ -1,4 +1,5 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement } from '../../utils/i18n.js';
 import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
 import { scrollbarStyles } from './sharedPageStyles.js';
 
@@ -36,339 +37,339 @@ function loadPaneFraction() {
 
 const clampPaneFraction = value => Math.min(PANE_MAX_FRACTION, Math.max(PANE_MIN_FRACTION, value));
 
-export class AssistantView extends LitElement {
+export class AssistantView extends LocalizedLitElement {
     // 按这个顺序分成几段，是为了让层叠顺序和它们原本在同一份模板里时保持一致。
     static styles = [
         css`
-        :host {
-            height: 100%;
-            display: flex;
-            flex-direction: column;
+            :host {
+                height: 100%;
+                display: flex;
+                flex-direction: column;
 
-            /* 转录的左右内缩，也是唯一的旋钮：外层壳只贡献一条 3px 的线，所以左边看得见的都是这个值。输入栏
+                /* 转录的左右内缩，也是唯一的旋钮：外层壳只贡献一条 3px 的线，所以左边看得见的都是这个值。输入栏
                共用它，这就是输入胶囊和上方气泡对齐的原因。 */
-            --chat-gutter: 8px;
-        }
+                --chat-gutter: 8px;
+            }
 
-        * {
-            font-family: var(--font);
-            cursor: default;
-        }
+            * {
+                font-family: var(--font);
+                cursor: default;
+            }
 
-        .live-split {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-        }
+            .live-split {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+            }
 
-        .chat-wrap {
-            position: relative;
-            flex: 1;
-            /* 没有它，这一列不肯缩到自身内容宽度以下，会把面板挤出右边缘，而不是和它分这一行。 */
-            min-width: 0;
-            min-height: 0;
-            display: flex;
-        }
+            .chat-wrap {
+                position: relative;
+                flex: 1;
+                /* 没有它，这一列不肯缩到自身内容宽度以下，会把面板挤出右边缘，而不是和它分这一行。 */
+                min-width: 0;
+                min-height: 0;
+                display: flex;
+            }
 
-        /* 自己没有背景：转录直接坐在外层壳上，而透明度滑块管的就是那层壳，这样实时模式和别的页面一样透。 */
-        .chat-scroll {
-            flex: 1;
-            overflow-y: auto;
-            font-size: var(--response-font-size, 15px);
-            line-height: var(--line-height);
-            background: transparent;
-            scroll-behavior: auto;
-            user-select: text;
-            cursor: text;
-        }
+            /* 自己没有背景：转录直接坐在外层壳上，而透明度滑块管的就是那层壳，这样实时模式和别的页面一样透。 */
+            .chat-scroll {
+                flex: 1;
+                overflow-y: auto;
+                font-size: var(--response-font-size, 15px);
+                line-height: var(--line-height);
+                background: transparent;
+                scroll-behavior: auto;
+                user-select: text;
+                cursor: text;
+            }
 
-        .chat-scroll * {
-            user-select: text;
-            cursor: text;
-        }
+            .chat-scroll * {
+                user-select: text;
+                cursor: text;
+            }
 
-        .chat-scroll a {
-            cursor: pointer;
-        }
+            .chat-scroll a {
+                cursor: pointer;
+            }
 
-        .chat-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            padding: 12px var(--chat-gutter);
-        }
+            .chat-list {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                padding: 12px var(--chat-gutter);
+            }
 
-        .chat-empty {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            padding: var(--space-md);
-            text-align: center;
-            color: var(--text-muted);
-            font-size: var(--font-size-sm);
-        }
-
+            .chat-empty {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+                padding: var(--space-md);
+                text-align: center;
+                color: var(--text-muted);
+                font-size: var(--font-size-sm);
+            }
         `,
         // 转录的外观与历史页共用：历史页把录下来的会话显示成同一场对话，所以两边从同一处取气泡和 markdown。
         conversationStyles,
         scrollbarStyles,
         css`
+            .jump-latest {
+                position: absolute;
+                right: 12px;
+                bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 4px 10px;
+                border-radius: 100px;
+                border: 1px solid var(--border);
+                background: var(--bg-elevated);
+                color: var(--text-primary);
+                font-size: var(--font-size-xs);
+                cursor: pointer;
+                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+            }
 
-        .jump-latest {
-            position: absolute;
-            right: 12px;
-            bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            padding: 4px 10px;
-            border-radius: 100px;
-            border: 1px solid var(--border);
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-            font-size: var(--font-size-xs);
-            cursor: pointer;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-        }
+            .jump-latest[hidden] {
+                display: none;
+            }
 
-        .jump-latest[hidden] {
-            display: none;
-        }
+            .jump-latest svg {
+                width: 12px;
+                height: 12px;
+            }
 
-        .jump-latest svg {
-            width: 12px;
-            height: 12px;
-        }
+            .input-bar {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                padding: var(--space-md) var(--chat-gutter);
+                background: transparent;
+            }
 
-        .input-bar {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            padding: var(--space-md) var(--chat-gutter);
-            background: transparent;
-        }
+            .input-bar-inner {
+                display: flex;
+                align-items: center;
+                flex: 1;
+                background: var(--bg-elevated);
+                border: 1px solid var(--border);
+                border-radius: 100px;
+                padding: 0 var(--space-md);
+                height: 32px;
+                transition: border-color var(--transition);
+            }
 
-        .input-bar-inner {
-            display: flex;
-            align-items: center;
-            flex: 1;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            border-radius: 100px;
-            padding: 0 var(--space-md);
-            height: 32px;
-            transition: border-color var(--transition);
-        }
+            .input-bar-inner:focus-within {
+                border-color: var(--accent);
+            }
 
-        .input-bar-inner:focus-within {
-            border-color: var(--accent);
-        }
+            .input-bar-inner input {
+                flex: 1;
+                background: none;
+                color: var(--text-primary);
+                border: none;
+                padding: 0;
+                font-size: var(--font-size-sm);
+                font-family: var(--font);
+                height: 100%;
+                outline: none;
+            }
 
-        .input-bar-inner input {
-            flex: 1;
-            background: none;
-            color: var(--text-primary);
-            border: none;
-            padding: 0;
-            font-size: var(--font-size-sm);
-            font-family: var(--font);
-            height: 100%;
-            outline: none;
-        }
+            .input-bar-inner input::placeholder {
+                color: var(--text-muted);
+            }
 
-        .input-bar-inner input::placeholder {
-            color: var(--text-muted);
-        }
+            .analyze-btn {
+                position: relative;
+                background: var(--bg-elevated);
+                border: 1px solid var(--border);
+                color: var(--text-primary);
+                cursor: pointer;
+                font-size: var(--font-size-xs);
+                font-family: var(--font-mono);
+                white-space: nowrap;
+                padding: var(--space-xs) var(--space-md);
+                border-radius: 100px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition:
+                    border-color 0.4s ease,
+                    background var(--transition);
+                flex-shrink: 0;
+                overflow: hidden;
+            }
 
-        .analyze-btn {
-            position: relative;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            cursor: pointer;
-            font-size: var(--font-size-xs);
-            font-family: var(--font-mono);
-            white-space: nowrap;
-            padding: var(--space-xs) var(--space-md);
-            border-radius: 100px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            transition: border-color 0.4s ease, background var(--transition);
-            flex-shrink: 0;
-            overflow: hidden;
-        }
+            .analyze-btn:hover:not(.analyzing) {
+                border-color: var(--accent);
+                background: var(--bg-surface);
+            }
 
-        .analyze-btn:hover:not(.analyzing) {
-            border-color: var(--accent);
-            background: var(--bg-surface);
-        }
+            .analyze-btn.analyzing {
+                cursor: default;
+                border-color: transparent;
+            }
 
-        .analyze-btn.analyzing {
-            cursor: default;
-            border-color: transparent;
-        }
+            .analyze-btn-content {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition: opacity 0.4s ease;
+                z-index: 1;
+                position: relative;
+            }
 
-        .analyze-btn-content {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            transition: opacity 0.4s ease;
-            z-index: 1;
-            position: relative;
-        }
+            .analyze-btn.analyzing .analyze-btn-content {
+                opacity: 0;
+            }
 
-        .analyze-btn.analyzing .analyze-btn-content {
-            opacity: 0;
-        }
+            .analyze-canvas {
+                position: absolute;
+                inset: -1px;
+                width: calc(100% + 2px);
+                height: calc(100% + 2px);
+                pointer-events: none;
+            }
 
-        .analyze-canvas {
-            position: absolute;
-            inset: -1px;
-            width: calc(100% + 2px);
-            height: calc(100% + 2px);
-            pointer-events: none;
-        }
-
-        /* 转录与面板之间的分隔条，也是调整两者宽度的抓手。6px 的命中区，可见的线画在里面——眼睛看到的线就是指针
+            /* 转录与面板之间的分隔条，也是调整两者宽度的抓手。6px 的命中区，可见的线画在里面——眼睛看到的线就是指针
            必须落上去的线；这条线从面板边框挪到了这里，否则会画成两条。touch-action 防止拖拽被当成滚动，按下时
            捕获指针，拖拽离开这 6px 条也还能继续。 */
-        .split-handle {
-            flex: none;
-            width: 6px;
-            cursor: col-resize;
-            position: relative;
-            touch-action: none;
-        }
+            .split-handle {
+                flex: none;
+                width: 6px;
+                cursor: col-resize;
+                position: relative;
+                touch-action: none;
+            }
 
-        .split-handle::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 2px;
-            width: 2px;
-            border-radius: 1px;
-            background: var(--border);
-            transition: background var(--transition);
-        }
+            .split-handle::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: 2px;
+                width: 2px;
+                border-radius: 1px;
+                background: var(--border);
+                transition: background var(--transition);
+            }
 
-        .split-handle:hover::before,
-        .split-handle.dragging::before {
-            background: var(--accent);
-        }
+            .split-handle:hover::before,
+            .split-handle.dragging::before {
+                background: var(--accent);
+            }
 
-        .split-handle[hidden] {
-            display: none;
-        }
+            .split-handle[hidden] {
+                display: none;
+            }
 
-        .detail-pane {
-            flex: none;
-            /* 用 border-box 是因为宽度也会被拖拽直接写入，而拖拽会用 getBoundingClientRect 把面板的盒子读回来：
+            .detail-pane {
+                flex: none;
+                /* 用 border-box 是因为宽度也会被拖拽直接写入，而拖拽会用 getBoundingClientRect 把面板的盒子读回来：
                默认的 content box 下，内边距只在这次往返的一侧被算进去，每拖一次分隔条都会多跑出内边距那么远。 */
-            box-sizing: border-box;
-            width: 38%;
-            /* 两个边界都吃重：面板是定宽 flex 项，没有下限时往左拖到底就剩一条读不了的窄栏；没有上限时在宽窗口上
+                box-sizing: border-box;
+                width: 38%;
+                /* 两个边界都吃重：面板是定宽 flex 项，没有下限时往左拖到底就剩一条读不了的窄栏；没有上限时在宽窗口上
                拖能把转录连同气泡顶出视图左边。写成 CSS 而不是 JS 钳制，是为了窗口缩放时不用监听 resize 也仍然有效。 */
-            min-width: 180px;
-            max-width: 72%;
-            display: flex;
-            flex-direction: column;
-            padding: 12px var(--chat-gutter);
-        }
+                min-width: 180px;
+                max-width: 72%;
+                display: flex;
+                flex-direction: column;
+                padding: 12px var(--chat-gutter);
+            }
 
-        .detail-pane[hidden] {
-            display: none;
-        }
+            .detail-pane[hidden] {
+                display: none;
+            }
 
-        .detail-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: var(--space-sm);
-            padding-bottom: var(--space-xs);
-            color: var(--text-muted);
-            font-size: var(--font-size-xs);
-        }
+            .detail-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: var(--space-sm);
+                padding-bottom: var(--space-xs);
+                color: var(--text-muted);
+                font-size: var(--font-size-xs);
+            }
 
-        /* 做成引用而不是重复一遍标题：它的作用是用户翻回去时说明这个回答属于哪个问题，不跟回答本身抢注意力。 */
-        .detail-question {
-            margin-bottom: var(--space-sm);
-            padding-left: var(--space-sm);
-            border-left: 2px solid var(--border);
-            color: var(--text-muted);
-            font-size: var(--font-size-xs);
-            word-break: break-word;
-        }
+            /* 做成引用而不是重复一遍标题：它的作用是用户翻回去时说明这个回答属于哪个问题，不跟回答本身抢注意力。 */
+            .detail-question {
+                margin-bottom: var(--space-sm);
+                padding-left: var(--space-sm);
+                border-left: 2px solid var(--border);
+                color: var(--text-muted);
+                font-size: var(--font-size-xs);
+                word-break: break-word;
+            }
 
-        .detail-scroll {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            font-size: var(--response-font-size, 15px);
-            line-height: var(--line-height);
-            user-select: text;
-            cursor: text;
-        }
+            .detail-scroll {
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                font-size: var(--response-font-size, 15px);
+                line-height: var(--line-height);
+                user-select: text;
+                cursor: text;
+            }
 
-        /* 面板正文带着转录的 markdown class，这样只需要维护一套 markdown 规则；这里只撤掉气泡的外观——这是面板，
+            /* 面板正文带着转录的 markdown class，这样只需要维护一套 markdown 规则；这里只撤掉气泡的外观——这是面板，
            不是气泡。 */
-        .detail-body.message-body {
-            max-width: none;
-            padding: 0;
-            border-radius: 0;
-            background: transparent;
-            box-shadow: none;
-        }
+            .detail-body.message-body {
+                max-width: none;
+                padding: 0;
+                border-radius: 0;
+                background: transparent;
+                box-shadow: none;
+            }
 
-        .detail-body.streaming::after {
-            content: '▍';
-            margin-left: 1px;
-            animation: caret-blink 1s step-end infinite;
-        }
+            .detail-body.streaming::after {
+                content: '▍';
+                margin-left: 1px;
+                animation: caret-blink 1s step-end infinite;
+            }
 
-        .detail-note {
-            margin-top: var(--space-sm);
-            color: var(--text-muted);
-            font-size: var(--font-size-xs);
-        }
+            .detail-note {
+                margin-top: var(--space-sm);
+                color: var(--text-muted);
+                font-size: var(--font-size-xs);
+            }
 
-        .detail-note.danger {
-            color: var(--danger);
-        }
+            .detail-note.danger {
+                color: var(--danger);
+            }
 
-        .detail-nav {
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: var(--space-xs);
-            padding-top: var(--space-sm);
-        }
+            .detail-nav {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                gap: var(--space-xs);
+                padding-top: var(--space-sm);
+            }
 
-        .detail-nav button {
-            width: 26px;
-            height: 26px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border);
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-            font-size: var(--font-size-sm);
-            cursor: pointer;
-        }
+            .detail-nav button {
+                width: 26px;
+                height: 26px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: var(--radius-sm);
+                border: 1px solid var(--border);
+                background: var(--bg-elevated);
+                color: var(--text-primary);
+                font-size: var(--font-size-sm);
+                cursor: pointer;
+            }
 
-        .detail-nav button:hover:not(:disabled) {
-            border-color: var(--accent);
-        }
+            .detail-nav button:hover:not(:disabled) {
+                border-color: var(--accent);
+            }
 
-        .detail-nav button:disabled {
-            opacity: 0.45;
-            cursor: default;
-        }
+            .detail-nav button:disabled {
+                opacity: 0.45;
+                cursor: default;
+            }
         `,
     ];
 
@@ -630,7 +631,7 @@ export class AssistantView extends LitElement {
         const perimeter = 2 * straightLen + 2 * arcLen;
 
         // 给定沿周长走过的距离，返回 {x, y, nx, ny}（位置 + 指向内侧的法线）
-        const pointOnPerimeter = (d) => {
+        const pointOnPerimeter = d => {
             d = ((d % perimeter) + perimeter) % perimeter;
             // 上直边：从左到右
             if (d < straightLen) {
@@ -669,7 +670,7 @@ export class AssistantView extends LitElement {
             seeds.push({ pos: Math.random(), drift: Math.random(), depthSeed: Math.random() });
         }
 
-        const draw = (now) => {
+        const draw = now => {
             const elapsed = (now - startTime) / 1000;
             const fade = Math.min(1, elapsed / FADE_IN);
 
@@ -829,20 +830,15 @@ export class AssistantView extends LitElement {
 
             <div class="detail-scroll" @scroll=${this.handleDetailScroll}>
                 ${detail.question ? html`<div class="detail-question">${detail.question}</div>` : ''}
-                <div
-                    class="detail-body message-body markdown ${detail.final ? '' : 'streaming'}"
-                    data-detail-id=${detail.detailId}
-                ></div>
+                <div class="detail-body message-body markdown ${detail.final ? '' : 'streaming'}" data-detail-id=${detail.detailId}></div>
                 ${notes}
             </div>
 
             <div class="detail-nav">
                 <button ?disabled=${position <= 0} @click=${() => this.onDetailPrev()} title="Previous detailed answer">‹</button>
-                <button
-                    ?disabled=${position >= this.detailMessages.length - 1}
-                    @click=${() => this.onDetailNext()}
-                    title="Next detailed answer"
-                >›</button>
+                <button ?disabled=${position >= this.detailMessages.length - 1} @click=${() => this.onDetailNext()} title="Next detailed answer">
+                    ›
+                </button>
             </div>
         `;
     }
@@ -855,12 +851,22 @@ export class AssistantView extends LitElement {
             <div class="live-split">
                 <div class="chat-wrap">
                     <div class="chat-scroll" @scroll=${this.handleScroll}>
-                        ${this.messages.length === 0
-                            ? html`<div class="chat-empty">Listening to the interview...</div>`
-                            : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`}
+                        ${
+                            this.messages.length === 0
+                                ? html`<div class="chat-empty">Listening to the interview...</div>`
+                                : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`
+                        }
                     </div>
                     <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
                             <path d="M12 5v14M19 12l-7 7-7-7" />
                         </svg>
                         Latest
@@ -879,25 +885,25 @@ export class AssistantView extends LitElement {
                     @pointercancel=${this._onSplitPointerUp}
                 ></div>
 
-                <div class="detail-pane" style="width:${paneWidth}" ?hidden=${this.detailMessages.length === 0}>
-                    ${this.renderDetailPane()}
-                </div>
+                <div class="detail-pane" style="width:${paneWidth}" ?hidden=${this.detailMessages.length === 0}>${this.renderDetailPane()}</div>
             </div>
 
             <div class="input-bar">
                 <div class="input-bar-inner">
-                    <input
-                        type="text"
-                        id="textInput"
-                        placeholder="Type a message..."
-                        @keydown=${this.handleTextKeydown}
-                    />
+                    <input type="text" id="textInput" placeholder="Type a message..." @keydown=${this.handleTextKeydown} />
                 </div>
                 <button class="analyze-btn ${this.isAnalyzing ? 'analyzing' : ''}" @click=${this.handleScreenAnswer}>
                     <canvas class="analyze-canvas"></canvas>
                     <span class="analyze-btn-content">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24">
-                            <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 3v7h6l-8 11v-7H5z" />
+                            <path
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M13 3v7h6l-8 11v-7H5z"
+                            />
                         </svg>
                         Analyze Screen
                     </span>

@@ -1,10 +1,12 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { unifiedPageStyles } from './sharedPageStyles.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement, isChinese } from '../../utils/i18n.js';
+import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
 
-export class HistoryView extends LitElement {
+export class HistoryView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
+        scrollbarStyles,
         // 转录的外观与实时视图共用：录下来的会话要显示成同一场对话，两边不能漂移。本地规则放在后面。
         conversationStyles,
         css`
@@ -430,9 +432,7 @@ export class HistoryView extends LitElement {
     }
 
     toggleSelect(sessionId) {
-        this.selectedIds = this.isSelected(sessionId)
-            ? this.selectedIds.filter(id => id !== sessionId)
-            : [...this.selectedIds, sessionId];
+        this.selectedIds = this.isSelected(sessionId) ? this.selectedIds.filter(id => id !== sessionId) : [...this.selectedIds, sessionId];
         this.confirmingDelete = false;
         this.statusMessage = '';
     }
@@ -441,9 +441,7 @@ export class HistoryView extends LitElement {
     toggleSelectAll(visibleSessions) {
         const visibleIds = visibleSessions.map(session => session.sessionId);
         const allSelected = visibleIds.length > 0 && visibleIds.every(id => this.isSelected(id));
-        this.selectedIds = allSelected
-            ? this.selectedIds.filter(id => !visibleIds.includes(id))
-            : [...new Set([...this.selectedIds, ...visibleIds])];
+        this.selectedIds = allSelected ? this.selectedIds.filter(id => !visibleIds.includes(id)) : [...new Set([...this.selectedIds, ...visibleIds])];
         this.confirmingDelete = false;
         this.statusMessage = '';
     }
@@ -460,6 +458,21 @@ export class HistoryView extends LitElement {
         this.openSession(sessionId);
     }
 
+    showStatus(message, type) {
+        this.statusMessage = message;
+        this.statusType = type;
+        clearTimeout(this._statusTimer);
+        this._statusTimer = setTimeout(() => {
+            this.statusMessage = '';
+            this.requestUpdate();
+        }, 4000);
+    }
+
+    disconnectedCallback() {
+        clearTimeout(this._statusTimer);
+        super.disconnectedCallback();
+    }
+
     async deleteSelected() {
         if (!this.selectedIds.length) return;
         const count = this.selectedIds.length;
@@ -469,15 +482,20 @@ export class HistoryView extends LitElement {
             await this.loadSessions();
             this.selectedIds = [];
             this.confirmingDelete = false;
-            this.statusType = failed ? 'error' : 'success';
-            this.statusMessage = failed
-                ? `${failed} of ${count} sessions could not be deleted.`
-                : `Deleted ${count} session${count === 1 ? '' : 's'}.`;
+            this.showStatus(
+                failed
+                    ? isChinese()
+                        ? `${count} 个会话中有 ${failed} 个删除失败。`
+                        : `${failed} of ${count} sessions could not be deleted.`
+                    : isChinese()
+                      ? `已删除 ${count} 个会话。`
+                      : `Deleted ${count} session${count === 1 ? '' : 's'}.`,
+                failed ? 'error' : 'success'
+            );
         } catch (error) {
             console.error('Error deleting sessions:', error);
             this.confirmingDelete = false;
-            this.statusType = 'error';
-            this.statusMessage = `Error deleting sessions: ${error.message}`;
+            this.showStatus(isChinese() ? `删除会话失败：${error.message}` : `Error deleting sessions: ${error.message}`, 'error');
         } finally {
             this.requestUpdate();
         }
@@ -489,14 +507,19 @@ export class HistoryView extends LitElement {
             const result = await cheatingDaddy.storage.exportSessions(this.selectedIds);
             // 取消对话框不算需要报告的结果；选中状态保持不变。
             if (result.canceled) return;
-            this.statusType = result.success ? 'success' : 'error';
-            this.statusMessage = result.success
-                ? `Exported ${result.count} session${result.count === 1 ? '' : 's'} to ${result.dir}`
-                : `Export failed: ${result.error || 'unknown error'}`;
+            this.showStatus(
+                result.success
+                    ? isChinese()
+                        ? `已将 ${result.count} 个会话导出到 ${result.dir}`
+                        : `Exported ${result.count} session${result.count === 1 ? '' : 's'} to ${result.dir}`
+                    : isChinese()
+                      ? `导出失败：${result.error || '未知错误'}`
+                      : `Export failed: ${result.error || 'unknown error'}`,
+                result.success ? 'success' : 'error'
+            );
         } catch (error) {
             console.error('Error exporting sessions:', error);
-            this.statusType = 'error';
-            this.statusMessage = `Export failed: ${error.message}`;
+            this.showStatus(isChinese() ? `导出失败：${error.message}` : `Export failed: ${error.message}`, 'error');
         } finally {
             this.confirmingDelete = false;
             this.requestUpdate();
@@ -505,28 +528,30 @@ export class HistoryView extends LitElement {
 
     formatDate(timestamp) {
         const date = new Date(timestamp);
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return date.toLocaleDateString(isChinese() ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
     formatTime(timestamp) {
         const date = new Date(timestamp);
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleTimeString(isChinese() ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
     }
 
     formatTimestamp(timestamp) {
         const date = new Date(timestamp);
-        return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleString(isChinese() ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
     getProfileNames() {
-        return {
-            interview: 'Job Interview',
-            sales: 'Sales Call',
-            meeting: 'Business Meeting',
-            presentation: 'Presentation',
-            negotiation: 'Negotiation',
-            exam: 'Exam Assistant',
-        };
+        return isChinese()
+            ? { interview: '求职面试', sales: '销售通话', meeting: '商务会议', presentation: '演示汇报', negotiation: '谈判', exam: '考试助手' }
+            : {
+                  interview: 'Job Interview',
+                  sales: 'Sales Call',
+                  meeting: 'Business Meeting',
+                  presentation: 'Presentation',
+                  negotiation: 'Negotiation',
+                  exam: 'Exam Assistant',
+              };
     }
 
     _getProfileLabel(session) {
@@ -641,6 +666,7 @@ export class HistoryView extends LitElement {
     // 回答是 markdown，写进模板就意味着每次更新都重解析，所以正文事后填充——和实时视图同一套，只是没有流式：
     // 录下来的会话只渲染一次，memo 让选中和搜索都不会重解析没变过的内容。
     updated() {
+        super.updated();
         if (!this.selectedSession) return;
 
         for (const group of this.collectTimeline(this.selectedSession)) {
@@ -665,26 +691,43 @@ export class HistoryView extends LitElement {
         const hint = [profile && 'profile', prompt && 'prompt'].filter(Boolean).join(' · ');
         return html`
             <div class="context-strip">
-                <button class="context-toggle" @click=${() => { this.showContext = !this.showContext; }}>
+                <button
+                    class="context-toggle"
+                    @click=${() => {
+                        this.showContext = !this.showContext;
+                    }}
+                >
                     <span>${this.showContext ? '▾' : '▸'} Context</span>
                     <span>${hint}</span>
                 </button>
-                ${this.showContext ? html`
-                    <div class="context-body">
-                        ${profile ? html`
-                            <div class="context-row">
-                                <span class="context-key">Profile</span>
-                                <span class="context-value">${this.getProfileNames()[profile] || profile}</span>
-                            </div>
-                        ` : ''}
-                        ${prompt ? html`
-                            <div class="context-row">
-                                <span class="context-key">Prompt</span>
-                                <span class="context-value">${prompt}</span>
-                            </div>
-                        ` : ''}
-                    </div>
-                ` : ''}
+                ${
+                    this.showContext
+                        ? html`
+                              <div class="context-body">
+                                  ${
+                                      profile
+                                          ? html`
+                                                <div class="context-row">
+                                                    <span class="context-key">Profile</span>
+                                                    <span class="context-value">${this.getProfileNames()[profile] || profile}</span>
+                                                </div>
+                                            `
+                                          : ''
+                                  }
+                                  ${
+                                      prompt
+                                          ? html`
+                                                <div class="context-row">
+                                                    <span class="context-key">Prompt</span>
+                                                    <span class="context-value">${prompt}</span>
+                                                </div>
+                                            `
+                                          : ''
+                                  }
+                              </div>
+                          `
+                        : ''
+                }
             </div>
         `;
     }
@@ -723,7 +766,7 @@ export class HistoryView extends LitElement {
             `;
         }
 
-        const labels = { brief: 'Brief answer', detail: 'Detailed answer' };
+        const labels = isChinese() ? { brief: '简短回答', detail: '详细回答' } : { brief: 'Brief answer', detail: 'Detailed answer' };
         const references = part.usedKnowledge?.length ? part.usedKnowledge.join(', ') : '';
         return html`
             <div class="part">
@@ -744,17 +787,19 @@ export class HistoryView extends LitElement {
             <div class="page-title">History</div>
 
             <div class="search-wrap">
-                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="11" cy="11" r="8"/>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                <svg
+                    class="search-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
-                <input
-                    class="control"
-                    type="text"
-                    placeholder="Search sessions..."
-                    .value=${this.searchQuery}
-                    @input=${this.handleSearchInput}
-                />
+                <input class="control" type="text" placeholder="Search sessions..." .value=${this.searchQuery} @input=${this.handleSearchInput} />
             </div>
 
             <section class="list-shell">
@@ -762,24 +807,32 @@ export class HistoryView extends LitElement {
                 <div class="sessions-list">
                     ${this.loading ? html`<div class="empty" style="margin:var(--space-md);">Loading sessions...</div>` : ''}
                     ${!this.loading && filteredSessions.length === 0 ? html`<div class="empty" style="margin:var(--space-md);">No matching sessions.</div>` : ''}
-                    ${!this.loading ? filteredSessions.map(session => html`
-                        <div
-                            class="session-card ${this.isSelected(session.sessionId) ? 'selected' : ''}"
-                            @click=${event => this.handleCardClick(event, session.sessionId)}
-                        >
-                            <input
-                                class="session-check"
-                                type="checkbox"
-                                .checked=${this.isSelected(session.sessionId)}
-                                @change=${() => this.toggleSelect(session.sessionId)}
-                            />
-                            <div class="session-left">
-                                <span class="session-profile">${this._getProfileLabel(session)}</span>
-                                <span class="session-date">${this.formatDate(session.createdAt)} · ${this.formatTime(session.createdAt)}</span>
-                            </div>
-                            ${session.messageCount > 0 ? html`<span class="session-badge">${session.messageCount}</span>` : ''}
-                        </div>
-                    `) : ''}
+                    ${
+                        !this.loading
+                            ? filteredSessions.map(
+                                  session => html`
+                                      <div
+                                          class="session-card ${this.isSelected(session.sessionId) ? 'selected' : ''}"
+                                          @click=${event => this.handleCardClick(event, session.sessionId)}
+                                      >
+                                          <input
+                                              class="session-check"
+                                              type="checkbox"
+                                              .checked=${this.isSelected(session.sessionId)}
+                                              @change=${() => this.toggleSelect(session.sessionId)}
+                                          />
+                                          <div class="session-left">
+                                              <span class="session-profile">${this._getProfileLabel(session)}</span>
+                                              <span class="session-date"
+                                                  >${this.formatDate(session.createdAt)} · ${this.formatTime(session.createdAt)}</span
+                                              >
+                                          </div>
+                                          ${session.messageCount > 0 ? html`<span class="session-badge">${session.messageCount}</span>` : ''}
+                                      </div>
+                                  `
+                              )
+                            : ''
+                    }
                 </div>
             </section>
         `;
@@ -788,9 +841,6 @@ export class HistoryView extends LitElement {
     // 只有选中了东西才出现；删除按钮首次点击只是上膛，第二次才是确认。没有单独的对话框要退出——对一个浮在所有
     // 窗口之上的窗口来说，这点很重要。
     renderSelectionBar(filteredSessions) {
-        if (this.statusMessage && !this.selectedIds.length) {
-            return html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>`;
-        }
         if (!this.selectedIds.length) return '';
 
         const count = this.selectedIds.length;
@@ -798,26 +848,45 @@ export class HistoryView extends LitElement {
 
         return html`
             <div class="selection-bar">
-                ${this.confirmingDelete
-                    ? html`<span class="selection-count danger">Delete ${count} session${count === 1 ? '' : 's'}? This cannot be undone.</span>`
-                    : html`<span class="selection-count">${count} selected</span>`}
+                ${
+                    this.confirmingDelete
+                        ? html`<span class="selection-count danger"
+                              >${isChinese() ? `删除 ${count} 个会话？此操作无法撤销。` : `Delete ${count} session${count === 1 ? '' : 's'}? This cannot be undone.`}</span
+                          >`
+                        : html`<span class="selection-count">${isChinese() ? `已选择 ${count} 个` : `${count} selected`}</span>`
+                }
                 <div class="bar-actions">
-                    ${this.confirmingDelete
-                        ? html`
-                            <button class="bar-btn" @click=${() => { this.confirmingDelete = false; }}>Cancel</button>
-                            <button class="bar-btn danger" @click=${this.deleteSelected}>Delete</button>
-                        `
-                        : html`
-                            <button class="bar-btn" @click=${() => this.toggleSelectAll(filteredSessions)}>
-                                ${allSelected ? 'Deselect all' : 'Select all'}
-                            </button>
-                            <button class="bar-btn" @click=${this.clearSelection}>Clear</button>
-                            <button class="bar-btn" @click=${this.exportSelected}>Export JSON</button>
-                            <button class="bar-btn danger" @click=${() => { this.confirmingDelete = true; }}>Delete</button>
-                        `}
+                    ${
+                        this.confirmingDelete
+                            ? html`
+                                  <button
+                                      class="bar-btn"
+                                      @click=${() => {
+                                          this.confirmingDelete = false;
+                                      }}
+                                  >
+                                      Cancel
+                                  </button>
+                                  <button class="bar-btn danger" @click=${this.deleteSelected}>Delete</button>
+                              `
+                            : html`
+                                  <button class="bar-btn" @click=${() => this.toggleSelectAll(filteredSessions)}>
+                                      ${allSelected ? 'Deselect all' : 'Select all'}
+                                  </button>
+                                  <button class="bar-btn" @click=${this.clearSelection}>Clear</button>
+                                  <button class="bar-btn" @click=${this.exportSelected}>Export JSON</button>
+                                  <button
+                                      class="bar-btn danger"
+                                      @click=${() => {
+                                          this.confirmingDelete = true;
+                                      }}
+                                  >
+                                      Delete
+                                  </button>
+                              `
+                    }
                 </div>
             </div>
-            ${this.statusMessage ? html`<div class="selection-note ${this.statusType}">${this.statusMessage}</div>` : ''}
         `;
     }
 
@@ -826,25 +895,33 @@ export class HistoryView extends LitElement {
             <div class="page-title">Session Detail</div>
             <div class="detail-top">
                 <button class="back-btn" @click=${this.closeSession}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="15 18 9 12 15 6"/>
+                    <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="15 18 9 12 15 6" />
                     </svg>
                 </button>
-                <span class="detail-info">${this._getProfileLabel(this.selectedSession)} · ${this.formatDate(this.selectedSession.createdAt)} · ${this.formatTime(this.selectedSession.createdAt)}</span>
+                <span class="detail-info"
+                    >${this._getProfileLabel(this.selectedSession)} · ${this.formatDate(this.selectedSession.createdAt)} ·
+                    ${this.formatTime(this.selectedSession.createdAt)}</span
+                >
             </div>
-            <section class="details-scroll">
-                ${this.renderContextStrip()}
-                ${this.renderTimeline()}
-            </section>
+            <section class="details-scroll">${this.renderContextStrip()} ${this.renderTimeline()}</section>
         `;
     }
 
     render() {
         return html`
             <div class="unified-page">
-                <div class="unified-wrap">
-                    ${this.selectedSession ? this.renderDetailView() : this.renderListView()}
-                </div>
+                ${this.statusMessage ? html`<div class="page-toast ${this.statusType}" role="status">${this.statusMessage}</div>` : ''}
+                <div class="unified-wrap">${this.selectedSession ? this.renderDetailView() : this.renderListView()}</div>
             </div>
         `;
     }

@@ -1,9 +1,11 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
-import { unifiedPageStyles } from './sharedPageStyles.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement } from '../../utils/i18n.js';
+import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
-export class AICustomizeView extends LitElement {
+export class AICustomizeView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
+        scrollbarStyles,
         css`
             /* wrap 保留共用的 min-height: 100% 而不锁死在它上面：条目一多，页面必须长高并滚动；锁死则多出来的
                高度会从上面的说明框里扣。知识区同理按内容自撑——给它也加 flex:1，两块就会分掉剩余高度，把说明框
@@ -244,9 +246,8 @@ export class AICustomizeView extends LitElement {
                     <section class="surface auto">
                         <div class="surface-title">Knowledge</div>
                         <div class="surface-subtitle">
-                            A folder of <code>.md</code> files, one entry each. Its frontmatter
-                            (<code>name</code> / <code>description</code>) becomes the summary the model sees; the body is
-                            loaded only when the detailed answer asks for it.
+                            A folder of <code>.md</code> files, one entry each. Its frontmatter (<code>name</code> / <code>description</code>) becomes
+                            the summary the model sees; the body is loaded only when the detailed answer asks for it.
                         </div>
 
                         <div class="dir-row">
@@ -254,16 +255,17 @@ export class AICustomizeView extends LitElement {
                             <button class="control btn-inline" ?disabled=${this._knowledgeBusy} @click=${this._chooseKnowledgeDir}>
                                 ${this._knowledgeDir ? 'Change folder' : 'Choose folder'}
                             </button>
-                            ${this._knowledgeDir
-                                ? html`
-                                      <button class="control btn-inline" @click=${this._loadKnowledge}>Refresh</button>
-                                      <button class="control btn-inline" @click=${this._clearKnowledgeDir}>Remove</button>
-                                  `
-                                : ''}
+                            ${
+                                this._knowledgeDir
+                                    ? html`
+                                          <button class="control btn-inline" @click=${this._loadKnowledge}>Refresh</button>
+                                          <button class="control btn-inline" @click=${this._clearKnowledgeDir}>Remove</button>
+                                      `
+                                    : ''
+                            }
                         </div>
 
-                        ${this._knowledgeError ? html`<div class="form-help danger">${this._knowledgeError}</div>` : ''}
-                        ${this._renderEntries()}
+                        ${this._knowledgeError ? html`<div class="form-help danger">${this._knowledgeError}</div>` : ''} ${this._renderEntries()}
                     </section>
                 </div>
             </div>

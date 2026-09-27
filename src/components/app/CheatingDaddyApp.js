@@ -1,4 +1,5 @@
-import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
+import { html, css } from '../../assets/lit-core-2.7.4.min.js';
+import { LocalizedLitElement, setUiLanguage } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
 import { MainView } from '../views/MainView.js';
 import { CustomizeView } from '../views/CustomizeView.js';
@@ -12,332 +13,332 @@ import { FeedbackView } from '../views/FeedbackView.js';
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
 const { ipcRenderer } = window.require('electron');
 
-export class CheatingDaddyApp extends LitElement {
+export class CheatingDaddyApp extends LocalizedLitElement {
     static styles = [
         css`
-        * {
-            box-sizing: border-box;
-            font-family: var(--font);
-            margin: 0;
-            padding: 0;
-            cursor: default;
-            user-select: none;
-        }
-
-        :host {
-            display: block;
-            width: 100%;
-            height: 100vh;
-            overflow: hidden;
-            border-radius: 12px;
-            background: var(--bg-app);
-            color: var(--text-primary);
-        }
-
-        .app-shell {
-            display: flex;
-            height: calc(100vh - 2px);
-            margin: 1px;
-            overflow: hidden;
-            border: 2px solid rgba(255, 255, 255, 0.18);
-            border-radius: 11px;
-        }
-
-        .top-drag-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 9999;
-            display: flex;
-            align-items: center;
-            height: 38px;
-            padding-right: var(--space-md);
-            background: transparent;
-        }
-
-        .drag-region {
-            flex: 1;
-            height: 100%;
-            -webkit-app-region: drag;
-        }
-
-        .top-drag-bar.hidden {
-            display: none;
-        }
-
-        /* 隐藏 / 退出，固定在每页右上角；它们前面的那片空白归拖拽区。 */
-        .window-controls {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            height: 100%;
-            -webkit-app-region: no-drag;
-        }
-
-        /* 顶栏里唯一的按钮形状：圆形，不悬停时几乎看不见。直播栏左侧的会话按钮和右侧的窗口按钮都用它。 */
-        .icon-btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 26px;
-            height: 26px;
-            padding: 0;
-            border: 1px solid transparent;
-            border-radius: 50%;
-            background: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .icon-btn:hover {
-            background: var(--bg-hover);
-            border-color: var(--border);
-            color: var(--text-primary);
-        }
-
-        .icon-btn svg {
-            width: 14px;
-            height: 14px;
-        }
-
-        .icon-btn.danger:hover {
-            background: var(--danger);
-            border-color: transparent;
-            color: #fff;
-        }
-
-        /* 暂停态全靠这圈描边：软暂停时麦克风指示灯仍然亮着，亮着本身不表示还在收音。 */
-        .icon-btn.active {
-            color: var(--accent);
-            border-color: var(--accent);
-        }
-
-        .sidebar {
-            width: var(--sidebar-width);
-            min-width: var(--sidebar-width);
-            background: var(--bg-surface);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            padding: 42px 0 var(--space-md) 0;
-            transition:
-                width var(--transition),
-                min-width var(--transition),
-                opacity var(--transition);
-        }
-
-        .sidebar.hidden {
-            width: 0;
-            min-width: 0;
-            padding: 0;
-            overflow: hidden;
-            border-right: none;
-            opacity: 0;
-        }
-
-        .sidebar-brand {
-            padding: var(--space-sm) var(--space-lg);
-            padding-top: var(--space-md);
-            margin-bottom: var(--space-lg);
-        }
-
-        .sidebar-brand h1 {
-            font-size: var(--font-size-sm);
-            font-weight: var(--font-weight-semibold);
-            color: var(--text-primary);
-            letter-spacing: -0.01em;
-        }
-
-        .sidebar-nav {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-xs);
-            padding: 0 var(--space-sm);
-            -webkit-app-region: no-drag;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            padding: var(--space-sm) var(--space-md);
-            border-radius: var(--radius-md);
-            color: var(--text-secondary);
-            font-size: var(--font-size-sm);
-            font-weight: var(--font-weight-medium);
-            cursor: pointer;
-            transition:
-                color var(--transition),
-                background var(--transition);
-            border: none;
-            background: none;
-            width: 100%;
-            text-align: left;
-        }
-
-        .nav-item:hover {
-            color: var(--text-primary);
-            background: var(--bg-hover);
-        }
-
-        .nav-item.active {
-            color: var(--text-primary);
-            background: var(--bg-elevated);
-        }
-
-        .nav-item svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
-
-        .sidebar-footer {
-            padding: var(--space-sm);
-            margin-top: var(--space-sm);
-            -webkit-app-region: no-drag;
-        }
-
-        .update-btn {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            width: 100%;
-            padding: var(--space-sm) var(--space-md);
-            border-radius: var(--radius-md);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            background: rgba(239, 68, 68, 0.08);
-            color: var(--danger);
-            font-size: var(--font-size-sm);
-            font-weight: var(--font-weight-medium);
-            cursor: pointer;
-            text-align: left;
-            transition:
-                background var(--transition),
-                border-color var(--transition);
-            animation: update-wobble 5s ease-in-out infinite;
-        }
-
-        .update-btn:hover {
-            background: rgba(239, 68, 68, 0.14);
-            border-color: rgba(239, 68, 68, 0.35);
-        }
-
-        @keyframes update-wobble {
-            0%,
-            90%,
-            100% {
-                transform: rotate(0deg);
+            * {
+                box-sizing: border-box;
+                font-family: var(--font);
+                margin: 0;
+                padding: 0;
+                cursor: default;
+                user-select: none;
             }
-            92% {
-                transform: rotate(-2deg);
+
+            :host {
+                display: block;
+                width: 100%;
+                height: 100vh;
+                overflow: hidden;
+                border-radius: 12px;
+                background: var(--bg-app);
+                color: var(--text-primary);
             }
-            94% {
-                transform: rotate(2deg);
+
+            .app-shell {
+                display: flex;
+                height: calc(100vh - 2px);
+                margin: 1px;
+                overflow: hidden;
+                border: 2px solid rgba(255, 255, 255, 0.18);
+                border-radius: 11px;
             }
-            96% {
-                transform: rotate(-1.5deg);
+
+            .top-drag-bar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                height: 38px;
+                padding-right: var(--space-md);
+                background: transparent;
             }
-            98% {
-                transform: rotate(1.5deg);
+
+            .drag-region {
+                flex: 1;
+                height: 100%;
+                -webkit-app-region: drag;
             }
-        }
 
-        .update-btn svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
+            .top-drag-bar.hidden {
+                display: none;
+            }
 
-        .version-text {
-            font-size: var(--font-size-xs);
-            color: var(--text-muted);
-            padding: var(--space-xs) var(--space-md);
-        }
+            /* 隐藏 / 退出，固定在每页右上角；它们前面的那片空白归拖拽区。 */
+            .window-controls {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                height: 100%;
+                -webkit-app-region: no-drag;
+            }
 
-        .content {
-            flex: 1;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            background: var(--bg-app);
-        }
+            /* 顶栏里唯一的按钮形状：圆形，不悬停时几乎看不见。直播栏左侧的会话按钮和右侧的窗口按钮都用它。 */
+            .icon-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                padding: 0;
+                border: 1px solid transparent;
+                border-radius: 50%;
+                background: none;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: var(--transition);
+            }
 
-        .live-bar {
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 var(--space-md);
-            background: var(--bg-surface);
-            border-bottom: 1px solid var(--border);
-            height: 36px;
-            -webkit-app-region: drag;
-        }
+            .icon-btn:hover {
+                background: var(--bg-hover);
+                border-color: var(--border);
+                color: var(--text-primary);
+            }
 
-        .live-bar-left {
-            display: flex;
-            align-items: center;
-            gap: var(--space-sm);
-            -webkit-app-region: no-drag;
-            z-index: 1;
-        }
+            .icon-btn svg {
+                width: 14px;
+                height: 14px;
+            }
 
-        .live-bar-center {
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: var(--font-size-xs);
-            color: var(--text-muted);
-            font-weight: var(--font-weight-medium);
-            white-space: nowrap;
-            pointer-events: none;
-        }
+            .icon-btn.danger:hover {
+                background: var(--danger);
+                border-color: transparent;
+                color: #fff;
+            }
 
-        .live-bar-right {
-            display: flex;
-            align-items: center;
-            gap: var(--space-md);
-            -webkit-app-region: no-drag;
-            z-index: 1;
-        }
+            /* 暂停态全靠这圈描边：软暂停时麦克风指示灯仍然亮着，亮着本身不表示还在收音。 */
+            .icon-btn.active {
+                color: var(--accent);
+                border-color: var(--accent);
+            }
 
-        .live-bar-text {
-            font-size: var(--font-size-xs);
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            white-space: nowrap;
-        }
+            .sidebar {
+                width: var(--sidebar-width);
+                min-width: var(--sidebar-width);
+                background: var(--bg-surface);
+                border-right: 1px solid var(--border);
+                display: flex;
+                flex-direction: column;
+                padding: 42px 0 var(--space-md) 0;
+                transition:
+                    width var(--transition),
+                    min-width var(--transition),
+                    opacity var(--transition);
+            }
 
-        .live-bar-text.clickable {
-            cursor: pointer;
-            transition: color var(--transition);
-        }
+            .sidebar.hidden {
+                width: 0;
+                min-width: 0;
+                padding: 0;
+                overflow: hidden;
+                border-right: none;
+                opacity: 0;
+            }
 
-        .live-bar-text.clickable:hover {
-            color: var(--text-primary);
-        }
+            .sidebar-brand {
+                padding: var(--space-sm) var(--space-lg);
+                padding-top: var(--space-md);
+                margin-bottom: var(--space-lg);
+            }
 
-        .content-inner {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
+            .sidebar-brand h1 {
+                font-size: var(--font-size-sm);
+                font-weight: var(--font-weight-semibold);
+                color: var(--text-primary);
+                letter-spacing: -0.01em;
+            }
 
-        .content-inner.live {
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
+            .sidebar-nav {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-xs);
+                padding: 0 var(--space-sm);
+                -webkit-app-region: no-drag;
+            }
 
-        .fullscreen {
-            position: fixed;
-            inset: 0;
-            z-index: 100;
-            background: var(--bg-app);
-        }
+            .nav-item {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                padding: var(--space-sm) var(--space-md);
+                border-radius: var(--radius-md);
+                color: var(--text-secondary);
+                font-size: var(--font-size-sm);
+                font-weight: var(--font-weight-medium);
+                cursor: pointer;
+                transition:
+                    color var(--transition),
+                    background var(--transition);
+                border: none;
+                background: none;
+                width: 100%;
+                text-align: left;
+            }
+
+            .nav-item:hover {
+                color: var(--text-primary);
+                background: var(--bg-hover);
+            }
+
+            .nav-item.active {
+                color: var(--text-primary);
+                background: var(--bg-elevated);
+            }
+
+            .nav-item svg {
+                width: 20px;
+                height: 20px;
+                flex-shrink: 0;
+            }
+
+            .sidebar-footer {
+                padding: var(--space-sm);
+                margin-top: var(--space-sm);
+                -webkit-app-region: no-drag;
+            }
+
+            .update-btn {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                width: 100%;
+                padding: var(--space-sm) var(--space-md);
+                border-radius: var(--radius-md);
+                border: 1px solid rgba(239, 68, 68, 0.2);
+                background: rgba(239, 68, 68, 0.08);
+                color: var(--danger);
+                font-size: var(--font-size-sm);
+                font-weight: var(--font-weight-medium);
+                cursor: pointer;
+                text-align: left;
+                transition:
+                    background var(--transition),
+                    border-color var(--transition);
+                animation: update-wobble 5s ease-in-out infinite;
+            }
+
+            .update-btn:hover {
+                background: rgba(239, 68, 68, 0.14);
+                border-color: rgba(239, 68, 68, 0.35);
+            }
+
+            @keyframes update-wobble {
+                0%,
+                90%,
+                100% {
+                    transform: rotate(0deg);
+                }
+                92% {
+                    transform: rotate(-2deg);
+                }
+                94% {
+                    transform: rotate(2deg);
+                }
+                96% {
+                    transform: rotate(-1.5deg);
+                }
+                98% {
+                    transform: rotate(1.5deg);
+                }
+            }
+
+            .update-btn svg {
+                width: 20px;
+                height: 20px;
+                flex-shrink: 0;
+            }
+
+            .version-text {
+                font-size: var(--font-size-xs);
+                color: var(--text-muted);
+                padding: var(--space-xs) var(--space-md);
+            }
+
+            .content {
+                flex: 1;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                background: var(--bg-app);
+            }
+
+            .live-bar {
+                position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 var(--space-md);
+                background: var(--bg-surface);
+                border-bottom: 1px solid var(--border);
+                height: 36px;
+                -webkit-app-region: drag;
+            }
+
+            .live-bar-left {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                -webkit-app-region: no-drag;
+                z-index: 1;
+            }
+
+            .live-bar-center {
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                font-size: var(--font-size-xs);
+                color: var(--text-muted);
+                font-weight: var(--font-weight-medium);
+                white-space: nowrap;
+                pointer-events: none;
+            }
+
+            .live-bar-right {
+                display: flex;
+                align-items: center;
+                gap: var(--space-md);
+                -webkit-app-region: no-drag;
+                z-index: 1;
+            }
+
+            .live-bar-text {
+                font-size: var(--font-size-xs);
+                color: var(--text-muted);
+                font-family: var(--font-mono);
+                white-space: nowrap;
+            }
+
+            .live-bar-text.clickable {
+                cursor: pointer;
+                transition: color var(--transition);
+            }
+
+            .live-bar-text.clickable:hover {
+                color: var(--text-primary);
+            }
+
+            .content-inner {
+                flex: 1;
+                overflow-y: auto;
+                overflow-x: hidden;
+            }
+
+            .content-inner.live {
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .fullscreen {
+                position: fixed;
+                inset: 0;
+                z-index: 100;
+                background: var(--bg-app);
+            }
         `,
         scrollbarStyles,
     ];
@@ -424,6 +425,7 @@ export class CheatingDaddyApp extends LitElement {
             this.selectedScreenshotInterval = prefs.selectedScreenshotInterval || '5';
             this.selectedImageQuality = prefs.selectedImageQuality || 'medium';
             this.layoutMode = config.layout || 'normal';
+            setUiLanguage(prefs.uiLanguage || 'zh-CN');
 
             this._storageLoaded = true;
             this.requestUpdate();
@@ -846,10 +848,7 @@ export class CheatingDaddyApp extends LitElement {
 
             case 'main':
                 return html`
-                    <main-view
-                        .onStart=${() => this.handleStart()}
-                        .onExternalLink=${url => this.handleExternalLinkClick(url)}
-                    ></main-view>
+                    <main-view .onStart=${() => this.handleStart()} .onExternalLink=${url => this.handleExternalLinkClick(url)}></main-view>
                 `;
 
             case 'ai-customize':
@@ -1018,12 +1017,28 @@ export class CheatingDaddyApp extends LitElement {
         return html`
             <div class="window-controls">
                 <button class="icon-btn" @click=${() => this.handleHideToggle()} title="Hide window">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <path d="M5 12h14" />
                     </svg>
                 </button>
                 <button class="icon-btn danger" @click=${() => this.handleQuit()} title="Quit">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <path d="M6 6l12 12M18 6L6 18" />
                     </svg>
                 </button>
@@ -1057,7 +1072,15 @@ export class CheatingDaddyApp extends LitElement {
                         </svg>
                     </button>
                     <button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
                             <polyline points="23 4 23 10 17 10" />
                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                         </svg>
@@ -1067,8 +1090,7 @@ export class CheatingDaddyApp extends LitElement {
                 <div class="live-bar-right">
                     ${this.statusText ? html`<span class="live-bar-text">${this.statusText}</span>` : ''}
                     <span class="live-bar-text">${this.getElapsedTime()}</span>
-                    ${this._isClickThrough ? html`<span class="live-bar-text">[click through]</span>` : ''}
-                    ${this.renderWindowButtons()}
+                    ${this._isClickThrough ? html`<span class="live-bar-text">[click through]</span>` : ''} ${this.renderWindowButtons()}
                 </div>
             </div>
         `;
