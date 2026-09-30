@@ -3,8 +3,8 @@ import { LocalizedLitElement } from '../../utils/i18n.js';
 
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_CHAT_MODEL = 'deepseek-flash';
-const DEFAULT_BAILIAN_MODEL = 'paraformer-realtime-v2';
-const DEFAULT_BAILIAN_REGION = 'beijing';
+const DEFAULT_BAILIAN_MODEL = 'fun-asr-realtime-2026-02-28';
+const DEFAULT_BAILIAN_WS_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 
 export class MainView extends LocalizedLitElement {
     static styles = css`
@@ -220,7 +220,7 @@ export class MainView extends LocalizedLitElement {
         _chatKey: { state: true },
         _chatModel: { state: true },
         _bailianKey: { state: true },
-        _bailianRegion: { state: true },
+        _bailianWsUrl: { state: true },
         _bailianModel: { state: true },
         _keyError: { state: true },
     };
@@ -235,7 +235,7 @@ export class MainView extends LocalizedLitElement {
         this._chatKey = '';
         this._chatModel = DEFAULT_CHAT_MODEL;
         this._bailianKey = '';
-        this._bailianRegion = DEFAULT_BAILIAN_REGION;
+        this._bailianWsUrl = DEFAULT_BAILIAN_WS_URL;
         this._bailianModel = DEFAULT_BAILIAN_MODEL;
         this._keyError = false;
 
@@ -249,7 +249,7 @@ export class MainView extends LocalizedLitElement {
 
             this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
             this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
-            this._bailianRegion = config.bailianRegion || DEFAULT_BAILIAN_REGION;
+            this._bailianWsUrl = config.bailianWsUrl || DEFAULT_BAILIAN_WS_URL;
             this._bailianModel = config.bailianModel || DEFAULT_BAILIAN_MODEL;
             this._chatKey = creds.deepseekApiKey || '';
             this._bailianKey = creds.bailianApiKey || '';
@@ -306,10 +306,10 @@ export class MainView extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    async _saveBailianRegion(val) {
-        this._bailianRegion = val;
+    async _saveBailianWsUrl(val) {
+        this._bailianWsUrl = val;
         this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('bailianRegion', val);
+        await cheatingDaddy.storage.updateConfig('bailianWsUrl', val);
         this.requestUpdate();
     }
 
@@ -323,7 +323,7 @@ export class MainView extends LocalizedLitElement {
     _handleStart() {
         if (this.isInitializing) return;
 
-        if (!this._chatBaseUrl.trim() || !this._chatKey.trim() || !this._chatModel.trim() || !this._bailianKey.trim()) {
+        if (!this._chatBaseUrl.trim() || !this._chatKey.trim() || !this._chatModel.trim() || !this._bailianKey.trim() || !this._bailianWsUrl.trim()) {
             this._keyError = true;
             this.requestUpdate();
             return;
@@ -492,12 +492,23 @@ export class MainView extends LocalizedLitElement {
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Service Region</label>
-                        <select .value=${this._bailianRegion} @change=${e => this._saveBailianRegion(e.target.value)}>
-                            <option value="beijing">China (Beijing)</option>
-                            <option value="singapore">Singapore</option>
-                        </select>
-                        <div class="form-hint">The API Key and model must be available in the selected region.</div>
+                        <label class="form-label">WebSocket URL</label>
+                        <input
+                            type="text"
+                            placeholder=${DEFAULT_BAILIAN_WS_URL}
+                            .value=${this._bailianWsUrl}
+                            @input=${e => this._saveBailianWsUrl(e.target.value)}
+                            class=${hasError}
+                        />
+                        <div class="form-hint">
+                            <span>Use the wss:// API Host for the same region and workspace as the API Key and model.</span><br />
+                            <span
+                                class="link"
+                                @click=${() =>
+                                    this.onExternalLink('https://help.aliyun.com/zh/model-studio/realtime-websocket-asr?spm=a2c4g.11186623.0.i3')}
+                                >WebSocket Documentation</span
+                            >
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -508,7 +519,15 @@ export class MainView extends LocalizedLitElement {
                             .value=${this._bailianModel}
                             @input=${e => this._saveBailianModel(e.target.value)}
                         />
-                        <div class="form-hint">Speech is streamed live to Aliyun and transcribed as you talk.</div>
+                        <div class="form-hint">
+                            <span>Speech is streamed live to Aliyun and transcribed as you talk.</span><br />
+                            <span
+                                class="link"
+                                @click=${() =>
+                                    this.onExternalLink('https://bailian.console.aliyun.com/cn-beijing/model/market?capabilities=ASR%2CTTS')}
+                                >Speech Model Marketplace</span
+                            >
+                        </div>
                     </div>
                 </div>
             </details>

@@ -16,7 +16,7 @@ const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 
 const ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
-const MODEL = process.env.DASHSCOPE_MODEL || 'paraformer-realtime-v2';
+const MODEL = process.env.DASHSCOPE_MODEL || 'fun-asr-realtime-2026-02-28';
 const LANGUAGE = process.env.DASHSCOPE_LANGUAGE || 'zh';
 const SAMPLE_RATE = 16000;
 const FRAME_BYTES = 3200; // 100 ms of 16 kHz mono s16

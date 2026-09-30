@@ -8,11 +8,8 @@ const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 const { getConfig, getBailianApiKey } = require('../storage');
 
-const ENDPOINTS = {
-    beijing: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-    singapore: 'wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference',
-};
-const DEFAULT_MODEL = 'paraformer-realtime-v2';
+const DEFAULT_ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
+const DEFAULT_MODEL = 'fun-asr-realtime-2026-02-28';
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
@@ -202,8 +199,16 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
         taskId = randomUUID();
         notifyState('connecting');
 
-        const region = getConfig().bailianRegion;
-        const endpoint = ENDPOINTS[region] || ENDPOINTS.beijing;
+        const configuredEndpoint = (getConfig().bailianWsUrl || DEFAULT_ENDPOINT).trim();
+        let endpoint;
+        try {
+            const parsedEndpoint = new URL(configuredEndpoint);
+            if (parsedEndpoint.protocol !== 'wss:') throw new Error('WebSocket URL must use wss://');
+            endpoint = parsedEndpoint.toString();
+        } catch (error) {
+            fail(`invalid Bailian WebSocket URL: ${error.message}`);
+            return;
+        }
         socket = new WebSocket(endpoint, {
             headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'cheating-daddy/1.0' },
         });
