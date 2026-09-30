@@ -187,6 +187,18 @@ function needsReset() {
 // Wipe and reinitialize the config directory
 function resetConfigDir() {
     const configDir = getConfigDir();
+    // A settings reset or config schema upgrade must not deactivate a paid installation. The two
+    // files are restored verbatim and still have to pass the signature/device check at next launch.
+    const preservedLicenseFiles = ['license.json', 'activation-challenge.json']
+        .map(name => {
+            const filePath = path.join(configDir, name);
+            try {
+                return fs.existsSync(filePath) ? [name, fs.readFileSync(filePath)] : null;
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean);
 
     console.log('Resetting config directory...');
 
@@ -203,6 +215,7 @@ function resetConfigDir() {
     writeJsonFile(getConfigPath(), DEFAULT_CONFIG);
     writeJsonFile(getCredentialsPath(), DEFAULT_CREDENTIALS);
     writeJsonFile(getPreferencesPath(), DEFAULT_PREFERENCES);
+    preservedLicenseFiles.forEach(([name, contents]) => fs.writeFileSync(path.join(configDir, name), contents));
 
     console.log('Config directory initialized with defaults');
 }

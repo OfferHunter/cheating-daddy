@@ -9,6 +9,8 @@
         "package": "electron-forge package",
         "make": "electron-forge make",
         "publish": "electron-forge publish",
+        "license:init": "node scripts/license-tool.js init",
+        "license:generate": "node scripts/license-tool.js generate",
         "lint": "echo \"No linting configured\""
     },
     "keywords": [

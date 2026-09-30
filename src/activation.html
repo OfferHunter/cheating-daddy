@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta http-equiv="content-security-policy" content="script-src 'self' 'unsafe-inline'" />
+        <title>激活软件</title>
+        <style>
+            :root { color-scheme: dark; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
+            * { box-sizing: border-box; }
+            html, body { width: 100%; height: 100%; margin: 0; background: transparent; }
+            body { display: grid; place-items: center; color: #f5f5f5; }
+            main { width: 100%; height: 100%; padding: 34px; border: 1px solid rgba(245,245,245,.78); border-radius: 12px; background: rgba(10,10,10,.94); -webkit-app-region: drag; }
+            h1 { margin: 0 0 8px; font-size: 22px; }
+            p { margin: 0 0 22px; color: #aaa; font-size: 13px; line-height: 1.65; }
+            label { display: block; margin: 18px 0 7px; color: #ddd; font-size: 13px; }
+            textarea { width: 100%; min-height: 86px; resize: none; padding: 11px; border: 1px solid #333; border-radius: 8px; outline: none; background: #171717; color: #eee; font: 12px/1.5 Consolas, monospace; -webkit-app-region: no-drag; }
+            textarea:focus { border-color: #3b82f6; }
+            .row { display: flex; gap: 10px; margin-top: 14px; }
+            button { padding: 9px 15px; border: 1px solid #3b82f6; border-radius: 8px; background: #3b82f6; color: white; cursor: pointer; -webkit-app-region: no-drag; }
+            button.secondary { border-color: #333; background: transparent; color: #ddd; }
+            #status { min-height: 22px; margin-top: 14px; color: #ef8b8b; font-size: 13px; }
+        </style>
+    </head>
+    <body>
+        <main>
+            <h1>激活软件</h1>
+            <p>复制这台电脑的挑战码并发送给销售方。收到激活码后粘贴到下方即可永久激活本机。</p>
+            <label for="challenge">本机挑战码</label>
+            <textarea id="challenge" readonly></textarea>
+            <div class="row"><button id="copy" class="secondary">复制挑战码</button></div>
+            <label for="license">激活码</label>
+            <textarea id="license" placeholder="粘贴 CDLIC1 开头的激活码"></textarea>
+            <div class="row"><button id="activate">立即激活</button><button id="quit" class="secondary">退出</button></div>
+            <div id="status"></div>
+        </main>
+        <script>
+            const { ipcRenderer, clipboard } = require('electron');
+            const challenge = document.getElementById('challenge');
+            const status = document.getElementById('status');
+            ipcRenderer.invoke('license:get-challenge').then(result => { challenge.value = result.challenge || ''; });
+            document.getElementById('copy').addEventListener('click', () => {
+                clipboard.writeText(challenge.value);
+                status.style.color = '#79c99e'; status.textContent = '挑战码已复制';
+            });
+            document.getElementById('activate').addEventListener('click', async () => {
+                status.style.color = '#aaa'; status.textContent = '正在验证…';
+                const result = await ipcRenderer.invoke('license:activate', document.getElementById('license').value);
+                status.style.color = result.success ? '#79c99e' : '#ef8b8b';
+                status.textContent = result.success ? '激活成功，正在启动…' : result.error;
+            });
+            document.getElementById('quit').addEventListener('click', () => ipcRenderer.send('license:quit'));
+        </script>
+    </body>
+</html>

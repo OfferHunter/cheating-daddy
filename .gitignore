@@ -1,3 +1,7 @@
+assets/
+release/
+.license-private/
+
 # Logs
 src/data
 logs

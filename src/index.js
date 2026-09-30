@@ -11,17 +11,67 @@ const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');
 const storage = require('./storage');
+const license = require('./utils/license');
 
 let mainWindow = null;
+let activationWindow = null;
+let businessHandlersReady = false;
 
 function createMainWindow() {
     mainWindow = createWindow(sendToRenderer);
     return mainWindow;
 }
 
+function createActivationWindow() {
+    activationWindow = new BrowserWindow({
+        width: 620,
+        height: 580,
+        minWidth: 540,
+        minHeight: 520,
+        frame: false,
+        transparent: true,
+        resizable: true,
+        backgroundColor: '#00000000',
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+            webSecurity: true,
+        },
+    });
+    activationWindow.loadFile(path.join(__dirname, 'activation.html'));
+    activationWindow.on('closed', () => {
+        activationWindow = null;
+    });
+    return activationWindow;
+}
+
+function startBusinessApplication() {
+    if (businessHandlersReady) return;
+    businessHandlersReady = true;
+    createMainWindow();
+    setupIpcHandlers();
+    setupStorageIpcHandlers();
+    setupKnowledgeIpcHandlers();
+    setupGeneralIpcHandlers();
+}
+
+function setupLicenseIpcHandlers() {
+    ipcMain.handle('license:get-challenge', async () => ({ challenge: license.getOrCreateChallenge(storage.getConfigDir()) }));
+    ipcMain.handle('license:activate', async (event, code) => {
+        const result = license.installLicense(code, storage.getConfigDir());
+        if (!result.valid) return { success: false, error: result.error };
+
+        startBusinessApplication();
+        if (activationWindow && !activationWindow.isDestroyed()) activationWindow.close();
+        return { success: true };
+    });
+    ipcMain.on('license:quit', () => app.quit());
+}
+
 app.whenReady().then(async () => {
     // Initialize storage (checks version, resets if needed)
     storage.initializeStorage();
+    setupLicenseIpcHandlers();
 
     // Trigger screen recording permission prompt on macOS if not already granted
     if (process.platform === 'darwin') {
@@ -29,11 +79,11 @@ app.whenReady().then(async () => {
         desktopCapturer.getSources({ types: ['screen'] }).catch(() => {});
     }
 
-    createMainWindow();
-    setupIpcHandlers();
-    setupStorageIpcHandlers();
-    setupKnowledgeIpcHandlers();
-    setupGeneralIpcHandlers();
+    if (license.getLicenseStatus(storage.getConfigDir()).valid) {
+        startBusinessApplication();
+    } else {
+        createActivationWindow();
+    }
 });
 
 app.on('window-all-closed', () => {
@@ -50,7 +100,12 @@ app.on('before-quit', () => {
 
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow();
+        if (license.getLicenseStatus(storage.getConfigDir()).valid) {
+            startBusinessApplication();
+            if (!mainWindow || mainWindow.isDestroyed()) createMainWindow();
+        } else {
+            createActivationWindow();
+        }
     }
 });
 
