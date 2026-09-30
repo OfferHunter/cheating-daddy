@@ -149,7 +149,10 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
 
         if (event === 'result-generated') {
             const sentence = message.payload?.output?.sentence;
-            if (sentence?.text) notifySentence(sentence.text, sentence.sentence_end !== false);
+            // 流式模型会反复修订同一句临时文本。只有服务端明确给出 sentence_end=true 才能提交；
+            // 把缺失的 sentence_end 当成定稿，会先提交半句话，随后又把完整句追加一次。Qwen Audio
+            // Streaming 比 Fun-ASR 更容易暴露这个差异。heartbeat 也不是识别结果。
+            if (sentence?.text && sentence.heartbeat !== true) notifySentence(sentence.text, sentence.sentence_end === true);
             return;
         }
 
