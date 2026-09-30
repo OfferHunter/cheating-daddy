@@ -4,6 +4,7 @@ import { LocalizedLitElement } from '../../utils/i18n.js';
 const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
 const DEFAULT_CHAT_MODEL = 'deepseek-flash';
 const DEFAULT_BAILIAN_MODEL = 'paraformer-realtime-v2';
+const DEFAULT_BAILIAN_REGION = 'beijing';
 
 export class MainView extends LocalizedLitElement {
     static styles = css`
@@ -219,6 +220,7 @@ export class MainView extends LocalizedLitElement {
         _chatKey: { state: true },
         _chatModel: { state: true },
         _bailianKey: { state: true },
+        _bailianRegion: { state: true },
         _bailianModel: { state: true },
         _keyError: { state: true },
     };
@@ -233,6 +235,7 @@ export class MainView extends LocalizedLitElement {
         this._chatKey = '';
         this._chatModel = DEFAULT_CHAT_MODEL;
         this._bailianKey = '';
+        this._bailianRegion = DEFAULT_BAILIAN_REGION;
         this._bailianModel = DEFAULT_BAILIAN_MODEL;
         this._keyError = false;
 
@@ -246,6 +249,7 @@ export class MainView extends LocalizedLitElement {
 
             this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
             this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
+            this._bailianRegion = config.bailianRegion || DEFAULT_BAILIAN_REGION;
             this._bailianModel = config.bailianModel || DEFAULT_BAILIAN_MODEL;
             this._chatKey = creds.deepseekApiKey || '';
             this._bailianKey = creds.bailianApiKey || '';
@@ -299,6 +303,13 @@ export class MainView extends LocalizedLitElement {
         this._bailianKey = val;
         this._keyError = false;
         await cheatingDaddy.storage.setBailianApiKey(val);
+        this.requestUpdate();
+    }
+
+    async _saveBailianRegion(val) {
+        this._bailianRegion = val;
+        this._keyError = false;
+        await cheatingDaddy.storage.updateConfig('bailianRegion', val);
         this.requestUpdate();
     }
 
@@ -477,8 +488,16 @@ export class MainView extends LocalizedLitElement {
                         />
                         <div class="form-hint">
                             <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get API Key</span>
-                            <span> (Beijing region)</span>
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Service Region</label>
+                        <select .value=${this._bailianRegion} @change=${e => this._saveBailianRegion(e.target.value)}>
+                            <option value="beijing">China (Beijing)</option>
+                            <option value="singapore">Singapore</option>
+                        </select>
+                        <div class="form-hint">The API Key and model must be available in the selected region.</div>
                     </div>
 
                     <div class="form-group">

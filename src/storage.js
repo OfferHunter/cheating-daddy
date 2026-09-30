@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
     // The chat endpoint is any OpenAI-compatible API. The model and key names are historical.
     chatBaseUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-flash',
+    bailianRegion: 'beijing',
     bailianModel: 'paraformer-realtime-v2',
 };
 

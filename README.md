@@ -1,59 +1,208 @@
-<img width="1299" height="424" alt="cd (1)" src="https://github.com/user-attachments/assets/b25fff4d-043d-4f38-9985-f832ae0d0f6e" />
+# Cheating Daddy
+## 1. 产品介绍
 
-## Recall.ai - API for desktop recording
+本项目基于开源项目 [sohzm/cheating-daddy](https://github.com/sohzm/cheating-daddy) 二次开发，是一款用于面试、会议、演示等实时场景的桌面 AI 助手。
 
-If you’re looking for a hosted desktop recording API, consider checking out [Recall.ai](https://www.recall.ai/product/desktop-recording-sdk/?utm_source=github&utm_medium=sponsorship&utm_campaign=sohzm-cheating-daddy), an API that records Zoom, Google Meet, Microsoft Teams, in-person meetings, and more.
+应用会同时采集系统播放声音和可选的麦克风声音，通过阿里云百炼进行实时语音识别，再把识别结果与会话上下文发送给兼容 OpenAI 接口的模型。默认配置使用 DeepSeek，也可以填写其他兼容服务的 Base URL、API Key 和模型名称。
 
-This project is sponsored by Recall.ai.
+主要功能包括：
 
+- 实时识别面试官或会议中的系统音频，并自动生成回答。
+- 可选采集麦克风，把自己已经说过的内容加入后续上下文；麦克风内容不会单独触发 AI 回答。
+- 同时生成适合快速浏览的精要回答，以及可结合本地知识库生成的详细回答。
+- 手动截取当前屏幕并向 AI 提问，适合分析代码、题目、图表或演示内容。
+- 支持输入文字继续追问。
+- 将会话、精要回答、详细回答和双方转录记录保存在本地历史中，支持全文搜索、导出和删除。
+- 支持自定义提示词，以及用 Markdown 文件组成的本地知识库。
+
+窗口采用无边框透明悬浮设计，支持圆角、主题、组件透明度和文字透明度调整。它可以保持置顶、用快捷键移动、隐藏或开启鼠标穿透，并启用了窗口内容保护，以降低助手窗口被屏幕截图或录屏捕获的可能性。
+
+当前版本主要按 Windows 使用流程设计。项目仍保留 Electron 的跨平台结构和 macOS 音频辅助能力，但不同系统的音频权限及行为可能存在差异。
+
+## 2. 用法流程
+
+### 开始会话
+
+1. 打开应用，在主页展开“对话模型”和“语音转录”配置。
+2. 填写对话模型的 Base URL、API Key 和模型名称。
+3. 选择阿里云百炼服务地域，填写该地域的 API Key，并确认语音识别模型名称。默认地域为华北 2（北京），默认模型为 `paraformer-realtime-v2`。
+4. 如有需要，进入“AI 自定义”，填写简历、岗位要求或其他背景信息，并选择知识库目录。
+5. 在“设置”中选择语音语言、麦克风设备、回答方式和外观。
+6. 回到主页，点击“开始会话”。也可以在主页按 `Ctrl + Enter`（macOS 为 `Cmd + Enter`）。
+
+会话开始后，应用会监听系统音频。识别到一句完整问题时，会在转录区显示面试官内容并生成 AI 回答。若启用了麦克风，你自己的话会显示在右侧并加入后续上下文，但不会自行触发新的回答。
+
+### 精要回答和详细回答
+
+- **精要回答**显示在实时转录区域，目标是尽快给出容易扫读、可以立即使用的回答。
+- **详细回答**显示在右侧面板，对同一个问题给出更完整的内容，并可按需读取本地知识库。
+- 详细回答面板可以拖动分隔线调整宽度，也可以用快捷键切换前一条或后一条详细回答。
+- 在设置中关闭“显示详细回答侧栏”后，普通语音问题只生成精要回答；该选项从下一次会话开始生效。
+
+### 截图提问
+
+在会话页面点击“分析屏幕”，或按 `Ctrl + Enter`（macOS 为 `Cmd + Enter`），应用会截取当前屏幕并发送给支持图片输入的对话模型。
+
+截图问题的回答只显示在详细回答面板中。应用还会并行生成一条简短的截图内容摘要，将它加入会话记录，方便后续问题继续引用截图中的信息。截图分析是否启用思考，由“截图回答启用思考”单独控制。
+
+### 会话中的常用操作
+
+- 在底部输入框输入文字并按 `Enter`，可以直接向 AI 发送补充问题。
+- 顶部暂停按钮会暂停当前音频处理；恢复后继续使用同一会话。
+- “清除上下文”会清空当前会话在模型侧使用的历史上下文。
+- 历史记录页面可以搜索自定义提示词、面试官问题、用户转录、精要回答和详细回答中的内容。
+
+本地开发运行：
+
+```bash
+npm install
+npm start
+```
+
+## 3. 怎么得到 API Key
+
+应用需要两类 API Key：一个用于对话模型，一个用于阿里云百炼实时语音识别。
+
+### DeepSeek API Key
+
+1. 注册并登录 [DeepSeek 开放平台](https://platform.deepseek.com/)。
+2. 进入 [API Keys](https://platform.deepseek.com/api_keys) 页面创建新的 API Key。
+3. 复制生成的 Key，粘贴到应用主页的“API Key”输入框。
+4. 默认 Base URL 为 `https://api.deepseek.com`。模型名称必须与 DeepSeek 当前提供的模型标识完全一致。
+5. 确保账户已经开通 API 服务并有可用余额。
+
+DeepSeek 使用 OpenAI 兼容接口，调用方法可参考 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/zh-cn/)。如果改用其他 OpenAI 兼容服务，需要同时替换 Base URL、API Key 和模型名称。
+
+### 阿里云百炼 API Key
+
+1. 注册并登录阿里云，开通百炼模型服务。
+2. 前往[阿里云百炼控制台](https://bailian.console.aliyun.com/)，在 API Key 管理页面创建或复制 API Key。
+3. 在主页选择 Key 所属的服务地域。应用支持华北 2（北京）和新加坡的公共 DashScope WebSocket 地址，默认选择北京。
+4. 把 Key 粘贴到主页的“百炼 API Key”输入框。
+5. 语音识别模型默认为 `paraformer-realtime-v2`；除非确认其他模型兼容当前实时 ASR 协议，否则建议保留默认值。
+
+地域之间的 API Key、接入地址和可用模型不能混用。具体创建步骤及地域说明请参考[阿里云官方 API Key 文档](https://help.aliyun.com/zh/model-studio/get-api-key/)。
+
+API Key 会保存在本机应用配置目录中。请不要把真实 Key 写入仓库、截图、日志或分享给其他人；怀疑泄露时应立即在对应平台删除并重新创建。
+
+## 4. 设置详细说明
+
+### 首页连接设置
+
+| 设置         | 说明                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------- |
+| API Base URL | 对话服务的基础地址。应用会向 `<Base URL>/chat/completions` 发起请求。                                       |
+| API Key      | 对话模型服务的访问密钥。                                                                                    |
+| 模型         | 对话服务要求的准确模型名称。用于普通回答、详细回答和截图分析。                                              |
+| 百炼 API Key | 阿里云百炼实时语音识别使用的访问密钥。                                                                      |
+| 服务地域     | 选择华北 2（北京）或新加坡，默认北京。API Key 和模型不能跨地域混用。                                        |
+| 百炼模型     | 实时语音识别模型，默认 `paraformer-realtime-v2`。该模型仅支持北京；选择新加坡时需要填写当地可用的模型名称。 |
+
+### AI 自定义
+
+| 设置                   | 说明                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| 自定义指令             | 在会话开始时加入模型上下文，适合填写简历摘要、目标岗位、回答风格和限制条件。建议保持精简。 |
+| 知识库目录             | 选择一个包含 `.md` 文件的本地目录。每个文件是一条知识记录。                                |
+| `name` / `description` | Markdown frontmatter 中的名称和摘要会提供给模型，用来判断是否需要读取该文件。              |
+| Markdown 正文          | 只有详细回答认为相关时才读取，避免每次请求都携带全部资料。                                 |
+
+建议的知识库文件格式：
+
+```markdown
+---
+name: 项目经历
+description: 主要项目、职责和技术成果
 ---
 
-> [!NOTE]  
-> Use latest MacOS and Windows version, older versions have limited support
+这里填写完整内容。
+```
 
-> [!NOTE]  
-> During testing it wont answer if you ask something, you need to simulate interviewer asking question, which it will answer
+### 音频输入
 
-A real-time AI assistant that provides contextual help during video calls, interviews, presentations, and meetings using screen capture and audio analysis.
+| 设置             | 说明                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| 扬声器（面试官） | 始终跟随 Windows 默认播放设备，用于识别对方声音并触发回答。                                      |
+| 麦克风（我）     | 可关闭或选择输入设备。麦克风内容只补充上下文，不单独触发回答。                                   |
+| 图像质量         | 控制截图发送给模型时的质量。质量越高，图中文字越清晰，但请求体也越大。                           |
+| 语句静音时长     | 系统音频持续静音多久后结束一句并发送。值越低响应越快，但更容易把一句话拆开。范围为 200–6000 ms。 |
+| 我的语句静音时长 | 麦克风持续静音多久后结束一段自己的发言。通常应比面试官通道稍长，修改后从下一次会话生效。         |
+| 扬声器门限       | 扬声器音量高于该 dBFS 值时忽略麦克风，减少对方声音串入自己的转录。`-80` 基本等于关闭门限。       |
+| 扬声器门限保持   | 音量越过门限后，需要持续多久才切换麦克风静音状态。值越高越稳定，但响应更慢。                     |
 
-## Features
+所有音频在发送给语音识别服务前统一处理为 16 kHz 单声道 PCM。系统音频和麦克风使用独立识别连接及独立静音阈值。
 
-- **Live AI Assistance**: Real-time help powered by Google Gemini 2.0 Flash Live
-- **Screen & Audio Capture**: Analyzes what you see and hear for contextual responses
-- **Multiple Profiles**: Interview, Sales Call, Business Meeting, Presentation, Negotiation
-- **Transparent Overlay**: Always-on-top window that can be positioned anywhere
-- **Click-through Mode**: Make window transparent to clicks when needed
-- **Windows & macOS**: the two platforms this app is built and tested for
+### 语言
 
-## Setup
+| 设置     | 说明                                                               |
+| -------- | ------------------------------------------------------------------ |
+| 界面语言 | 在中文和英文界面之间切换，默认中文。                               |
+| 语音语言 | 告诉阿里云语音识别当前输入语言。它不会改变界面语言或 AI 回答语言。 |
 
-1. **Get a Gemini API Key**: Visit [Google AI Studio](https://aistudio.google.com/apikey)
-2. **Install Dependencies**: `npm install`
-3. **Run the App**: `npm start`
+### 回答
 
-## Usage
+| 设置             | 说明                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| 显示详细回答侧栏 | 每个普通问题同时生成精要回答和详细回答。关闭后只生成精要回答；下一次会话生效。                       |
+| 简短回答启用思考 | 允许精要回答先进行模型推理。质量可能提高，但首字等待时间更长。                                       |
+| 详细回答启用思考 | 允许详细回答进行模型推理，适合对质量要求更高的完整回答。                                             |
+| 截图回答启用思考 | 只控制截图回答。复杂图片的思考可能占用较长时间，默认关闭。                                           |
+| 上下文轮数       | 每次请求回放给模型的历史轮数。值越高，上下文越完整，请求也越大、越慢。范围为 1–100，下一次会话生效。 |
+| 最大 Token 数    | 单次回答的输出预算，模型思考也会占用该预算。过低可能导致正文为空；下一轮请求生效。                   |
 
-1. Enter your Gemini API key in the main window
-2. Choose your profile and language in settings
-3. Click "Start Session" to begin
-4. Position the window using keyboard shortcuts
-5. The AI will provide real-time assistance based on your screen and what interview asks
+### 外观
 
-## Keyboard Shortcuts
+| 设置       | 说明                                                     |
+| ---------- | -------------------------------------------------------- |
+| 主题       | 选择深色、浅色或其他配色主题。                           |
+| 控件透明度 | 控制窗口背景、面板、气泡、输入框和普通边框的透明度。     |
+| 文字透明度 | 控制全部文字及窗口最外圈描边的透明度，与控件透明度独立。 |
+| 回答字号   | 调整实时转录和回答内容的字号，范围为 12–32 px。          |
 
-- **Window Movement**: `Ctrl/Cmd + Arrow Keys` - Move window
-- **Click-through**: `Ctrl/Cmd + M` - Toggle mouse events
-- **Close/Back**: `Ctrl/Cmd + \` - Close window or go back
-- **Send Message**: `Enter` - Send text to AI
+“切换明暗主题”快捷键使用固定逻辑：当前主题是 `dark` 时切换到 `light`；当前为其他任意主题时切换到 `dark`。
 
-## Audio Capture
+### 默认快捷键
 
-- **macOS**: [SystemAudioDump](https://github.com/Mohammed-Yasin-Mulla/Sound) for system audio
-- **Windows**: Loopback audio capture
+| 操作                   | Windows                  | macOS                   |
+| ---------------------- | ------------------------ | ----------------------- |
+| 窗口上、下、左、右移动 | `Ctrl + 方向键`          | `Alt + 方向键`          |
+| 显示或隐藏窗口         | `Ctrl + \`               | `Cmd + \`               |
+| 切换鼠标穿透           | `Ctrl + M`               | `Cmd + M`               |
+| 截图并分析             | `Ctrl + Enter`           | `Cmd + Enter`           |
+| 向上或向下滚动回答     | `Ctrl + Shift + ↑/↓`     | `Cmd + Shift + ↑/↓`     |
+| 上一条或下一条详细回答 | `Ctrl + Shift + [` / `]` | `Cmd + Shift + [` / `]` |
+| 切换明暗主题           | `Ctrl + Shift + L`       | `Cmd + Shift + L`       |
+| 紧急清除               | `Ctrl + Shift + E`       | `Cmd + Shift + E`       |
+| 退出应用               | `Ctrl + Shift + Q`       | `Cmd + Shift + Q`       |
 
-## Requirements
+快捷键可以在设置页逐项修改。“紧急清除”会隐藏窗口、清除全部本地数据并退出应用；普通“退出应用”不会删除数据。
 
-- Windows 10+ or macOS
-- Gemini API key
-- Screen recording permissions
-- Microphone/audio permissions
+### 隐私与数据
+
+- **恢复全部设置**：恢复界面和功能开关的默认值，但保留自定义提示词和知识库目录。
+- **删除全部数据**：删除本地配置、密钥、偏好、快捷键和历史记录，然后关闭应用。
+- **历史记录管理**：可以多选会话，导出为 JSON 或从本地删除。搜索框会检索完整会话内容，而不只检索“求职面试”等会话类型名称。
+
+#### 配置与历史记录保存位置
+
+Portable 版和安装版使用同一套存储逻辑。Portable 版不会把用户数据写在程序所在目录，因此同一系统账户下的两种发行版会读取并修改同一套配置和历史记录。
+
+| 系统    | 数据目录                                              |
+| ------- | ----------------------------------------------------- |
+| Windows | `%APPDATA%\cheating-daddy-config`                     |
+| macOS   | `~/Library/Application Support/cheating-daddy-config` |
+| Linux   | `~/.config/cheating-daddy-config`                     |
+
+Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\cheating-daddy-config`。该目录包含：
+
+| 文件或目录              | 内容                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------- |
+| `config.json`           | 初始化状态、窗口布局、对话接口地址、对话模型名称、语音服务地域和识别模型名称。        |
+| `credentials.json`      | 对话模型 API Key 和阿里云百炼 API Key。当前以明文 JSON 保存，请保护好系统账户和文件。 |
+| `preferences.json`      | 界面语言、主题、透明度、回答方式、音频设置、自定义提示词和知识库目录等。              |
+| `keybinds.json`         | 用户修改过的快捷键；尚未修改快捷键时可能不存在。                                      |
+| `history/<会话ID>.json` | 每次会话的转录、AI 回答及相关上下文。                                                 |
+
+默认值定义在应用内置的 `src/storage.js` 中。应用首次启动或本地配置被清除时，会在上述目录创建配置文件并写入默认值；之后用户的修改直接写回对应 JSON 文件。知识库 Markdown 文件仍保存在用户选择的原目录中，应用只在 `preferences.json` 中记录其路径。
+
+因此，移动或删除 Portable 程序、升级安装版以及通常情况下卸载后重新安装，都不会自动删除这些数据。若要彻底清除，请使用设置中的“删除全部数据”，或在应用退出后手动删除上述数据目录。

@@ -8,7 +8,10 @@ const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 const { getConfig, getBailianApiKey } = require('../storage');
 
-const ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
+const ENDPOINTS = {
+    beijing: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    singapore: 'wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference',
+};
 const DEFAULT_MODEL = 'paraformer-realtime-v2';
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
@@ -199,7 +202,9 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
         taskId = randomUUID();
         notifyState('connecting');
 
-        socket = new WebSocket(ENDPOINT, {
+        const region = getConfig().bailianRegion;
+        const endpoint = ENDPOINTS[region] || ENDPOINTS.beijing;
+        socket = new WebSocket(endpoint, {
             headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'cheating-daddy/1.0' },
         });
 
