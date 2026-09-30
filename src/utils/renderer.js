@@ -1121,19 +1121,10 @@ const theme = {
         this.apply(themeName, uiAlpha, textAlpha);
     },
 
-    // 翻到调色板的另一半，好让浮层压在什么背景上都读得清。每种极性最后用过的那套主题记在内存里，所以
-    // 翻回来能回到用户自己的主题，而不是一个固定默认值。
+    // 快捷键只在标准明暗主题之间切换：任何非 dark 主题都回到 dark，只有 dark 会切到 light。
+    // 这样快捷键结果固定，不会受之前选择过哪些主题影响。
     async togglePolarity() {
-        const current = this.current;
-        const isLight = this.isLightTheme(current);
-
-        if (isLight) {
-            this.lastLightTheme = current;
-        } else {
-            this.lastDarkTheme = current;
-        }
-
-        const target = isLight ? this.lastDarkTheme || 'dark' : this.lastLightTheme || 'light';
+        const target = this.current === 'dark' ? 'light' : 'dark';
         await this.save(target, this.uiAlpha, this.textAlpha);
     },
 };

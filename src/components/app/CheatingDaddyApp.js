@@ -30,7 +30,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
                 height: 100vh;
                 overflow: hidden;
                 border-radius: 12px;
-                background: var(--bg-app);
+                background: transparent;
                 color: var(--text-primary);
             }
 
@@ -39,7 +39,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
                 height: calc(100vh - 2px);
                 margin: 1px;
                 overflow: hidden;
-                border: 2px solid rgba(255, 255, 255, 0.18);
+                border: 2px solid var(--text-primary);
                 border-radius: 11px;
             }
 

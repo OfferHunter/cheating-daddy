@@ -261,7 +261,9 @@ export class AICustomizeView extends LocalizedLitElement {
                         </div>
 
                         <div class="dir-row">
-                            <span class="dir-path">${this._knowledgeDir || 'No Knowledge Directories Selected'}</span>
+                            <span class="dir-path" data-no-localize>
+                                ${this._knowledgeDir || t('No Knowledge Directories Selected', '尚未选择知识库目录')}
+                            </span>
                             <button class="control btn-inline" ?disabled=${this._knowledgeBusy} @click=${this._chooseKnowledgeDir}>
                                 ${this._knowledgeDir ? 'Change folder' : 'Choose folder'}
                             </button>
