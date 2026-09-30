@@ -33,6 +33,7 @@ module.exports = {
                 name: 'offer-hunter',
                 productName: '海王AI面试助手',
                 shortcutName: '海王AI面试助手',
+                setupIcon: 'src/assets/logo.ico',
                 createDesktopShortcut: true,
                 createStartMenuShortcut: true,
             },

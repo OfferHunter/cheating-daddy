@@ -13,6 +13,7 @@ function createWindow(sendToRenderer) {
     let windowHeight = DEFAULT_MAIN_WINDOW_SIZE.height;
 
     const mainWindow = new BrowserWindow({
+        icon: path.join(__dirname, '../assets', process.platform === 'win32' ? 'logo.ico' : 'logo.png'),
         width: windowWidth,
         height: windowHeight,
         minWidth: MIN_WINDOW_SIZE.width,
