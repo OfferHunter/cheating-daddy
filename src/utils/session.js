@@ -86,13 +86,13 @@ function saveDetailTurn(question, response, order = 0, usedKnowledge = []) {
     );
 }
 
-// `order` 是这段话所属区块自己的序号，由 pipeline 在打断它的那个问题之前分配：这样它在历史里的位置与
+// `order` 在发言块首次定稿时分配；后续片段更新同一条记录。这样它在历史里的位置与
 // 它在实时字幕里的位置一致，排在那个问题前面而不是后面。
 function saveCandidateSpeech(text, order = 0) {
     if (!currentSessionId) initializeNewSession();
 
     candidateHistory = appendHistory(
-        candidateHistory,
+        candidateHistory.filter(entry => entry.order !== order),
         { timestamp: Date.now(), text: text.trim(), order },
         'save-candidate-speech',
         'candidate speech'

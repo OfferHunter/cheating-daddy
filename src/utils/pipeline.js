@@ -74,6 +74,7 @@ function speakerFor(source) {
 // 上一次派发轮次之后候选人说过的话，按识别顺序。碎片在这里累积，下一个轮次创建时整块提交为一条背景记录：
 // 一个回答必须保持是一条记录——服务端会把一个回答切成很多片段，逐片段记下来最后只剩最近几秒。
 let candidateSpeech = [];
+let candidateHistoryOrder = null;
 
 // candidateSpeech 正在累积的那个块，也是它在渲染端唯一的身份。渲染端没法像面试官那样用「最后一行」来认
 // 候选人气泡：候选人句子还没定稿时识别出的一句提问会插在气泡下面，而定稿时还要找回同一个气泡改写。一句提
@@ -327,6 +328,9 @@ function flushTurn(source) {
         // 设上限——块由下一个轮次整体关闭（见 commitCandidateSpeech）。
         console.log('[Pipeline] Candidate speech:', text);
         candidateSpeech.push(text);
+        // 历史立即保存；同一发言块复用序号更新，不等待下一个问题。
+        if (candidateHistoryOrder === null) candidateHistoryOrder = ++turnSeq;
+        saveCandidateSpeech(candidateSpeech.join(''), candidateHistoryOrder);
         // 整体重发而不是只发这段碎片：气泡就是这个块，只发片段会让用户已经读到的文字可见地缩回去。块只
         // 由上面 push 的碎片构成，从不从气泡反向拼，所以那个长度下限在这里咬不到。
         sendBubble('transcription-final', source);
@@ -350,9 +354,9 @@ function pruneTurnLog() {
 
 // `speaker` 决定 buildMessages 在文本前贴哪个标签。默认面试官，因为手动输入的问题也按面试官回放——API
 // 只认 system/user/assistant 三种角色、会丢掉 OpenAI 风格的 `name` 字段，所以谁说的必须写进正文里。
-function createTurn(requestContent, contextText, persistKind, speaker = 'interviewer') {
+function createTurn(requestContent, contextText, persistKind, speaker = 'interviewer', seq = ++turnSeq) {
     const entry = {
-        seq: ++turnSeq,
+        seq,
         generation: sessionGeneration,
         // 截图轮发的是多模态数组；之后每一轮只需要它的提示词文本。
         requestContent,
@@ -385,7 +389,8 @@ function commitCandidateSpeech() {
 
     // 它一产生就是已定稿的：背后没有请求，也永远不会有东西流进来，所以不能算待处理，否则状态行会一直声称
     // 有回答在路上。
-    const entry = createTurn(text, text, null, 'candidate');
+    const entry = createTurn(text, text, null, 'candidate', candidateHistoryOrder ?? ++turnSeq);
+    candidateHistoryOrder = null;
     entry.status = 'done';
 
     // 只为了历史页而写。与提问不同，这一轮永远得不到回答，所以它没有别的持久化：没有它，存下来的会话就
@@ -953,6 +958,10 @@ function processLocalAudio(monoChunk24k, source = 'system') {
 }
 
 function closeLocalSession() {
+    if (isLocalActive) {
+        flushTurn(CANDIDATE);
+        commitCandidateSpeech();
+    }
     isLocalActive = false;
 
     for (const source of [INTERVIEWER, CANDIDATE]) {
@@ -975,6 +984,8 @@ function isLocalSessionActive() {
 // 在途的那句比暂停更早、且已经在屏幕上，所以定稿它而不是丢掉：开着不管的话，恢复后说的话会被并到它前
 // 面那半句上，挤在同一个气泡里。不为它派发任何轮次——它不是一个问完的问题。
 function suspendPendingText() {
+    flushTurn(CANDIDATE);
+    commitCandidateSpeech();
     for (const source of [INTERVIEWER, CANDIDATE]) {
         const state = streams[source];
         if (!state.turnText && !state.interimText) continue;
@@ -985,8 +996,7 @@ function suspendPendingText() {
         sendBubble('transcription-final', source);
     }
 
-    // 无论如何都关闭，这样候选人接下来说的话会开一个新气泡，而不是继续长暂停开始时那个开着的。
-    candidateBlockId += 1;
+    // commitCandidateSpeech 已关闭候选人气泡，恢复后使用新的块。
 }
 
 function setPaused(value) {

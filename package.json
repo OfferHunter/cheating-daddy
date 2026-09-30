@@ -1,7 +1,7 @@
 {
     "name": "offer-hunter",
     "productName": "海王AI面试助手",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "description": "offer hunter",
     "main": "src/index.js",
     "scripts": {
