@@ -81,8 +81,7 @@ DeepSeek 使用 OpenAI 兼容接口，调用方法可参考 [DeepSeek 官方 API
 
 地域之间的 API Key、接入地址和可用模型不能混用。具体创建步骤及地域说明请参考：
 - [阿里云官方 API Key 文档](https://help.aliyun.com/zh/model-studio/get-api-key/)。
-- [百炼语音识别模型广场](https://bailian.console.aliyun.com/cn-beijing/model/market?capabilities=ASR%2CTTS)
-- [百炼语音识别 WebSocket 文档](https://help.aliyun.com/zh/model-studio/realtime-websocket-asr?spm=a2c4g.11186623.0.i3)
+- [百炼实时语音识别模型](https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide)
 
 API Key 会保存在本机应用配置目录中。请不要把真实 Key 写入仓库、截图、日志或分享给其他人；怀疑泄露时应立即在对应平台删除并重新创建。
 

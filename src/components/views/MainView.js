@@ -505,7 +505,7 @@ export class MainView extends LocalizedLitElement {
                             <span
                                 class="link"
                                 @click=${() =>
-                                    this.onExternalLink('https://help.aliyun.com/zh/model-studio/realtime-websocket-asr?spm=a2c4g.11186623.0.i3')}
+                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide')}
                                 >WebSocket Documentation</span
                             >
                         </div>
@@ -524,7 +524,7 @@ export class MainView extends LocalizedLitElement {
                             <span
                                 class="link"
                                 @click=${() =>
-                                    this.onExternalLink('https://bailian.console.aliyun.com/cn-beijing/model/market?capabilities=ASR%2CTTS')}
+                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
                                 >Speech Model Marketplace</span
                             >
                         </div>
