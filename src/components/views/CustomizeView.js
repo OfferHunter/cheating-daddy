@@ -333,8 +333,11 @@ export class CustomizeView extends LocalizedLitElement {
         const levels = cheatingDaddy.audioMeter.read();
 
         for (const kind of ['system', 'mic']) {
+            // 下拉框明确关闭麦克风时，界面也必须立即保持全灭。除防止旧的异步采集结果短暂闪回外，
+            // 这也保证显示状态永远以用户当前选择为准。
+            const activeBars = kind === 'mic' && this.audioInputDeviceId === 'none' ? 0 : levels[kind];
             const bars = this.renderRoot.querySelectorAll(`[data-meter="${kind}"] .meter-bar`);
-            bars.forEach((bar, index) => bar.classList.toggle('on', index < levels[kind]));
+            bars.forEach((bar, index) => bar.classList.toggle('on', index < activeBars));
         }
     }
 
@@ -493,15 +496,18 @@ export class CustomizeView extends LocalizedLitElement {
         await cheatingDaddy.storage.updatePreference('screenshotThinking', checked);
     }
 
-    // Chromium 本来就以 deviceId 'default' / 'communications' 暴露了系统默认设备，所以原样留着，只整理标签。
+    // “系统默认”必须始终存在。Chromium 通常会枚举出 deviceId 为 default 的伪设备，但在页面刚重建、
+    // 权限状态变化或设备列表尚未稳定时可能暂时缺失。若完全依赖枚举结果，select 找不到已保存的
+    // value="default"，浏览器就会在视觉上退回第一项“不使用麦克风”。固定渲染该选项，并从真实列表
+    // 过滤同名伪设备以避免重复。
     async loadAudioDevices() {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             this.audioInputDevices = devices
-                .filter(d => d.kind === 'audioinput')
+                .filter(d => d.kind === 'audioinput' && d.deviceId !== 'default')
                 .map(d => ({
                     deviceId: d.deviceId,
-                    label: d.deviceId === 'default' ? 'System default' : d.label || 'Microphone',
+                    label: d.label || 'Microphone',
                 }));
         } catch (error) {
             console.error('Error enumerating audio devices:', error);
@@ -764,8 +770,11 @@ export class CustomizeView extends LocalizedLitElement {
                                 ${this.renderMeter('mic')}
                             </div>
                             <select class="control" .value=${this.audioInputDeviceId} @change=${this.handleAudioInputDeviceChange}>
-                                <option value="none">Don't use Microphone</option>
-                                ${this.audioInputDevices.map(d => html`<option value=${d.deviceId}>${d.label}</option>`)}
+                                <option value="none" .selected=${this.audioInputDeviceId === 'none'}>Don't use Microphone</option>
+                                <option value="default" .selected=${this.audioInputDeviceId === 'default'}>System default</option>
+                                ${this.audioInputDevices.map(
+                                    d => html`<option value=${d.deviceId} .selected=${this.audioInputDeviceId === d.deviceId}>${d.label}</option>`
+                                )}
                             </select>
                         </div>
                         <div class="form-help">
@@ -863,7 +872,12 @@ export class CustomizeView extends LocalizedLitElement {
                     <div class="form-group">
                         <label class="form-label">Speech Language</label>
                         <select class="control" .value=${this.selectedLanguage} @change=${this.handleLanguageSelect}>
-                            ${this.getLanguages().map(language => html`<option value=${language.value}>${language.name}</option>`)}
+                            ${this.getLanguages().map(
+                                language =>
+                                    html`<option value=${language.value} .selected=${this.selectedLanguage === language.value}>
+                                        ${language.name}
+                                    </option>`
+                            )}
                         </select>
                     </div>
                 </div>
