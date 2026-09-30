@@ -1,3 +1,4 @@
+const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, getResetPreferences } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, getUiLanguage, setUiLanguage } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
@@ -263,9 +264,9 @@ export class CustomizeView extends LocalizedLitElement {
     constructor() {
         super();
         this.uiLanguage = getUiLanguage();
-        this.selectedLanguage = 'cmn-CN';
-        this.selectedImageQuality = 'medium';
-        this.layoutMode = 'normal';
+        this.selectedLanguage = DEFAULT_PREFERENCES.selectedLanguage;
+        this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
+        this.layoutMode = DEFAULT_CONFIG.layout;
         this.keybinds = offerHunter.getDefaultKeybinds();
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
@@ -274,25 +275,25 @@ export class CustomizeView extends LocalizedLitElement {
         this.isRestoring = false;
         this.clearStatusMessage = '';
         this.clearStatusType = '';
-        this.backgroundTransparency = 0.48;
-        this.textTransparency = 0.83;
-        this.fontSize = 16;
+        this.backgroundTransparency = DEFAULT_PREFERENCES.backgroundTransparency;
+        this.textTransparency = DEFAULT_PREFERENCES.textTransparency;
+        this.fontSize = DEFAULT_PREFERENCES.fontSize;
         // 读到存过的选择之前先填 'none'：电平表在 connectedCallback 里就启动，早于 _loadFromStorage 落地，
         // 这期间若填 'default' 会把系统麦克风打开——哪怕用户已经关掉了它。真实设备由 _refreshMicMeter 补上。
         this.audioInputDeviceId = 'none';
         this.audioInputDevices = [];
-        this.customPrompt = '';
-        this.theme = 'gruvbox';
-        this.maxSentenceSilenceMs = 1500;
-        this.micMaxSentenceSilenceMs = 2000;
-        this.micGateDb = -45;
-        this.micGateDwellMs = 300;
-        this.detailMode = true;
-        this.briefThinking = false;
-        this.detailThinking = true;
-        this.screenshotThinking = false;
-        this.chatContextTurns = 15;
-        this.chatMaxTokens = 128000;
+        this.customPrompt = DEFAULT_PREFERENCES.customPrompt;
+        this.theme = DEFAULT_PREFERENCES.theme;
+        this.maxSentenceSilenceMs = DEFAULT_PREFERENCES.maxSentenceSilenceMs;
+        this.micMaxSentenceSilenceMs = DEFAULT_PREFERENCES.micMaxSentenceSilenceMs;
+        this.micGateDb = DEFAULT_PREFERENCES.micGateDb;
+        this.micGateDwellMs = DEFAULT_PREFERENCES.micGateDwellMs;
+        this.detailMode = DEFAULT_PREFERENCES.detailMode;
+        this.briefThinking = DEFAULT_PREFERENCES.briefThinking;
+        this.detailThinking = DEFAULT_PREFERENCES.detailThinking;
+        this.screenshotThinking = DEFAULT_PREFERENCES.screenshotThinking;
+        this.chatContextTurns = DEFAULT_PREFERENCES.chatContextTurns;
+        this.chatMaxTokens = DEFAULT_PREFERENCES.chatMaxTokens;
         this._loadFromStorage();
     }
 
@@ -348,23 +349,23 @@ export class CustomizeView extends LocalizedLitElement {
     async _loadFromStorage() {
         try {
             const [prefs, keybinds] = await Promise.all([offerHunter.storage.getPreferences(), offerHunter.storage.getKeybinds()]);
-            this.backgroundTransparency = prefs.backgroundTransparency ?? 0.48;
-            this.textTransparency = prefs.textTransparency ?? 0.83;
-            this.fontSize = prefs.fontSize ?? 16;
-            this.audioInputDeviceId = prefs.audioInputDeviceId ?? 'default';
-            this.customPrompt = prefs.customPrompt ?? '';
-            this.theme = prefs.theme ?? 'gruvbox';
-            this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? 1500;
-            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? 2000;
-            this.micGateDb = prefs.micGateDb ?? -45;
-            this.micGateDwellMs = prefs.micGateDwellMs ?? 300;
-            this.detailMode = prefs.detailMode !== false;
-            this.briefThinking = prefs.briefThinking === true;
-            this.detailThinking = prefs.detailThinking !== false;
-            this.screenshotThinking = prefs.screenshotThinking === true;
-            this.chatContextTurns = prefs.chatContextTurns ?? 15;
-            this.chatMaxTokens = prefs.chatMaxTokens ?? 128000;
-            this.uiLanguage = prefs.uiLanguage || 'zh-CN';
+            this.backgroundTransparency = prefs.backgroundTransparency ?? DEFAULT_PREFERENCES.backgroundTransparency;
+            this.textTransparency = prefs.textTransparency ?? DEFAULT_PREFERENCES.textTransparency;
+            this.fontSize = prefs.fontSize ?? DEFAULT_PREFERENCES.fontSize;
+            this.audioInputDeviceId = prefs.audioInputDeviceId ?? DEFAULT_PREFERENCES.audioInputDeviceId;
+            this.customPrompt = prefs.customPrompt ?? DEFAULT_PREFERENCES.customPrompt;
+            this.theme = prefs.theme ?? DEFAULT_PREFERENCES.theme;
+            this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? DEFAULT_PREFERENCES.maxSentenceSilenceMs;
+            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? DEFAULT_PREFERENCES.micMaxSentenceSilenceMs;
+            this.micGateDb = prefs.micGateDb ?? DEFAULT_PREFERENCES.micGateDb;
+            this.micGateDwellMs = prefs.micGateDwellMs ?? DEFAULT_PREFERENCES.micGateDwellMs;
+            this.detailMode = prefs.detailMode ?? DEFAULT_PREFERENCES.detailMode;
+            this.briefThinking = prefs.briefThinking ?? DEFAULT_PREFERENCES.briefThinking;
+            this.detailThinking = prefs.detailThinking ?? DEFAULT_PREFERENCES.detailThinking;
+            this.screenshotThinking = prefs.screenshotThinking ?? DEFAULT_PREFERENCES.screenshotThinking;
+            this.chatContextTurns = prefs.chatContextTurns ?? DEFAULT_PREFERENCES.chatContextTurns;
+            this.chatMaxTokens = prefs.chatMaxTokens ?? DEFAULT_PREFERENCES.chatMaxTokens;
+            this.uiLanguage = prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage;
             setUiLanguage(this.uiLanguage);
             if (keybinds) {
                 this.keybinds = { ...offerHunter.getDefaultKeybinds(), ...keybinds };
@@ -649,30 +650,7 @@ export class CustomizeView extends LocalizedLitElement {
         this.clearStatusType = '';
         this.requestUpdate();
         try {
-            // 手抄的 src/storage.js 里那份 DEFAULT_PREFERENCES，改一边必须改另一边。customPrompt 和
-            // knowledgeDir 故意不在其中：它们装的是用户自己给的内容（指令、以及指向他自己文件的路径）而不是
-            // 旋钮，所以「恢复默认」不碰它们；detailMode 和三个 thinking 开关是旋钮，跟着一起重置。
-            const defaults = {
-                uiLanguage: 'zh-CN',
-                selectedLanguage: 'cmn-CN',
-                selectedScreenshotInterval: '5',
-                selectedImageQuality: 'medium',
-                audioInputDeviceId: 'default',
-                fontSize: 16,
-                backgroundTransparency: 0.48,
-                textTransparency: 0.83,
-                theme: 'gruvbox',
-                maxSentenceSilenceMs: 1500,
-                micMaxSentenceSilenceMs: 2000,
-                micGateDb: -45,
-                micGateDwellMs: 300,
-                detailMode: true,
-                briefThinking: false,
-                detailThinking: true,
-                screenshotThinking: false,
-                chatContextTurns: 15,
-                chatMaxTokens: 128000,
-            };
+            const defaults = getResetPreferences();
             for (const [key, value] of Object.entries(defaults)) {
                 await offerHunter.storage.updatePreference(key, value);
             }

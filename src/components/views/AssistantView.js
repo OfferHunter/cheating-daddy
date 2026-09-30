@@ -1,3 +1,4 @@
+const { DEFAULT_PREFERENCES } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement } from '../../utils/i18n.js';
 import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
@@ -8,7 +9,7 @@ const { ipcRenderer } = window.require('electron');
 
 // 详细回答面板占整条分栏的比例，以及拖拽的钳制上下限。面板是紧挨着弹性项的定宽 flex 项，所以两个边界都是真的：
 // 低于下限面板会变成一列单个字符，高于上限转录就没有地方了。
-const PANE_DEFAULT_FRACTION = 0.38;
+const PANE_DEFAULT_FRACTION = DEFAULT_PREFERENCES.detailPaneWidth;
 const PANE_MIN_FRACTION = 0.18;
 const PANE_MAX_FRACTION = 0.72;
 

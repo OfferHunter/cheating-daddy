@@ -1,6 +1,7 @@
+const { DEFAULT_CONFIG } = require('../defaults');
 const { getConfig, getDeepseekApiKey, getChatMaxTokens } = require('../storage');
 
-const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
+const DEFAULT_CHAT_BASE_URL = DEFAULT_CONFIG.chatBaseUrl;
 // 覆盖整条流式响应而不只是头。它是**总预算**（请求发出时创建），不是空闲超时：思考的时间也算在里面，
 // 一张截图加一整道题有可能把 120s 全烧在推理上，最后什么都没返回。
 const CHAT_TIMEOUT_MS = 120000;
@@ -11,7 +12,7 @@ function getChatBaseUrl() {
 }
 
 function getChatModel() {
-    return getConfig().deepseekModel || 'deepseek-flash';
+    return getConfig().deepseekModel || DEFAULT_CONFIG.deepseekModel;
 }
 
 async function readStreamingResponse(response, onText) {

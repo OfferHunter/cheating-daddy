@@ -1,3 +1,4 @@
+const { DEFAULT_CONFIG } = require('../defaults');
 // 阿里云百炼 DashScope 的流式 ASR（websocket）。只管传输：不认识轮次也不认识模型，只把实时 PCM 流
 // 变成一句一句的话。线路格式是用 scripts/asr-smoke.js 打过真端点的，这里的字段名就是那次探测打印出来的。
 //
@@ -8,8 +9,8 @@ const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
 const { getConfig, getBailianApiKey } = require('../storage');
 
-const DEFAULT_ENDPOINT = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
-const DEFAULT_MODEL = 'fun-asr-realtime-2026-02-28';
+const DEFAULT_ENDPOINT = DEFAULT_CONFIG.bailianWsUrl;
+const DEFAULT_MODEL = DEFAULT_CONFIG.bailianModel;
 const CONNECT_TIMEOUT_MS = 5000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];

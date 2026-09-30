@@ -2,7 +2,8 @@ import { css, LitElement } from '../assets/lit-core-2.7.4.min.js';
 
 export const UI_LANGUAGE_EVENT = 'offer-hunter-ui-language-change';
 
-let uiLanguage = 'zh-CN';
+const { DEFAULT_PREFERENCES } = window.require('./defaults');
+let uiLanguage = DEFAULT_PREFERENCES.uiLanguage;
 
 const zh = {
     'offer hunter': '海王AI面试助手',

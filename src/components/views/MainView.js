@@ -1,10 +1,11 @@
+const { DEFAULT_CONFIG } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement } from '../../utils/i18n.js';
 
-const DEFAULT_CHAT_BASE_URL = 'https://api.deepseek.com';
-const DEFAULT_CHAT_MODEL = 'deepseek-flash';
-const DEFAULT_BAILIAN_MODEL = 'fun-asr-realtime-2026-02-28';
-const DEFAULT_BAILIAN_WS_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
+const DEFAULT_CHAT_BASE_URL = DEFAULT_CONFIG.chatBaseUrl;
+const DEFAULT_CHAT_MODEL = DEFAULT_CONFIG.deepseekModel;
+const DEFAULT_BAILIAN_MODEL = DEFAULT_CONFIG.bailianModel;
+const DEFAULT_BAILIAN_WS_URL = DEFAULT_CONFIG.bailianWsUrl;
 
 export class MainView extends LocalizedLitElement {
     static styles = css`

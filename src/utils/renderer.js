@@ -1,3 +1,4 @@
+const { DEFAULT_PREFERENCES } = require('./defaults');
 const { ipcRenderer } = require('electron');
 // 渲染端的相对路径以 index.html 所在目录 (src/) 为基准，而不是本文件所在目录。
 const { getDefaultKeybinds } = require('./utils/keybinds');
@@ -158,8 +159,8 @@ function arrayBufferToBase64(buffer) {
 
 async function initializeChat() {
     const prefs = await storage.getPreferences();
-    const customPrompt = prefs.customPrompt || '';
-    const selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
+    const customPrompt = prefs.customPrompt ?? DEFAULT_PREFERENCES.customPrompt;
+    const selectedLanguage = prefs.selectedLanguage ?? DEFAULT_PREFERENCES.selectedLanguage;
 
     const success = await ipcRenderer.invoke('initialize-chat', customPrompt, selectedLanguage);
     if (success) {
@@ -1048,7 +1049,7 @@ const theme = {
         }
     },
 
-    apply(themeName, uiAlpha = 0.8, textAlpha = 1) {
+    apply(themeName, uiAlpha = DEFAULT_PREFERENCES.backgroundTransparency, textAlpha = DEFAULT_PREFERENCES.textTransparency) {
         const colors = this.get(themeName);
         this.current = themeName;
         const root = document.documentElement;
@@ -1104,9 +1105,9 @@ const theme = {
     async load() {
         try {
             const prefs = await storage.getPreferences();
-            const themeName = prefs.theme || 'dark';
-            const alpha = prefs.backgroundTransparency ?? 0.8;
-            const textAlpha = prefs.textTransparency ?? 1;
+            const themeName = prefs.theme ?? DEFAULT_PREFERENCES.theme;
+            const alpha = prefs.backgroundTransparency ?? DEFAULT_PREFERENCES.backgroundTransparency;
+            const textAlpha = prefs.textTransparency ?? DEFAULT_PREFERENCES.textTransparency;
             this.apply(themeName, alpha, textAlpha);
             return themeName;
         } catch (err) {

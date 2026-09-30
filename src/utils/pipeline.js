@@ -1,3 +1,4 @@
+const { DEFAULT_PREFERENCES } = require('../defaults');
 const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt, getScreenshotAnswerPrompt } = require('./prompts');
 const { sendToRenderer, initializeNewSession, saveConversationTurn, saveDetailTurn, saveCandidateSpeech } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
@@ -25,14 +26,12 @@ let currentSystemPrompt = null;
 let currentDetailSystemPrompt = null;
 // 追问轮用的提示词：就是上面那份去掉知识库规则与索引——到那时模型已经用过了。同样在会话开始时快照。
 let currentDetailFollowUpSystemPrompt = null;
-let detailModeEnabled = false;
-// 两条链各自是否让模型先思考。本应用从不显示推理过程，思考就是第一个可见 token 前的纯等待：详细面板读的
-// 是两次提问之间的空档，值得；马上要照读的精简那句不值得。
-let briefThinkingEnabled = false;
-let detailThinkingEnabled = true;
-// 截图自己的开关。它一度被硬编码成开：推理耗时算在客户端 120s 总超时里，而这条链专治的一整道题截图能把
-// 预算全烧在推理上，最后一个字都回不来。
-let screenshotThinkingEnabled = false;
+let detailModeEnabled = DEFAULT_PREFERENCES.detailMode;
+// 文本回答默认关闭思考，缩短首字等待时间。
+let briefThinkingEnabled = DEFAULT_PREFERENCES.briefThinking;
+let detailThinkingEnabled = DEFAULT_PREFERENCES.detailThinking;
+// 截图回答独立控制，默认开启思考。
+let screenshotThinkingEnabled = DEFAULT_PREFERENCES.screenshotThinking;
 // 会话开始时那份条目，既用来生成提示词里的索引，也用来决定值不值得声明工具。只有**索引**是快照——执行器
 // 是现读目录的，所以这里过期最坏只是查不到，不会变成错误的事实。
 let detailKnowledgeEntries = [];
@@ -84,7 +83,7 @@ let candidateBlockId = 1;
 // 每个轮次在提问被识别的瞬间就派发，哪怕前面的回答还在流：等上一个回答落地会让新回答晚到没用。于是轮次
 // 并发运行、乱序完成，下面的日志就是提示词上下文与历史顺序唯一的真相来源。给模型看多少由「上下文轮数」
 // 设置决定，和提示词一样在会话开始时快照。
-const DEFAULT_CHAT_CONTEXT_TURNS = 15;
+const DEFAULT_CHAT_CONTEXT_TURNS = DEFAULT_PREFERENCES.chatContextTurns;
 let chatContextTurns = DEFAULT_CHAT_CONTEXT_TURNS;
 // token 一次一个 IPC 消息到达，而渲染端每收一条都要重新解析整段 markdown，所以按轮限流把一阵 token 压成
 // 几次重绘。
@@ -151,8 +150,8 @@ const IDLE_FLUSH_MARGIN_MS = 1000;
 // 都会在面试官还在说话时放麦克风过去，把面试官自己的话（或被截断回答的尾巴）作为碎片落进候选人那一栏。
 // 所以只要扬声器那路的识别器还有没定稿的文本，闸门就一并关着：有在途句子就说明说话人正说到一半，不管电
 // 平怎样。
-let micGateDb = -45;
-let micGateDwellMs = 300;
+let micGateDb = DEFAULT_PREFERENCES.micGateDb;
+let micGateDwellMs = DEFAULT_PREFERENCES.micGateDwellMs;
 let micLevelGated = false;
 let micGated = false;
 let micGateSideLoud = false;
@@ -876,14 +875,14 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
     // 的执行器会按调用时刻的目录校验。
     const prefs = getPreferences();
-    detailModeEnabled = prefs.detailMode !== false;
+    detailModeEnabled = prefs.detailMode;
     detailKnowledgeEntries = detailModeEnabled ? listKnowledgeEntries(getKnowledgeDir()) : [];
     currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries));
     // 传空摘要就是追问用的那份提示词：知识库规则和索引都以此为前提，所以这就是两样都没有的同一份提示词。
     currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
-    briefThinkingEnabled = prefs.briefThinking === true;
-    detailThinkingEnabled = prefs.detailThinking !== false;
-    screenshotThinkingEnabled = prefs.screenshotThinking === true;
+    briefThinkingEnabled = prefs.briefThinking;
+    detailThinkingEnabled = prefs.detailThinking;
+    screenshotThinkingEnabled = prefs.screenshotThinking;
     chatContextTurns = getChatContextTurns();
 
     transcriptionLanguage = selectedLanguage;

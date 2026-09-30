@@ -1,3 +1,4 @@
+const { DEFAULT_PREFERENCES, DEFAULT_CONFIG } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, setUiLanguage } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
@@ -372,10 +373,10 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.statusText = '';
         this.startTime = null;
         this.sessionActive = false;
-        this.selectedLanguage = 'cmn-CN';
-        this.selectedScreenshotInterval = '5';
-        this.selectedImageQuality = 'medium';
-        this.layoutMode = 'normal';
+        this.selectedLanguage = DEFAULT_PREFERENCES.selectedLanguage;
+        this.selectedScreenshotInterval = DEFAULT_PREFERENCES.selectedScreenshotInterval;
+        this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
+        this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
         this._msgSeq = 0;
         // 软暂停：主进程持续给识别器喂静音，所以恢复是瞬时的，什么都不用重连。
@@ -411,11 +412,11 @@ export class OfferHunterApp extends LocalizedLitElement {
             const [config, prefs] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getPreferences()]);
 
             this.currentView = config.onboarded ? 'main' : 'onboarding';
-            this.selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
-            this.selectedScreenshotInterval = prefs.selectedScreenshotInterval || '5';
-            this.selectedImageQuality = prefs.selectedImageQuality || 'medium';
-            this.layoutMode = config.layout || 'normal';
-            setUiLanguage(prefs.uiLanguage || 'zh-CN');
+            this.selectedLanguage = prefs.selectedLanguage ?? DEFAULT_PREFERENCES.selectedLanguage;
+            this.selectedScreenshotInterval = prefs.selectedScreenshotInterval ?? DEFAULT_PREFERENCES.selectedScreenshotInterval;
+            this.selectedImageQuality = prefs.selectedImageQuality ?? DEFAULT_PREFERENCES.selectedImageQuality;
+            this.layoutMode = config.layout ?? DEFAULT_CONFIG.layout;
+            setUiLanguage(prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage);
 
             this._storageLoaded = true;
             this.requestUpdate();
