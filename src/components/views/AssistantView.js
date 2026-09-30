@@ -22,7 +22,7 @@ function loadPaneFraction() {
     if (!paneFractionLoading) {
         paneFractionLoading = (async () => {
             try {
-                const prefs = await cheatingDaddy.storage.getPreferences();
+                const prefs = await offerHunter.storage.getPreferences();
                 const stored = Number(prefs.detailPaneWidth);
                 if (Number.isFinite(stored) && stored >= PANE_MIN_FRACTION && stored <= PANE_MAX_FRACTION) {
                     paneFraction = stored;
@@ -563,7 +563,7 @@ export class AssistantView extends LocalizedLitElement {
 
         paneFraction = drag.fraction;
         // 保留三位小数：这个比例只需要经得起配置文件的一次往返，原始比值会往文件里写一堆没有意义的位数。
-        cheatingDaddy.storage.updatePreference('detailPaneWidth', Math.round(paneFraction * 1000) / 1000).catch(error => {
+        offerHunter.storage.updatePreference('detailPaneWidth', Math.round(paneFraction * 1000) / 1000).catch(error => {
             console.warn('Could not save the detail pane width:', error);
         });
         this.requestUpdate();

@@ -266,7 +266,7 @@ export class CustomizeView extends LocalizedLitElement {
         this.selectedLanguage = 'cmn-CN';
         this.selectedImageQuality = 'medium';
         this.layoutMode = 'normal';
-        this.keybinds = cheatingDaddy.getDefaultKeybinds();
+        this.keybinds = offerHunter.getDefaultKeybinds();
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
@@ -308,29 +308,29 @@ export class CustomizeView extends LocalizedLitElement {
         this._isConnected = false;
         clearInterval(this._meterTimer);
         this._meterTimer = null;
-        if (cheatingDaddy.audioMeter) cheatingDaddy.audioMeter.stop();
+        if (offerHunter.audioMeter) offerHunter.audioMeter.stop();
     }
 
     async _startAudioMeters() {
-        if (!cheatingDaddy.audioMeter) return;
+        if (!offerHunter.audioMeter) return;
 
         // 柱子直接写进 DOM 而不走响应式属性：否则每秒会把整个设置页重渲好几次。
         clearInterval(this._meterTimer);
         this._meterTimer = setInterval(() => this._paintAudioMeters(), METER_POLL_MS);
 
-        await cheatingDaddy.audioMeter.start(this.audioInputDeviceId);
+        await offerHunter.audioMeter.start(this.audioInputDeviceId);
     }
 
     // 设备列表加载完还要再调一次——它通常晚于页面挂载。
     _refreshMicMeter() {
-        if (!this._isConnected || !cheatingDaddy.audioMeter) return;
-        cheatingDaddy.audioMeter.setMic(this.audioInputDeviceId);
+        if (!this._isConnected || !offerHunter.audioMeter) return;
+        offerHunter.audioMeter.setMic(this.audioInputDeviceId);
     }
 
     _paintAudioMeters() {
         if (!this.renderRoot) return;
 
-        const levels = cheatingDaddy.audioMeter.read();
+        const levels = offerHunter.audioMeter.read();
 
         for (const kind of ['system', 'mic']) {
             // 下拉框明确关闭麦克风时，界面也必须立即保持全灭。除防止旧的异步采集结果短暂闪回外，
@@ -342,12 +342,12 @@ export class CustomizeView extends LocalizedLitElement {
     }
 
     getThemes() {
-        return cheatingDaddy.theme.getAll();
+        return offerHunter.theme.getAll();
     }
 
     async _loadFromStorage() {
         try {
-            const [prefs, keybinds] = await Promise.all([cheatingDaddy.storage.getPreferences(), cheatingDaddy.storage.getKeybinds()]);
+            const [prefs, keybinds] = await Promise.all([offerHunter.storage.getPreferences(), offerHunter.storage.getKeybinds()]);
             this.backgroundTransparency = prefs.backgroundTransparency ?? 0.48;
             this.textTransparency = prefs.textTransparency ?? 0.83;
             this.fontSize = prefs.fontSize ?? 16;
@@ -367,7 +367,7 @@ export class CustomizeView extends LocalizedLitElement {
             this.uiLanguage = prefs.uiLanguage || 'zh-CN';
             setUiLanguage(this.uiLanguage);
             if (keybinds) {
-                this.keybinds = { ...cheatingDaddy.getDefaultKeybinds(), ...keybinds };
+                this.keybinds = { ...offerHunter.getDefaultKeybinds(), ...keybinds };
             }
             this.updateAppearance();
             this.updateFontSize();
@@ -446,7 +446,7 @@ export class CustomizeView extends LocalizedLitElement {
     }
 
     async saveKeybinds() {
-        await cheatingDaddy.storage.setKeybinds(this.keybinds);
+        await offerHunter.storage.setKeybinds(this.keybinds);
         ipcRenderer.send('update-keybinds', this.keybinds);
     }
 
@@ -457,7 +457,7 @@ export class CustomizeView extends LocalizedLitElement {
 
     async handleUiLanguageSelect(e) {
         this.uiLanguage = e.target.value;
-        await cheatingDaddy.storage.updatePreference('uiLanguage', this.uiLanguage);
+        await offerHunter.storage.updatePreference('uiLanguage', this.uiLanguage);
         setUiLanguage(this.uiLanguage);
     }
 
@@ -473,27 +473,27 @@ export class CustomizeView extends LocalizedLitElement {
 
     async handleCustomPromptInput(e) {
         this.customPrompt = e.target.value;
-        await cheatingDaddy.storage.updatePreference('customPrompt', this.customPrompt);
+        await offerHunter.storage.updatePreference('customPrompt', this.customPrompt);
     }
 
     async handleDetailModeChange(checked) {
         this.detailMode = checked;
-        await cheatingDaddy.storage.updatePreference('detailMode', checked);
+        await offerHunter.storage.updatePreference('detailMode', checked);
     }
 
     async handleBriefThinkingChange(checked) {
         this.briefThinking = checked;
-        await cheatingDaddy.storage.updatePreference('briefThinking', checked);
+        await offerHunter.storage.updatePreference('briefThinking', checked);
     }
 
     async handleDetailThinkingChange(checked) {
         this.detailThinking = checked;
-        await cheatingDaddy.storage.updatePreference('detailThinking', checked);
+        await offerHunter.storage.updatePreference('detailThinking', checked);
     }
 
     async handleScreenshotThinkingChange(checked) {
         this.screenshotThinking = checked;
-        await cheatingDaddy.storage.updatePreference('screenshotThinking', checked);
+        await offerHunter.storage.updatePreference('screenshotThinking', checked);
     }
 
     // “系统默认”必须始终存在。Chromium 通常会枚举出 deviceId 为 default 的伪设备，但在页面刚重建、
@@ -519,7 +519,7 @@ export class CustomizeView extends LocalizedLitElement {
     async handleAudioInputDeviceChange(e) {
         this.audioInputDeviceId = e.target.value;
         // 这个下拉只管面试者自己那一路：「不使用麦克风」不动扬声器那路，选具体设备则是在它旁边加上麦克风。
-        await cheatingDaddy.storage.updatePreference('audioInputDeviceId', this.audioInputDeviceId);
+        await offerHunter.storage.updatePreference('audioInputDeviceId', this.audioInputDeviceId);
         this._refreshMicMeter();
         this.requestUpdate();
     }
@@ -531,38 +531,38 @@ export class CustomizeView extends LocalizedLitElement {
         }
 
         this[key] = value;
-        await cheatingDaddy.storage.updatePreference(key, value);
+        await offerHunter.storage.updatePreference(key, value);
         this.requestUpdate();
     }
 
     async handleThemeChange(e) {
         this.theme = e.target.value;
-        await cheatingDaddy.theme.save(this.theme, this.backgroundTransparency, this.textTransparency);
+        await offerHunter.theme.save(this.theme, this.backgroundTransparency, this.textTransparency);
         this.requestUpdate();
     }
 
     // 拖拽只改写那两个透明度变量；所有颜色 token 都引用它们，所以一帧内就生效，无需重建颜色字符串。
     async handleBackgroundTransparencyChange(e) {
         this.backgroundTransparency = parseFloat(e.target.value);
-        await cheatingDaddy.storage.updatePreference('backgroundTransparency', this.backgroundTransparency);
-        cheatingDaddy.theme.setAlphas(this.backgroundTransparency, undefined);
+        await offerHunter.storage.updatePreference('backgroundTransparency', this.backgroundTransparency);
+        offerHunter.theme.setAlphas(this.backgroundTransparency, undefined);
         this.requestUpdate();
     }
 
     async handleTextTransparencyChange(e) {
         this.textTransparency = parseFloat(e.target.value);
-        await cheatingDaddy.storage.updatePreference('textTransparency', this.textTransparency);
-        cheatingDaddy.theme.setAlphas(undefined, this.textTransparency);
+        await offerHunter.storage.updatePreference('textTransparency', this.textTransparency);
+        offerHunter.theme.setAlphas(undefined, this.textTransparency);
         this.requestUpdate();
     }
 
     updateAppearance() {
-        cheatingDaddy.theme.apply(this.theme, this.backgroundTransparency, this.textTransparency);
+        offerHunter.theme.apply(this.theme, this.backgroundTransparency, this.textTransparency);
     }
 
     async handleFontSizeChange(e) {
         this.fontSize = parseInt(e.target.value, 10);
-        await cheatingDaddy.storage.updatePreference('fontSize', this.fontSize);
+        await offerHunter.storage.updatePreference('fontSize', this.fontSize);
         this.updateFontSize();
         this.requestUpdate();
     }
@@ -636,8 +636,8 @@ export class CustomizeView extends LocalizedLitElement {
     }
 
     async resetKeybinds() {
-        this.keybinds = cheatingDaddy.getDefaultKeybinds();
-        await cheatingDaddy.storage.setKeybinds(null);
+        this.keybinds = offerHunter.getDefaultKeybinds();
+        await offerHunter.storage.setKeybinds(null);
         ipcRenderer.send('update-keybinds', this.keybinds);
         this.requestUpdate();
     }
@@ -674,11 +674,11 @@ export class CustomizeView extends LocalizedLitElement {
                 chatMaxTokens: 128000,
             };
             for (const [key, value] of Object.entries(defaults)) {
-                await cheatingDaddy.storage.updatePreference(key, value);
+                await offerHunter.storage.updatePreference(key, value);
             }
 
-            this.keybinds = cheatingDaddy.getDefaultKeybinds();
-            await cheatingDaddy.storage.setKeybinds(null);
+            this.keybinds = offerHunter.getDefaultKeybinds();
+            await offerHunter.storage.setKeybinds(null);
             ipcRenderer.send('update-keybinds', this.keybinds);
 
             this.selectedLanguage = defaults.selectedLanguage;
@@ -705,7 +705,7 @@ export class CustomizeView extends LocalizedLitElement {
             this.onImageQualityChange(defaults.selectedImageQuality);
 
             this.updateFontSize();
-            await cheatingDaddy.theme.save(defaults.theme, defaults.backgroundTransparency, defaults.textTransparency);
+            await offerHunter.theme.save(defaults.theme, defaults.backgroundTransparency, defaults.textTransparency);
 
             this.clearStatusMessage = 'All settings restored to defaults';
             this.clearStatusType = 'success';
@@ -726,7 +726,7 @@ export class CustomizeView extends LocalizedLitElement {
         this.clearStatusType = '';
         this.requestUpdate();
         try {
-            await cheatingDaddy.storage.clearAll();
+            await offerHunter.storage.clearAll();
             this.clearStatusMessage = 'Successfully cleared all local data';
             this.clearStatusType = 'success';
             this.requestUpdate();

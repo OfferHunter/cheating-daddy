@@ -82,31 +82,6 @@ export class OnboardingView extends LocalizedLitElement {
             color: #666666;
         }
 
-        .context-input {
-            width: 100%;
-            min-height: 120px;
-            padding: 12px;
-            border: 1px solid rgba(0, 0, 0, 0.12);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.7);
-            backdrop-filter: blur(8px);
-            color: #111111;
-            font-size: 13px;
-            font-family: var(--font);
-            line-height: 1.5;
-            resize: vertical;
-            text-align: left;
-        }
-
-        .context-input::placeholder {
-            color: #999999;
-        }
-
-        .context-input:focus {
-            outline: none;
-            border-color: rgba(0, 0, 0, 0.3);
-        }
-
         .actions {
             display: flex;
             flex-direction: column;
@@ -131,30 +106,14 @@ export class OnboardingView extends LocalizedLitElement {
             opacity: 0.85;
         }
 
-        .btn-back {
-            background: none;
-            border: none;
-            color: #888888;
-            font-size: 11px;
-            cursor: pointer;
-            padding: 4px 8px;
-        }
-
-        .btn-back:hover {
-            color: #555555;
-        }
     `;
 
     static properties = {
-        currentSlide: { type: Number },
-        contextText: { type: String },
         onComplete: { type: Function },
     };
 
     constructor() {
         super();
-        this.currentSlide = 0;
-        this.contextText = '';
         this.onComplete = () => {};
         this._animId = null;
         this._time = 0;
@@ -369,58 +328,18 @@ export class OnboardingView extends LocalizedLitElement {
         draw();
     }
 
-    handleContextInput(e) {
-        this.contextText = e.target.value;
-    }
-
     async completeOnboarding() {
-        if (this.contextText.trim()) {
-            await cheatingDaddy.storage.updatePreference('customPrompt', this.contextText.trim());
-        }
-        await cheatingDaddy.storage.updateConfig('onboarded', true);
+        await offerHunter.storage.updateConfig('onboarded', true);
         this.onComplete();
     }
 
     renderSlide() {
-        if (this.currentSlide === 0) {
-            return html`
-                <div class="slide">
-                    <div class="slide-title">Cheating Daddy</div>
-                    <div class="slide-text">Real-time AI that listens, watches, and helps during interviews, meetings, and exams.</div>
-                    <div class="actions">
-                        <button
-                            class="btn-primary"
-                            @click=${() => {
-                                this.currentSlide = 1;
-                            }}
-                        >
-                            Continue
-                        </button>
-                    </div>
-                </div>
-            `;
-        }
-
         return html`
             <div class="slide">
-                <div class="slide-title">Add context</div>
-                <div class="slide-text">Paste your resume or any info the AI should know. You can skip this and add it later.</div>
-                <textarea
-                    class="context-input"
-                    placeholder="Resume, job description, notes..."
-                    .value=${this.contextText}
-                    @input=${this.handleContextInput}
-                ></textarea>
+                <div class="slide-title">offer hunter</div>
+                <div class="slide-text">Real-time AI that listens, watches, and helps during interviews, meetings, and exams.</div>
                 <div class="actions">
-                    <button class="btn-primary" @click=${this.completeOnboarding}>Get Started</button>
-                    <button
-                        class="btn-back"
-                        @click=${() => {
-                            this.currentSlide = 0;
-                        }}
-                    >
-                        Back
-                    </button>
+                    <button class="btn-primary" @click=${this.completeOnboarding}>Continue</button>
                 </div>
             </div>
         `;

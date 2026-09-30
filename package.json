@@ -1,8 +1,8 @@
 {
-    "name": "cheating-daddy",
-    "productName": "cheating-daddy",
+    "name": "offer-hunter",
+    "productName": "海王AI面试助手",
     "version": "0.8.0",
-    "description": "cheating daddy",
+    "description": "offer hunter",
     "main": "src/index.js",
     "scripts": {
         "start": "electron-forge start",
@@ -12,11 +12,11 @@
         "lint": "echo \"No linting configured\""
     },
     "keywords": [
-        "cheating daddy",
-        "cheating daddy ai",
-        "cheating daddy ai assistant",
-        "cheating daddy ai assistant for interviews",
-        "cheating daddy ai assistant for interviews"
+        "offer hunter",
+        "offer hunter ai",
+        "offer hunter ai assistant",
+        "offer hunter ai assistant for interviews",
+        "offer hunter ai assistant for interviews"
     ],
     "author": {
         "name": "sohzm",

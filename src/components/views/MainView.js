@@ -245,7 +245,7 @@ export class MainView extends LocalizedLitElement {
 
     async _loadFromStorage() {
         try {
-            const [config, creds] = await Promise.all([cheatingDaddy.storage.getConfig(), cheatingDaddy.storage.getCredentials().catch(() => ({}))]);
+            const [config, creds] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getCredentials().catch(() => ({}))]);
 
             this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
             this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
@@ -281,42 +281,42 @@ export class MainView extends LocalizedLitElement {
     async _saveChatBaseUrl(val) {
         this._chatBaseUrl = val;
         this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('chatBaseUrl', val);
+        await offerHunter.storage.updateConfig('chatBaseUrl', val);
         this.requestUpdate();
     }
 
     async _saveChatKey(val) {
         this._chatKey = val;
         this._keyError = false;
-        await cheatingDaddy.storage.setDeepseekApiKey(val);
+        await offerHunter.storage.setDeepseekApiKey(val);
         this.requestUpdate();
     }
 
     async _saveChatModel(val) {
         this._chatModel = val;
         this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('deepseekModel', val);
+        await offerHunter.storage.updateConfig('deepseekModel', val);
         this.requestUpdate();
     }
 
     async _saveBailianKey(val) {
         this._bailianKey = val;
         this._keyError = false;
-        await cheatingDaddy.storage.setBailianApiKey(val);
+        await offerHunter.storage.setBailianApiKey(val);
         this.requestUpdate();
     }
 
     async _saveBailianWsUrl(val) {
         this._bailianWsUrl = val;
         this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('bailianWsUrl', val);
+        await offerHunter.storage.updateConfig('bailianWsUrl', val);
         this.requestUpdate();
     }
 
     async _saveBailianModel(val) {
         this._bailianModel = val;
         this._keyError = false;
-        await cheatingDaddy.storage.updateConfig('bailianModel', val);
+        await offerHunter.storage.updateConfig('bailianModel', val);
         this.requestUpdate();
     }
 
@@ -537,7 +537,7 @@ export class MainView extends LocalizedLitElement {
     render() {
         return html`
             <div class="form-wrapper">
-                <div class="page-title">Cheating Daddy</div>
+                <div class="page-title">offer hunter</div>
                 <div class="page-subtitle">OpenAI-compatible chat with live transcription</div>
                 ${this._renderChatMode()} ${this._renderTranscriptionSection()} ${this._renderStartButton()}
             </div>

@@ -143,7 +143,7 @@ export class AICustomizeView extends LocalizedLitElement {
 
     async _loadFromStorage() {
         try {
-            const prefs = await cheatingDaddy.storage.getPreferences();
+            const prefs = await offerHunter.storage.getPreferences();
             this._context = prefs.customPrompt || '';
             this.requestUpdate();
         } catch (error) {
@@ -153,12 +153,12 @@ export class AICustomizeView extends LocalizedLitElement {
 
     async _saveContext(val) {
         this._context = val;
-        await cheatingDaddy.storage.updatePreference('customPrompt', val);
+        await offerHunter.storage.updatePreference('customPrompt', val);
     }
 
     async _loadKnowledge() {
         try {
-            const result = await cheatingDaddy.knowledge.list();
+            const result = await offerHunter.knowledge.list();
             this._knowledgeDir = result.success ? result.dir : '';
             this._knowledgeEntries = result.success ? result.entries : [];
             this._knowledgeError = result.success ? '' : result.error || t('Could not read the knowledge folder', '读取知识目录失败');
@@ -176,7 +176,7 @@ export class AICustomizeView extends LocalizedLitElement {
         this.requestUpdate();
 
         try {
-            const result = await cheatingDaddy.knowledge.chooseDirectory();
+            const result = await offerHunter.knowledge.chooseDirectory();
 
             if (result.success) {
                 await this._loadKnowledge();
@@ -192,7 +192,7 @@ export class AICustomizeView extends LocalizedLitElement {
     }
 
     async _clearKnowledgeDir() {
-        await cheatingDaddy.knowledge.clearDirectory();
+        await offerHunter.knowledge.clearDirectory();
         await this._loadKnowledge();
     }
 
@@ -208,7 +208,7 @@ export class AICustomizeView extends LocalizedLitElement {
         this._previewBody = '';
         this.requestUpdate();
 
-        const result = await cheatingDaddy.knowledge.preview(id);
+        const result = await offerHunter.knowledge.preview(id);
         // 读得慢：结果不能落进一个已经关掉或切走的预览里。
         if (this._openPreview !== id) return;
 
@@ -221,7 +221,7 @@ export class AICustomizeView extends LocalizedLitElement {
     }
 
     _revealKnowledgeFile(id) {
-        cheatingDaddy.knowledge.reveal(id);
+        offerHunter.knowledge.reveal(id);
     }
 
     render() {

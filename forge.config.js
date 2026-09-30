@@ -5,7 +5,7 @@ module.exports = {
     packagerConfig: {
         asar: true,
         extraResource: ['./src/assets/SystemAudioDump'],
-        name: 'Cheating Daddy',
+        name: 'offer hunter',
         icon: 'src/assets/logo',
         // use `security find-identity -v -p codesigning` to find your identity
         // for macos signing
@@ -30,9 +30,9 @@ module.exports = {
         {
             name: '@electron-forge/maker-squirrel',
             config: {
-                name: 'cheating-daddy',
-                productName: 'Cheating Daddy',
-                shortcutName: 'Cheating Daddy',
+                name: 'offer-hunter',
+                productName: '海王AI面试助手',
+                shortcutName: '海王AI面试助手',
                 createDesktopShortcut: true,
                 createStartMenuShortcut: true,
             },

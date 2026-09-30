@@ -213,7 +213,7 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
             return;
         }
         socket = new WebSocket(endpoint, {
-            headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'cheating-daddy/1.0' },
+            headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'offer-hunter/1.0' },
         });
 
         connectTimer = setTimeout(() => {

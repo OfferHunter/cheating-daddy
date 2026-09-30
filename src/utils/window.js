@@ -177,7 +177,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                     const shortcutKey = isMac ? 'cmd+enter' : 'ctrl+enter';
 
                     mainWindow.webContents.executeJavaScript(`
-                        cheatingDaddy.handleShortcut('${shortcutKey}');
+                        offerHunter.handleShortcut('${shortcutKey}');
                     `);
                 } catch (error) {
                     console.error('Error handling next step shortcut:', error);
@@ -263,7 +263,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                 console.log('Toggle theme shortcut triggered');
                 try {
                     await mainWindow.webContents.executeJavaScript(`
-                        cheatingDaddy.theme.togglePolarity();
+                        offerHunter.theme.togglePolarity();
                     `);
                 } catch (error) {
                     console.error('Error toggling theme:', error);

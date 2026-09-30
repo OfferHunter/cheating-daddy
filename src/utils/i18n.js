@@ -1,10 +1,11 @@
 import { css, LitElement } from '../assets/lit-core-2.7.4.min.js';
 
-export const UI_LANGUAGE_EVENT = 'cheating-daddy-ui-language-change';
+export const UI_LANGUAGE_EVENT = 'offer-hunter-ui-language-change';
 
 let uiLanguage = 'zh-CN';
 
 const zh = {
+    'offer hunter': '海王AI面试助手',
     Home: '主页',
     History: '历史记录',
     Settings: '设置',
@@ -275,6 +276,7 @@ export function t(english, chinese = zh[english]) {
 export function setUiLanguage(language, { notify = true } = {}) {
     uiLanguage = language === 'en-US' ? 'en-US' : 'zh-CN';
     document.documentElement.lang = uiLanguage;
+    document.title = t('offer hunter');
     if (notify) window.dispatchEvent(new CustomEvent(UI_LANGUAGE_EVENT, { detail: uiLanguage }));
 }
 

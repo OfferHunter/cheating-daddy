@@ -1,8 +1,8 @@
-# Cheating Daddy
+# 海王AI面试助手（offer hunter）
 
 ## 1. 产品介绍
 
-本项目基于开源项目 [sohzm/cheating-daddy](https://github.com/sohzm/cheating-daddy) 二次开发，是一款用于面试、会议、演示等实时场景的桌面 AI 助手。
+海王AI面试助手（offer hunter）是一款用于面试、会议、演示等实时场景的桌面 AI 助手。
 
 应用会同时采集系统播放声音和可选的麦克风声音，通过阿里云百炼进行实时语音识别，再把识别结果与会话上下文发送给兼容 OpenAI 接口的模型。默认配置使用 DeepSeek，也可以填写其他兼容服务的 Base URL、API Key 和模型名称。
 
@@ -189,11 +189,11 @@ Portable 版和安装版使用同一套存储逻辑。Portable 版不会把用�
 
 | 系统    | 数据目录                                              |
 | ------- | ----------------------------------------------------- |
-| Windows | `%APPDATA%\cheating-daddy-config`                     |
-| macOS   | `~/Library/Application Support/cheating-daddy-config` |
-| Linux   | `~/.config/cheating-daddy-config`                     |
+| Windows | `%APPDATA%\offer-hunter-config`                     |
+| macOS   | `~/Library/Application Support/offer-hunter-config` |
+| Linux   | `~/.config/offer-hunter-config`                     |
 
-Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\cheating-daddy-config`。该目录包含：
+Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\offer-hunter-config`。该目录包含：
 
 | 文件或目录              | 内容                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------- |
@@ -212,3 +212,4 @@ Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\cheati
 本地开发运行：```npm install```+```npm start```。
 
 本地生成二进制打包版：```npm run package```；生成二进制安装版：```npm run make```。
+改名后配置目录为 `offer-hunter-config`。如需保留旧版本的设置和历史记录，请先关闭应用，再将原配置目录中的文件复制到上述新目录。

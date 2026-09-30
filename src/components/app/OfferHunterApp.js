@@ -12,7 +12,7 @@ import { AICustomizeView } from '../views/AICustomizeView.js';
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
 const { ipcRenderer } = window.require('electron');
 
-export class CheatingDaddyApp extends LocalizedLitElement {
+export class OfferHunterApp extends LocalizedLitElement {
     static styles = [
         css`
             * {
@@ -364,7 +364,6 @@ export class CheatingDaddyApp extends LocalizedLitElement {
         layoutMode: { type: String },
         _isClickThrough: { state: true },
         _storageLoaded: { state: true },
-        _updateAvailable: { state: true },
     };
 
     constructor() {
@@ -392,39 +391,24 @@ export class CheatingDaddyApp extends LocalizedLitElement {
         this._isClickThrough = false;
         this._storageLoaded = false;
         this._timerInterval = null;
-        this._updateAvailable = false;
         this._localVersion = '';
 
         this._loadFromStorage();
-        this._checkForUpdates();
+        this._loadVersion();
     }
 
-    async _checkForUpdates() {
+    async _loadVersion() {
         try {
-            this._localVersion = await cheatingDaddy.getVersion();
+            this._localVersion = await offerHunter.getVersion();
             this.requestUpdate();
-
-            const res = await fetch('https://raw.githubusercontent.com/sohzm/cheating-daddy/refs/heads/master/package.json');
-            if (!res.ok) return;
-            const remote = await res.json();
-            const remoteVersion = remote.version;
-
-            const toNum = v => v.split('.').map(Number);
-            const [rMaj, rMin, rPatch] = toNum(remoteVersion);
-            const [lMaj, lMin, lPatch] = toNum(this._localVersion);
-
-            if (rMaj > lMaj || (rMaj === lMaj && rMin > lMin) || (rMaj === lMaj && rMin === lMin && rPatch > lPatch)) {
-                this._updateAvailable = true;
-                this.requestUpdate();
-            }
         } catch (e) {
-            // 检查更新失败无所谓，静默。
+            // 版本读取失败时不影响界面。
         }
     }
 
     async _loadFromStorage() {
         try {
-            const [config, prefs] = await Promise.all([cheatingDaddy.storage.getConfig(), cheatingDaddy.storage.getPreferences()]);
+            const [config, prefs] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getPreferences()]);
 
             this.currentView = config.onboarded ? 'main' : 'onboarding';
             this.selectedLanguage = prefs.selectedLanguage || 'cmn-CN';
@@ -703,7 +687,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
 
     async handleClose() {
         if (this.currentView === 'assistant') {
-            cheatingDaddy.stopCapture();
+            offerHunter.stopCapture();
             await ipcRenderer.invoke('close-session');
             this._paused = false;
             this.sessionActive = false;
@@ -722,7 +706,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
     // 直接退出，会话会在磁盘上被截断，因为没有别的东西会告诉主进程会话已经结束。
     async handleQuit() {
         if (this.currentView === 'assistant' && this.sessionActive) {
-            cheatingDaddy.stopCapture();
+            offerHunter.stopCapture();
             await ipcRenderer.invoke('close-session');
             this.sessionActive = false;
             this._stopTimer();
@@ -732,7 +716,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
 
     async togglePause() {
         this._paused = !this._paused;
-        const res = await cheatingDaddy.setPaused(this._paused);
+        const res = await offerHunter.setPaused(this._paused);
         // 真正说了算的是主进程；被拒（没有实时会话）就把按钮恢复原状，而不是停在一个从未进入过的状态上。
         if (!res?.success) this._paused = false;
         this.requestUpdate();
@@ -742,7 +726,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
     // 流式回答冻在原地就是截断，而这是唯一绝不能做的事。上面那两个 floor 则拦住被丢掉的轮次在回答最终落地时
     // 重新冒出来。
     async handleClearContext() {
-        const res = await cheatingDaddy.clearContext();
+        const res = await offerHunter.clearContext();
         if (!res?.success) return;
 
         this._turnFloorId = res.turnSeq;
@@ -759,7 +743,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
 
     async handleStart() {
         // 只要求有所选识别器的那把 key；对话那把永远是 DeepSeek 的。
-        const [chatKey, asrKey] = await Promise.all([cheatingDaddy.storage.getDeepseekApiKey(), cheatingDaddy.storage.getBailianApiKey()]);
+        const [chatKey, asrKey] = await Promise.all([offerHunter.storage.getDeepseekApiKey(), offerHunter.storage.getBailianApiKey()]);
 
         if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
             const mainView = this.shadowRoot.querySelector('main-view');
@@ -769,7 +753,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
             return;
         }
 
-        const success = await cheatingDaddy.initializeChat();
+        const success = await offerHunter.initializeChat();
         if (!success) {
             const mainView = this.shadowRoot.querySelector('main-view');
             if (mainView && mainView.triggerApiKeyError) {
@@ -778,7 +762,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
             return;
         }
 
-        cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
+        offerHunter.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
         this.messages = [];
         this._paused = false;
         // floor 跟随的是主进程自己的计数器，而 resetAudioState 会把它们归零，所以沿用旧值会让新会话的每个
@@ -797,22 +781,22 @@ export class CheatingDaddyApp extends LocalizedLitElement {
 
     async handleLanguageChange(language) {
         this.selectedLanguage = language;
-        await cheatingDaddy.storage.updatePreference('selectedLanguage', language);
+        await offerHunter.storage.updatePreference('selectedLanguage', language);
     }
 
     async handleScreenshotIntervalChange(interval) {
         this.selectedScreenshotInterval = interval;
-        await cheatingDaddy.storage.updatePreference('selectedScreenshotInterval', interval);
+        await offerHunter.storage.updatePreference('selectedScreenshotInterval', interval);
     }
 
     async handleImageQualityChange(quality) {
         this.selectedImageQuality = quality;
-        await cheatingDaddy.storage.updatePreference('selectedImageQuality', quality);
+        await offerHunter.storage.updatePreference('selectedImageQuality', quality);
     }
 
     async handleLayoutModeChange(layoutMode) {
         this.layoutMode = layoutMode;
-        await cheatingDaddy.storage.updateConfig('layout', layoutMode);
+        await offerHunter.storage.updateConfig('layout', layoutMode);
         this.requestUpdate();
     }
 
@@ -821,7 +805,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
     }
 
     async handleSendText(message) {
-        const result = await window.cheatingDaddy.sendTextMessage(message);
+        const result = await window.offerHunter.sendTextMessage(message);
         if (!result.success) {
             this.setStatus('Error sending message: ' + result.error);
         } else {
@@ -964,7 +948,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
         return html`
             <div class="sidebar ${this._isLiveMode() ? 'hidden' : ''}">
                 <div class="sidebar-brand">
-                    <h1>Cheating Daddy</h1>
+                    <h1>offer hunter</h1>
                 </div>
                 <nav class="sidebar-nav">
                     ${items.map(
@@ -980,25 +964,7 @@ export class CheatingDaddyApp extends LocalizedLitElement {
                     )}
                 </nav>
                 <div class="sidebar-footer">
-                    ${
-                        this._updateAvailable
-                            ? html`
-                                  <button class="update-btn" @click=${() => this.handleExternalLinkClick('https://cheatingdaddy.com/download')}>
-                                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                                          <path
-                                              fill="none"
-                                              stroke="currentColor"
-                                              stroke-linecap="round"
-                                              stroke-linejoin="round"
-                                              stroke-width="2"
-                                              d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M7 11l5 5l5-5m-5-7v12"
-                                          />
-                                      </svg>
-                                      Update available
-                                  </button>
-                              `
-                            : html` <div class="version-text">v${this._localVersion}</div> `
-                    }
+                    <div class="version-text">v${this._localVersion}</div>
                 </div>
             </div>
         `;
@@ -1119,4 +1085,4 @@ export class CheatingDaddyApp extends LocalizedLitElement {
     }
 }
 
-customElements.define('cheating-daddy-app', CheatingDaddyApp);
+customElements.define('offer-hunter-app', OfferHunterApp);

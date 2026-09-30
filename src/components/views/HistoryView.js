@@ -414,7 +414,7 @@ export class HistoryView extends LocalizedLitElement {
     async loadSessions() {
         try {
             this.loading = true;
-            this.sessions = await cheatingDaddy.storage.getAllSessions();
+            this.sessions = await offerHunter.storage.getAllSessions();
             // 删掉的会话不能继续计入工具栏；刷新前建立的选中项也不能指向列表里已经没有的 id。
             this.selectedIds = this.selectedIds.filter(id => this.sessions.some(session => session.sessionId === id));
         } catch (error) {
@@ -428,7 +428,7 @@ export class HistoryView extends LocalizedLitElement {
 
     async openSession(sessionId) {
         try {
-            const session = await cheatingDaddy.storage.getSession(sessionId);
+            const session = await offerHunter.storage.getSession(sessionId);
             if (session) {
                 this.selectedSession = session;
                 this.selectedSessionId = sessionId;
@@ -500,7 +500,7 @@ export class HistoryView extends LocalizedLitElement {
         if (!this.selectedIds.length) return;
         const count = this.selectedIds.length;
         try {
-            const results = await Promise.all(this.selectedIds.map(id => cheatingDaddy.storage.deleteSession(id)));
+            const results = await Promise.all(this.selectedIds.map(id => offerHunter.storage.deleteSession(id)));
             const failed = results.filter(result => !result?.success).length;
             await this.loadSessions();
             this.selectedIds = [];
@@ -527,7 +527,7 @@ export class HistoryView extends LocalizedLitElement {
     async exportSelected() {
         if (!this.selectedIds.length) return;
         try {
-            const result = await cheatingDaddy.storage.exportSessions(this.selectedIds);
+            const result = await offerHunter.storage.exportSessions(this.selectedIds);
             // 取消对话框不算需要报告的结果；选中状态保持不变。
             if (result.canceled) return;
             this.showStatus(

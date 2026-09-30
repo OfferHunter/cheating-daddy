@@ -2,7 +2,7 @@ import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
-const PROJECT_URL = 'https://github.com/OfferHunter/cheating-daddy';
+const PROJECT_URL = 'https://github.com/OfferHunter';
 
 export class HelpView extends LocalizedLitElement {
     static styles = [

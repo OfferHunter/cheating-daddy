@@ -161,7 +161,7 @@ function main() {
     console.log(`key: ...${apiKey.slice(-6)} (len ${apiKey.length})`);
 
     const ws = new WebSocket(ENDPOINT, {
-        headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'cheating-daddy-asr-smoke/1.0' },
+        headers: { Authorization: `Bearer ${apiKey}`, 'user-agent': 'offer-hunter-asr-smoke/1.0' },
     });
 
     const done = code => {

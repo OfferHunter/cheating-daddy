@@ -163,16 +163,16 @@ async function initializeChat() {
 
     const success = await ipcRenderer.invoke('initialize-chat', customPrompt, selectedLanguage);
     if (success) {
-        cheatingDaddy.setStatus('Live');
+        offerHunter.setStatus('Live');
         return true;
     }
-    cheatingDaddy.setStatus('error');
+    offerHunter.setStatus('error');
     return false;
 }
 
 ipcRenderer.on('update-status', (event, status) => {
     console.log('Status update:', status);
-    cheatingDaddy.setStatus(status);
+    offerHunter.setStatus(status);
 });
 
 // 真正把设备交回去的是 stop 掉 track：processor 的 disconnect() 只是停掉回调，系统仍会显示麦克风占用中
@@ -291,7 +291,7 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
         console.log('Manual mode enabled - screenshots will be captured on demand only');
     } catch (err) {
         console.error('Error starting capture:', err);
-        cheatingDaddy.setStatus('error');
+        offerHunter.setStatus('error');
     }
 }
 
@@ -796,18 +796,18 @@ ipcRenderer.on('clear-sensitive-data', async () => {
 });
 
 function handleShortcut(shortcutKey) {
-    const currentView = cheatingDaddy.getCurrentView();
+    const currentView = offerHunter.getCurrentView();
 
     if (shortcutKey === 'ctrl+enter' || shortcutKey === 'cmd+enter') {
         if (currentView === 'main') {
-            cheatingDaddy.element().handleStart();
+            offerHunter.element().handleStart();
         } else {
             captureManualScreenshot();
         }
     }
 }
 
-const cheatingDaddyApp = document.querySelector('cheating-daddy-app');
+const offerHunterApp = document.querySelector('offer-hunter-app');
 
 const theme = {
     themes: {
@@ -1129,18 +1129,18 @@ const theme = {
     },
 };
 
-const cheatingDaddy = {
+const offerHunter = {
     getVersion: async () => ipcRenderer.invoke('get-app-version'),
 
-    element: () => cheatingDaddyApp,
-    e: () => cheatingDaddyApp,
+    element: () => offerHunterApp,
+    e: () => offerHunterApp,
 
-    getCurrentView: () => cheatingDaddyApp.currentView,
-    getLayoutMode: () => cheatingDaddyApp.layoutMode,
+    getCurrentView: () => offerHunterApp.currentView,
+    getLayoutMode: () => offerHunterApp.layoutMode,
 
-    setStatus: text => cheatingDaddyApp.setStatus(text),
-    addNewResponse: response => cheatingDaddyApp.addNewResponse(response),
-    updateCurrentResponse: response => cheatingDaddyApp.updateCurrentResponse(response),
+    setStatus: text => offerHunterApp.setStatus(text),
+    addNewResponse: response => offerHunterApp.addNewResponse(response),
+    updateCurrentResponse: response => offerHunterApp.updateCurrentResponse(response),
 
     initializeChat,
     startCapture,
@@ -1171,7 +1171,7 @@ const cheatingDaddy = {
     getDefaultKeybinds,
 };
 
-window.cheatingDaddy = cheatingDaddy;
+window.offerHunter = offerHunter;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => theme.load());
