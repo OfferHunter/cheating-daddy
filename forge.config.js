@@ -7,6 +7,14 @@ module.exports = {
         extraResource: ['./src/assets/SystemAudioDump'],
         name: 'offer hunter',
         icon: 'src/assets/logo',
+        // Ship runtime files only; never embed release archives or local signing material.
+        ignore: file => {
+            const relative = file.replace(/\\/g, '/').replace(/^\//, '');
+            if (!relative) return false;
+            const top = relative.split('/')[0];
+            return !['src', 'node_modules', 'package.json', 'LICENSE'].includes(top) ||
+                relative === 'src/data' || relative.startsWith('src/data/');
+        },
         // use `security find-identity -v -p codesigning` to find your identity
         // for macos signing
         // also fuck apple

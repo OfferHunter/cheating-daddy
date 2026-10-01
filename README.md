@@ -223,3 +223,24 @@ Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\offer-
 本地开发运行：```npm install```+```npm start```。
 
 本地生成二进制打包版：```npm run package```；生成二进制安装版：```npm run make```。
+
+### 一键整理发布版本
+
+安装依赖后运行 `npm run release`。命令按当前系统和 CPU 架构执行 package，再复用打包结果执行 make，同时生成便携 ZIP。全部成功后输出到：
+
+```text
+release/
+├── README.md
+├── Source Code/                 # 可重新安装依赖、开发和构建的源码
+├── offer hunter-<版本> Setup.exe # Windows 安装程序
+├── offer hunter-win32-x64-<版本>.zip # Windows 便携版，完整解压后运行
+├── *.nupkg                      # Windows 更新分发文件
+└── RELEASES                     # Windows 更新索引
+```
+
+macOS 上按配置生成 DMG 和 ZIP。普通 Windows 用户只需要安装程序或便携 ZIP 其中之一。
+源码包含 `src`、`scripts`、依赖清单及锁文件、打包配置、许可证和文档，不包含 `node_modules`、本地数据、私钥、Git 信息和旧构建产物。
+源码使用者进入 `Source Code` 后运行 `npm ci`，然后按需运行 `npm start` 或 `npm run release`。
+
+构建中间文件保留在 `out/release-build-*`；原有 `release` 在成功发布时备份到对应目录的 `previous-release`。
+构建失败不会覆盖原发布目录。重复发布会保留旧版本备份，请在确认不再需要后自行清理。

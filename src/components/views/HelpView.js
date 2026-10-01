@@ -125,7 +125,7 @@ export class HelpView extends LocalizedLitElement {
                             [copy('DeepSeek 文档', 'DeepSeek documentation'), 'https://api-docs.deepseek.com/zh-cn/'],
                             [copy('百炼控制台', 'Model Studio console'), 'https://bailian.console.aliyun.com/'],
                             [copy('百炼 API Key 帮助', 'Model Studio API key guide'), 'https://help.aliyun.com/zh/model-studio/get-api-key/'],
-                            ['GitHub', 'https://github.com/OfferHunter'],
+                            ['二次开发前原仓库', 'https://github.com/sohzm/cheating-daddy'],
                         ].map(([label, url]) => html`<button @click=${() => this.onExternalLinkClick(url)}>${label}</button>`)}
                     </div>
                     <p class="note">${copy('如需反馈问题或提出需求，请联系提供软件的客服。请附上应用版本、系统版本、复现步骤、预期结果及实际现象；音频问题注明是对方声音还是自己的麦克风。截图请遮挡 API Key 和个人资料。当前尚未公布专用客服群入口。', 'For issues or feature requests, contact the support channel that supplied the app. Include app and OS versions, reproduction steps, expected behavior and what happened. For audio issues, specify incoming system audio or your microphone. Redact API keys and personal information in screenshots. No dedicated support-group link is published yet.')}</p>
