@@ -1,7 +1,7 @@
 assets/
 release/
 .license-private/
-
+release-*
 # Logs
 src/data
 logs
