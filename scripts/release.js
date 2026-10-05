@@ -54,7 +54,9 @@ async function release({ root = path.resolve(__dirname, '..'), forge, config } =
         targets.push({ name: '@electron-forge/maker-zip', config: {} });
     }
     const results = await forge.make({ ...options, skipPackage: true, overrideTargets: targets });
-    const artifacts = results.flatMap(result => result.artifacts);
+    // Squirrel 的 .nupkg 与 RELEASES 是自动更新喂料：应用没接 autoUpdater，没人会来下载它们，
+    // 留在发布目录只占体积。两者成对丢弃（只有清单没有包、或反之都无意义），Setup.exe 与 zip 保留。
+    const artifacts = results.flatMap(result => result.artifacts).filter(file => !file.endsWith('.nupkg') && path.basename(file) !== 'RELEASES');
     if (!artifacts.length || !artifacts.some(file => file.endsWith('.zip'))) throw new Error('Missing release artifacts or portable ZIP');
 
     await fs.mkdir(stage);
