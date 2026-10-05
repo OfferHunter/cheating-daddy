@@ -12,6 +12,20 @@ const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');
 const storage = require('./storage');
 
+// 隐蔽性：调试口能把渲染器整个接管——CDP 可以 Page.captureScreenshot 截图、Runtime.evaluate 读屏上文字，
+// 且这条路不受 setContentProtection / WDA 约束（见 scripts/capture-test/）。所以在建窗口之前就拒掉带调试开关的
+// 启动：不建窗口、不读存储、静默退出。主进程的 --inspect* 已由 forge 的 EnableNodeCliInspectArguments fuse 关掉，
+// 这里连同 argv 一并兜住，覆盖 fuse 覆盖不到的 Chromium 开关（--remote-debugging-port 不受 fuse 约束）。
+const DEBUG_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'inspect', 'inspect-brk', 'inspect-port'];
+const debugRequested =
+    DEBUG_SWITCHES.some(name => app.commandLine.hasSwitch(name)) ||
+    process.argv.some(arg => /^--(inspect|inspect-brk|inspect-port|remote-debugging)/.test(arg));
+
+if (debugRequested) {
+    console.error('Refusing to start: a debug switch was passed; it would expose the renderer over CDP.');
+    app.exit(1);
+}
+
 let mainWindow = null;
 
 function createMainWindow() {

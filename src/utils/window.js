@@ -16,6 +16,10 @@ function createWindow(sendToRenderer) {
 
     const mainWindow = new BrowserWindow({
         icon: path.join(__dirname, '../assets', process.platform === 'win32' ? 'logo.ico' : 'logo.png'),
+        // win32 下 type:'toolbar' 会让窗口带上 WS_EX_TOOLWINDOW，从而从 Alt-Tab / Win+Tab 里消失。
+        // setSkipTaskbar 只删任务栏按钮（ITaskbarList），Alt-Tab 是自己枚举窗口，不受它约束，所以两者要一起用。
+        // 这是 Windows 专属取值，别的平台不传（实测 ExStyle 由 0x100 变 0x180）。
+        ...(process.platform === 'win32' ? { type: 'toolbar' } : {}),
         width: windowWidth,
         height: windowHeight,
         minWidth: MIN_WINDOW_SIZE.width,
