@@ -310,6 +310,8 @@ export class CustomizeView extends LocalizedLitElement {
         clearInterval(this._meterTimer);
         this._meterTimer = null;
         if (offerHunter.audioMeter) offerHunter.audioMeter.stop();
+        // 兜底：若输入框仍聚焦时视图被卸载，blur 不一定触发，这里确保快捷键被恢复，否则会一直停用。
+        ipcRenderer.send('resume-global-shortcuts');
     }
 
     async _startAudioMeters() {
@@ -423,7 +425,7 @@ export class CustomizeView extends LocalizedLitElement {
             { key: 'moveRight', name: 'Move Window Right', description: 'Move the app window right' },
             { key: 'toggleVisibility', name: 'Toggle Visibility', description: 'Show or hide the app window' },
             { key: 'toggleClickThrough', name: 'Toggle Click-through', description: 'Enable or disable click-through mode' },
-            { key: 'nextStep', name: 'Ask Next Step', description: 'Take screenshot and ask for next step' },
+            { key: 'screenShot', name: 'Take ScreenShot', description: 'Take screenshot and ask for solution' },
             { key: 'scrollUp', name: 'Scroll Response Up', description: 'Scroll response content upward' },
             { key: 'scrollDown', name: 'Scroll Response Down', description: 'Scroll response content downward' },
             {
@@ -581,6 +583,12 @@ export class CustomizeView extends LocalizedLitElement {
     handleKeybindFocus(e) {
         e.target.placeholder = 'Press key combination...';
         e.target.select();
+        // 不摘掉全局快捷键，按下的组合（如默认的 Ctrl+Up/Ctrl+Down）会在系统层被吞，输入框收不到 keydown。
+        ipcRenderer.send('suspend-global-shortcuts');
+    }
+
+    handleKeybindBlur() {
+        ipcRenderer.send('resume-global-shortcuts');
     }
 
     handleKeybindInput(e) {
@@ -1029,6 +1037,7 @@ export class CustomizeView extends LocalizedLitElement {
                                 data-action=${action.key}
                                 @keydown=${this.handleKeybindInput}
                                 @focus=${this.handleKeybindFocus}
+                                @blur=${this.handleKeybindBlur}
                                 readonly
                             />
                         </div>

@@ -231,7 +231,7 @@ const zh = {
     'Move Window Right': '窗口右移',
     'Toggle Visibility': '显示或隐藏窗口',
     'Toggle Click-through': '切换鼠标穿透',
-    'Ask Next Step': '询问下一步',
+    'Take ScreenShot': '截图',
     'Scroll Response Up': '向上滚动回答',
     'Scroll Response Down': '向下滚动回答',
     'Previous Detailed Answer': '上一条详细回答',

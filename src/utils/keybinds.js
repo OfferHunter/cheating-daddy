@@ -9,7 +9,7 @@ function getDefaultKeybinds() {
         moveRight: isMac ? 'Alt+Right' : 'Ctrl+Right',
         toggleVisibility: isMac ? 'Cmd+\\' : 'Ctrl+\\',
         toggleClickThrough: isMac ? 'Cmd+M' : 'Ctrl+M',
-        nextStep: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
+        screenShot: isMac ? 'Cmd+Enter' : 'Ctrl+Enter',
         scrollUp: isMac ? 'Cmd+Shift+Up' : 'Ctrl+Shift+Up',
         scrollDown: isMac ? 'Cmd+Shift+Down' : 'Ctrl+Shift+Down',
         // 用方括号而非方向键：上下键已经用来滚动字幕，而 Ctrl+Alt+Up/Down 在 Windows 上被显卡驱动占用做屏幕旋转。

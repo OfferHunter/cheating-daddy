@@ -4,6 +4,8 @@ const storage = require('../storage');
 const { getDefaultKeybinds } = require('./keybinds');
 
 let mouseEventsIgnored = false;
+// 最近一次生效的键位表。设置页录制键位时会临时摘掉所有全局快捷键，失焦后要按这份表原样恢复。
+let currentKeybinds = null;
 
 const DEFAULT_MAIN_WINDOW_SIZE = { width: 1100, height: 800 };
 const MIN_WINDOW_SIZE = { width: 700, height: 320 };
@@ -91,6 +93,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
     // 必须与默认表合并，不能直接信传入的：设置页存的是用户改过的那几项，缺键不是中性的——下面每处注册都被
     // `if (keybinds.X)` 守着，缺的那个会静默地永不注册。
     keybinds = { ...getDefaultKeybinds(), ...(keybinds || {}) };
+    currentKeybinds = keybinds;
 
     console.log('Updating global shortcuts with:', keybinds);
 
@@ -169,9 +172,9 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    if (keybinds.nextStep) {
+    if (keybinds.screenShot) {
         try {
-            globalShortcut.register(keybinds.nextStep, async () => {
+            globalShortcut.register(keybinds.screenShot, async () => {
                 console.log('Next step shortcut triggered');
                 try {
                     const isMac = process.platform === 'darwin';
@@ -184,9 +187,9 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                     console.error('Error handling next step shortcut:', error);
                 }
             });
-            console.log(`Registered nextStep: ${keybinds.nextStep}`);
+            console.log(`Registered screenShot: ${keybinds.screenShot}`);
         } catch (error) {
-            console.error(`Failed to register nextStep (${keybinds.nextStep}):`, error);
+            console.error(`Failed to register screenShot (${keybinds.screenShot}):`, error);
         }
     }
 
@@ -317,6 +320,18 @@ function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
     ipcMain.on('update-keybinds', (event, newKeybinds) => {
         if (!mainWindow.isDestroyed()) {
             updateGlobalShortcuts(newKeybinds, mainWindow, sendToRenderer);
+        }
+    });
+
+    // 设置页录制键位期间必须把全局快捷键全部摘掉：走 RegisterHotKey 的键在系统层就被吃掉，渲染进程收不到
+    // keydown，于是任何"当前已注册"的组合（默认的 Ctrl+Up/Ctrl+Down 等）都无法录进输入框。失焦时再恢复。
+    ipcMain.on('suspend-global-shortcuts', () => {
+        globalShortcut.unregisterAll();
+    });
+
+    ipcMain.on('resume-global-shortcuts', () => {
+        if (!mainWindow.isDestroyed() && currentKeybinds) {
+            updateGlobalShortcuts(currentKeybinds, mainWindow, sendToRenderer);
         }
     });
 
