@@ -1,11 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const SOURCE_ENTRIES = [
-    'src', 'scripts', 'package.json', 'package-lock.json', 'forge.config.js',
-    'entitlements.plist', 'LICENSE', 'README.md', '.gitignore', '.prettierrc', '.prettierignore',
-];
-
 function inside(root, target) {
     const relative = path.relative(root, target);
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -14,34 +9,14 @@ function inside(root, target) {
     return target;
 }
 
-async function copySource(root, destination) {
-    await fs.mkdir(destination, { recursive: true });
-    for (const entry of SOURCE_ENTRIES) {
-        const source = path.join(root, entry);
-        await fs.cp(source, path.join(destination, entry), {
-            recursive: true,
-            filter: async file => {
-                const relative = path.relative(root, file).split(path.sep).join('/');
-                if (relative === 'src/data' || relative.startsWith('src/data/') || /(?:^|\/)(?:\.env(?:\..*)?|.*\.log)$/.test(relative)) {
-                    return false;
-                }
-                if ((await fs.lstat(file)).isSymbolicLink()) throw new Error(`Unexpected source symlink: ${relative}`);
-                return true;
-            },
-        });
-    }
-}
-
 async function release({ root = path.resolve(__dirname, '..'), forge, config } = {}) {
     root = await fs.realpath(root);
     const output = inside(root, path.join(root, 'out'));
     await fs.mkdir(output, { recursive: true });
-    // Refuse redirected output folders before building or moving existing releases.
+    // Refuse redirected output folders before building.
     if (await fs.realpath(output) !== output) throw new Error('out must be a real directory inside the workspace');
     const work = await fs.mkdtemp(path.join(output, 'release-build-'));
-    const stage = path.join(work, 'release');
     const destination = inside(root, path.join(root, 'release'));
-    const backup = inside(root, path.join(work, 'previous-release'));
     forge ||= require('@electron-forge/core').api;
     config ||= require(path.join(root, 'forge.config.js'));
     const options = { dir: root, outDir: path.join(work, 'build'), interactive: false, platform: process.platform, arch: process.arch };
@@ -59,34 +34,21 @@ async function release({ root = path.resolve(__dirname, '..'), forge, config } =
     const artifacts = results.flatMap(result => result.artifacts).filter(file => !file.endsWith('.nupkg') && path.basename(file) !== 'RELEASES');
     if (!artifacts.length || !artifacts.some(file => file.endsWith('.zip'))) throw new Error('Missing release artifacts or portable ZIP');
 
-    await fs.mkdir(stage);
+    // 先查重名再落盘：重名会在任何写入之前抛错，原发布目录不受影响。
     const names = new Set();
     for (const artifact of artifacts) {
         const name = path.basename(artifact);
         if (names.has(name)) throw new Error(`Duplicate release artifact: ${name}`);
         names.add(name);
-        await fs.copyFile(artifact, path.join(stage, name));
     }
-    await copySource(root, path.join(stage, 'Source Code'));
-    await fs.copyFile(path.join(root, 'README.md'), path.join(stage, 'README.md'));
 
-    let previous = false;
-    try {
-        const stat = await fs.lstat(destination);
-        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('release must be a real directory');
-        await fs.rename(destination, backup);
-        previous = true;
-    } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+    // 就地生成和覆盖，不删除目录里已有的其他文件：构建产物与 README 只覆盖同名文件。
+    await fs.mkdir(destination, { recursive: true });
+    for (const artifact of artifacts) {
+        await fs.copyFile(artifact, path.join(destination, path.basename(artifact)));
     }
-    try {
-        await fs.rename(stage, destination);
-    } catch (error) {
-        if (previous) await fs.rename(backup, destination);
-        throw error;
-    }
+    await fs.copyFile(path.join(root, 'README.md'), path.join(destination, 'README.md'));
     console.log(`Release ready: ${destination}`);
-    if (previous) console.log(`Previous release preserved: ${backup}`);
     return destination;
 }
 
@@ -97,4 +59,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { SOURCE_ENTRIES, copySource, release };
+module.exports = { release };

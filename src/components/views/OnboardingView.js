@@ -106,10 +106,97 @@ export class OnboardingView extends LocalizedLitElement {
             opacity: 0.85;
         }
 
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
+        .machine-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+        }
+
+        .machine-label {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #888888;
+        }
+
+        /* 机器码要能被选中、复制，而 .onboarding * 全局禁用了选择，所以这里单独放开。 */
+        .machine-code {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            color: #111111;
+            word-break: break-all;
+            text-align: center;
+            user-select: text;
+            cursor: text;
+        }
+
+        .btn-ghost {
+            background: none;
+            border: none;
+            color: #555555;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .btn-ghost:hover {
+            background: rgba(0, 0, 0, 0.06);
+        }
+
+        .code-input {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            background: #ffffff;
+            color: #111111;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            text-align: center;
+            outline: none;
+        }
+
+        .code-input:focus {
+            border-color: rgba(0, 0, 0, 0.4);
+        }
+
+        .error-text {
+            font-size: 12px;
+            color: #c0392b;
+            text-align: center;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #888888;
+            text-align: center;
+        }
     `;
 
     static properties = {
         onComplete: { type: Function },
+        _activated: { state: true },
+        _machineCode: { state: true },
+        _input: { state: true },
+        _error: { state: true },
+        _busy: { state: true },
+        _copied: { state: true },
     };
 
     constructor() {
@@ -117,11 +204,30 @@ export class OnboardingView extends LocalizedLitElement {
         this.onComplete = () => {};
         this._animId = null;
         this._time = 0;
+        this._activated = false;
+        this._machineCode = '';
+        this._input = '';
+        this._error = '';
+        this._busy = false;
+        this._copied = false;
     }
 
     firstUpdated() {
         this._startAurora();
         this._drawDither();
+        this._initLicense();
+    }
+
+    // 已激活的机器直接看到欢迎页（引导流程本身还要走完）；未激活的停在这里，机器码是该机唯一能激活它的凭据。
+    async _initLicense() {
+        try {
+            const [status, machineCode] = await Promise.all([offerHunter.license.getStatus(), offerHunter.license.getMachineCode()]);
+            this._activated = Boolean(status.activated);
+            this._machineCode = machineCode;
+        } catch (error) {
+            this._error = 'Activation is unavailable on this system.';
+        }
+        this.requestUpdate();
     }
 
     disconnectedCallback() {
@@ -333,6 +439,104 @@ export class OnboardingView extends LocalizedLitElement {
         this.onComplete();
     }
 
+    async copyMachineCode() {
+        const text = this._machineCode;
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // file:// 下剪贴板 API 可能被挡，退回到 execCommand。
+            const area = document.createElement('textarea');
+            area.value = text;
+            document.body.appendChild(area);
+            area.select();
+            try {
+                document.execCommand('copy');
+            } catch {
+                // 复制失败也不影响用户手动选中；无需提示。
+            }
+            document.body.removeChild(area);
+        }
+        this._copied = true;
+        this.requestUpdate();
+        setTimeout(() => {
+            this._copied = false;
+            this.requestUpdate();
+        }, 1500);
+    }
+
+    async activate() {
+        if (this._busy) return;
+        const code = this._input.trim();
+        if (!code) return;
+
+        this._busy = true;
+        this._error = '';
+        this.requestUpdate();
+
+        try {
+            const result = await offerHunter.license.activate(code);
+            if (result.success) {
+                this._activated = true;
+                this._input = '';
+            } else {
+                this._error = this._errorMessage(result.error);
+            }
+        } catch (error) {
+            this._error = 'Activation failed. Please try again.';
+        }
+
+        this._busy = false;
+        this.requestUpdate();
+    }
+
+    _errorMessage(reason) {
+        switch (reason) {
+            case 'format':
+                return 'Invalid activation code format.';
+            case 'machine':
+                return 'This activation code is for a different computer.';
+            case 'signature':
+                return 'Invalid activation code. Please check it and try again.';
+            default:
+                return 'Activation failed. Please try again.';
+        }
+    }
+
+    renderActivation() {
+        return html`
+            <div class="slide">
+                <div class="slide-title">Activate your product</div>
+                <div class="slide-text">
+                    This copy is locked to this computer. Send the machine code below to the seller, then enter the activation code you get back.
+                </div>
+                <div class="machine-box">
+                    <div class="machine-label">Machine Code</div>
+                    <div class="machine-code" data-no-localize>${this._machineCode || '...'}</div>
+                    <button class="btn-ghost" @click=${this.copyMachineCode}>${this._copied ? 'Copied' : 'Copy'}</button>
+                </div>
+                <input
+                    class="code-input"
+                    .value=${this._input}
+                    @input=${event => {
+                        this._input = event.target.value;
+                    }}
+                    @keydown=${event => {
+                        if (event.key === 'Enter') this.activate();
+                    }}
+                    placeholder="Activation Code"
+                    spellcheck="false"
+                    autocomplete="off"
+                />
+                ${this._error ? html`<div class="error-text">${this._error}</div>` : ''}
+                <div class="actions">
+                    <button class="btn-primary" ?disabled=${this._busy} @click=${this.activate}>${this._busy ? 'Activating...' : 'Activate'}</button>
+                </div>
+                <div class="hint">Please ask the seller for an activation code.</div>
+            </div>
+        `;
+    }
+
     renderSlide() {
         return html`
             <div class="slide">
@@ -350,7 +554,7 @@ export class OnboardingView extends LocalizedLitElement {
             <div class="onboarding">
                 <canvas class="aurora"></canvas>
                 <canvas class="dither"></canvas>
-                ${this.renderSlide()}
+                ${this._activated ? this.renderSlide() : this.renderActivation()}
             </div>
         `;
     }

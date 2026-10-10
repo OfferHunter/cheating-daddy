@@ -2,17 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { SOURCE_ENTRIES, release } = require('./release');
+const { release } = require('./release');
 
 async function fixture() {
     await fs.mkdir(path.join(__dirname, '../out'), { recursive: true });
     const root = await fs.mkdtemp(path.join(__dirname, '../out/release-test-'));
-    for (const entry of SOURCE_ENTRIES) {
-        if (['src', 'scripts'].includes(entry)) {
-            await fs.mkdir(path.join(root, entry));
-            await fs.writeFile(path.join(root, entry, 'example.js'), '// source');
-        } else await fs.writeFile(path.join(root, entry), entry);
-    }
+    await fs.writeFile(path.join(root, 'README.md'), 'README.md');
     for (const dir of ['release', '.license-private', 'src/data', 'node_modules']) {
         await fs.mkdir(path.join(root, dir), { recursive: true });
         await fs.writeFile(path.join(root, dir, 'marker'), 'do not ship');
@@ -20,7 +15,7 @@ async function fixture() {
     return root;
 }
 
-test('release runs package once, collects only current artifacts and preserves the previous release', async () => {
+test('release runs package once and writes only current artifacts, keeping existing files', async () => {
     const root = await fixture();
     const calls = [];
     const forge = {
@@ -37,12 +32,13 @@ test('release runs package once, collects only current artifacts and preserves t
     const output = await release({ root, forge, config: { makers: [] } });
     assert.deepEqual(calls, ['package', 'make']);
     assert.equal(await fs.readFile(path.join(output, 'README.md'), 'utf8'), 'README.md');
-    for (const entry of SOURCE_ENTRIES) await fs.access(path.join(output, 'Source Code', entry));
-    for (const entry of ['.license-private', 'node_modules', 'src/data', 'release']) {
-        await assert.rejects(fs.access(path.join(output, 'Source Code', entry)));
+    assert.equal(await fs.readFile(path.join(output, 'Setup.exe'), 'utf8'), 'artifact');
+    assert.equal(await fs.readFile(path.join(output, 'portable.zip'), 'utf8'), 'artifact');
+    for (const entry of ['app.nupkg', 'RELEASES', 'Source Code']) {
+        await assert.rejects(fs.access(path.join(output, entry)));
     }
-    const builds = await fs.readdir(path.join(root, 'out'));
-    assert.equal(await fs.readFile(path.join(root, 'out', builds[0], 'previous-release', 'marker'), 'utf8'), 'do not ship');
+    // 已有的 marker 不被删除：发布只新增或覆盖同名产物。
+    assert.equal(await fs.readFile(path.join(output, 'marker'), 'utf8'), 'do not ship');
 });
 
 test('failed build leaves the existing release untouched', async () => {

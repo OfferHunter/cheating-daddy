@@ -236,16 +236,10 @@ Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\offer-
 ```text
 release/
 ├── README.md
-├── Source Code/                 # 可重新安装依赖、开发和构建的源码
 ├── offer hunter-<版本> Setup.exe # Windows 安装程序
-├── offer hunter-win32-x64-<版本>.zip # Windows 便携版，完整解压后运行
-├── *.nupkg                      # Windows 更新分发文件
-└── RELEASES                     # Windows 更新索引
+└── offer hunter-win32-x64-<版本>.zip # Windows 便携版，完整解压后运行
 ```
 
 macOS 上按配置生成 DMG 和 ZIP。普通 Windows 用户只需要安装程序或便携 ZIP 其中之一。
-源码包含 `src`、`scripts`、依赖清单及锁文件、打包配置、许可证和文档，不包含 `node_modules`、本地数据、私钥、Git 信息和旧构建产物。
-源码使用者进入 `Source Code` 后运行 `npm ci`，然后按需运行 `npm start` 或 `npm run release`。
 
-构建中间文件保留在 `out/release-build-*`；原有 `release` 在成功发布时备份到对应目录的 `previous-release`。
-构建失败不会覆盖原发布目录。重复发布会保留旧版本备份，请在确认不再需要后自行清理。
+发布只输出可运行产物，不再附带源码包。构建中间文件保留在 `out/release-build-*`。发布采用就地覆盖：只生成或覆盖同名产物，不会删除 `release` 目录里已有的其他文件，构建失败时不写入任何产物。

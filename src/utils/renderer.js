@@ -128,6 +128,21 @@ const knowledge = {
     },
 };
 
+// 激活相关只走主进程：这里读到的机器码由主进程从本机硬件算出，渲染端不参与，也无从伪造。
+const license = {
+    async getMachineCode() {
+        const result = await ipcRenderer.invoke('license:get-machine-code');
+        return result.success ? result.data : '';
+    },
+    async getStatus() {
+        const result = await ipcRenderer.invoke('license:get-status');
+        return result.success ? result.data : { activated: false };
+    },
+    async activate(code) {
+        return ipcRenderer.invoke('license:activate', code);
+    },
+};
+
 // 缓存偏好设置：热路径上不能每次都 await 一次 IPC。
 let preferencesCache = null;
 
@@ -1159,6 +1174,8 @@ const offerHunter = {
     storage,
 
     knowledge,
+
+    license,
 
     theme,
 

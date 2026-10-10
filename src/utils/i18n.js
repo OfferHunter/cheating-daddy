@@ -255,6 +255,21 @@ const zh = {
     '[click through]': '［鼠标穿透］',
     Session: '会话',
     'Empty session': '空会话',
+    'Activate your product': '激活产品',
+    'This copy is locked to this computer. Send the machine code below to the seller, then enter the activation code you get back.':
+        '本软件与当前电脑绑定。请将下方机器码发送给商家，并填写商家回复的激活码。',
+    'Machine Code': '机器码',
+    Copy: '复制',
+    Copied: '已复制',
+    'Activation Code': '激活码',
+    Activate: '激活',
+    'Activating...': '正在激活…',
+    'Please ask the seller for an activation code.': '请向商家索要激活码。',
+    'Invalid activation code format.': '激活码格式不正确。',
+    'This activation code is for a different computer.': '该激活码属于另一台电脑。',
+    'Invalid activation code. Please check it and try again.': '激活码无效，请检查后重试。',
+    'Activation failed. Please try again.': '激活失败，请重试。',
+    'Activation is unavailable on this system.': '当前系统无法完成激活。',
 };
 
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));

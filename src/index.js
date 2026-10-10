@@ -48,6 +48,7 @@ app.whenReady().then(async () => {
     setupStorageIpcHandlers();
     setupKnowledgeIpcHandlers();
     setupGeneralIpcHandlers();
+    setupLicenseIpcHandlers();
 });
 
 app.on('window-all-closed', () => {
@@ -433,5 +434,37 @@ function setupGeneralIpcHandlers() {
     // Debug logging from renderer
     ipcMain.on('log-message', (event, msg) => {
         console.log(msg);
+    });
+}
+
+// 激活码的核验全在主进程：渲染端只拿到"是否已激活"和机器码，验签与私钥相关的一切都不出这里。
+function setupLicenseIpcHandlers() {
+    const license = require('./utils/license');
+
+    ipcMain.handle('license:get-machine-code', async () => {
+        try {
+            return { success: true, data: license.getMachineCode() };
+        } catch (error) {
+            console.error('Error getting machine code:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('license:get-status', async () => {
+        try {
+            return { success: true, data: { activated: license.isActivated() } };
+        } catch (error) {
+            console.error('Error reading license status:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('license:activate', async (event, code) => {
+        try {
+            return license.activate(String(code ?? ''));
+        } catch (error) {
+            console.error('Error activating:', error);
+            return { success: false, error: 'internal' };
+        }
     });
 }

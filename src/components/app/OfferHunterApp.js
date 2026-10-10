@@ -409,9 +409,15 @@ export class OfferHunterApp extends LocalizedLitElement {
 
     async _loadFromStorage() {
         try {
-            const [config, prefs] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getPreferences()]);
+            const [config, prefs, licenseStatus] = await Promise.all([
+                offerHunter.storage.getConfig(),
+                offerHunter.storage.getPreferences(),
+                offerHunter.license.getStatus(),
+            ]);
 
-            this.currentView = config.onboarded ? 'main' : 'onboarding';
+            // 未激活一律进引导页（那里才是激活门）。已引导但激活失效（换机、配置目录被清、license.json 被删）
+            // 也回到引导页，等于每次启动都重新核验一次机器码。
+            this.currentView = licenseStatus.activated ? (config.onboarded ? 'main' : 'onboarding') : 'onboarding';
             this.selectedLanguage = prefs.selectedLanguage ?? DEFAULT_PREFERENCES.selectedLanguage;
             this.selectedScreenshotInterval = prefs.selectedScreenshotInterval ?? DEFAULT_PREFERENCES.selectedScreenshotInterval;
             this.selectedImageQuality = prefs.selectedImageQuality ?? DEFAULT_PREFERENCES.selectedImageQuality;
