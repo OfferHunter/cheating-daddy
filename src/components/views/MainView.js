@@ -1,11 +1,5 @@
-const { DEFAULT_CONFIG } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement } from '../../utils/i18n.js';
-
-const DEFAULT_CHAT_BASE_URL = DEFAULT_CONFIG.chatBaseUrl;
-const DEFAULT_CHAT_MODEL = DEFAULT_CONFIG.deepseekModel;
-const DEFAULT_BAILIAN_MODEL = DEFAULT_CONFIG.bailianModel;
-const DEFAULT_BAILIAN_WS_URL = DEFAULT_CONFIG.bailianWsUrl;
+import { LocalizedLitElement, t } from '../../utils/i18n.js';
 
 export class MainView extends LocalizedLitElement {
     static styles = css`
@@ -46,126 +40,19 @@ export class MainView extends LocalizedLitElement {
             margin-bottom: var(--space-md);
         }
 
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-xs);
-        }
-
-        .config-section {
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            background: var(--bg-surface);
-            overflow: hidden;
-        }
-
-        .config-summary {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: var(--space-md);
-            padding: 12px 14px;
-            cursor: pointer;
-            list-style: none;
-        }
-
-        .config-summary::-webkit-details-marker {
-            display: none;
-        }
-
-        .config-summary-text {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .config-summary-title {
-            font-size: var(--font-size-sm);
-            font-weight: var(--font-weight-medium);
-            color: var(--text-primary);
-        }
-
-        .config-summary-description {
+        .config-hint {
             font-size: var(--font-size-xs);
             color: var(--text-muted);
+            text-align: center;
         }
 
-        .config-chevron {
-            width: 16px;
-            height: 16px;
-            color: var(--text-muted);
-            transition: transform var(--transition);
-        }
-
-        .config-section[open] .config-chevron {
-            transform: rotate(180deg);
-        }
-
-        .config-content {
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-md);
-            padding: 14px;
-            border-top: 1px solid var(--border);
-        }
-
-        .form-label {
-            font-size: var(--font-size-xs);
-            font-weight: var(--font-weight-medium);
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        input,
-        select {
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-            padding: 10px 12px;
-            width: 100%;
-            border-radius: var(--radius-sm);
-            font-size: var(--font-size-sm);
-            font-family: var(--font);
-            transition:
-                border-color var(--transition),
-                box-shadow var(--transition);
-        }
-
-        input:hover:not(:focus),
-        select:hover:not(:focus) {
-            border-color: var(--text-muted);
-        }
-
-        input:focus,
-        select:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 1px var(--accent);
-        }
-
-        input::placeholder {
-            color: var(--text-muted);
-        }
-
-        input.error,
-        select.error {
-            border-color: var(--danger, #ef4444);
-        }
-
-        .form-hint {
-            font-size: var(--font-size-xs);
-            color: var(--text-muted);
-        }
-
-        .form-hint a,
-        .form-hint span.link {
+        .config-hint .link {
             color: var(--link-color);
             text-decoration: none;
             cursor: pointer;
         }
 
-        .form-hint span.link:hover {
+        .config-hint .link:hover {
             text-decoration: underline;
         }
 
@@ -215,50 +102,17 @@ export class MainView extends LocalizedLitElement {
 
     static properties = {
         onStart: { type: Function },
-        onExternalLink: { type: Function },
+        onOpenConfig: { type: Function },
         isInitializing: { type: Boolean },
-        _chatBaseUrl: { state: true },
-        _chatKey: { state: true },
-        _chatModel: { state: true },
-        _bailianKey: { state: true },
-        _bailianWsUrl: { state: true },
-        _bailianModel: { state: true },
-        _keyError: { state: true },
     };
 
     constructor() {
         super();
         this.onStart = () => {};
-        this.onExternalLink = () => {};
+        this.onOpenConfig = () => {};
         this.isInitializing = false;
 
-        this._chatBaseUrl = DEFAULT_CHAT_BASE_URL;
-        this._chatKey = '';
-        this._chatModel = DEFAULT_CHAT_MODEL;
-        this._bailianKey = '';
-        this._bailianWsUrl = DEFAULT_BAILIAN_WS_URL;
-        this._bailianModel = DEFAULT_BAILIAN_MODEL;
-        this._keyError = false;
-
         this.boundKeydownHandler = this._handleKeydown.bind(this);
-        this._loadFromStorage();
-    }
-
-    async _loadFromStorage() {
-        try {
-            const [config, creds] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getCredentials().catch(() => ({}))]);
-
-            this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
-            this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
-            this._bailianWsUrl = config.bailianWsUrl || DEFAULT_BAILIAN_WS_URL;
-            this._bailianModel = config.bailianModel || DEFAULT_BAILIAN_MODEL;
-            this._chatKey = creds.deepseekApiKey || '';
-            this._bailianKey = creds.bailianApiKey || '';
-
-            this.requestUpdate();
-        } catch (e) {
-            console.error('Error loading MainView storage:', e);
-        }
     }
 
     connectedCallback() {
@@ -279,67 +133,9 @@ export class MainView extends LocalizedLitElement {
         }
     }
 
-    async _saveChatBaseUrl(val) {
-        this._chatBaseUrl = val;
-        this._keyError = false;
-        await offerHunter.storage.updateConfig('chatBaseUrl', val);
-        this.requestUpdate();
-    }
-
-    async _saveChatKey(val) {
-        this._chatKey = val;
-        this._keyError = false;
-        await offerHunter.storage.setDeepseekApiKey(val);
-        this.requestUpdate();
-    }
-
-    async _saveChatModel(val) {
-        this._chatModel = val;
-        this._keyError = false;
-        await offerHunter.storage.updateConfig('deepseekModel', val);
-        this.requestUpdate();
-    }
-
-    async _saveBailianKey(val) {
-        this._bailianKey = val;
-        this._keyError = false;
-        await offerHunter.storage.setBailianApiKey(val);
-        this.requestUpdate();
-    }
-
-    async _saveBailianWsUrl(val) {
-        this._bailianWsUrl = val;
-        this._keyError = false;
-        await offerHunter.storage.updateConfig('bailianWsUrl', val);
-        this.requestUpdate();
-    }
-
-    async _saveBailianModel(val) {
-        this._bailianModel = val;
-        this._keyError = false;
-        await offerHunter.storage.updateConfig('bailianModel', val);
-        this.requestUpdate();
-    }
-
     _handleStart() {
         if (this.isInitializing) return;
-
-        if (!this._chatBaseUrl.trim() || !this._chatKey.trim() || !this._chatModel.trim() || !this._bailianKey.trim() || !this._bailianWsUrl.trim()) {
-            this._keyError = true;
-            this.requestUpdate();
-            return;
-        }
-
         this.onStart();
-    }
-
-    triggerApiKeyError() {
-        this._keyError = true;
-        this.requestUpdate();
-        setTimeout(() => {
-            this._keyError = false;
-            this.requestUpdate();
-        }, 2000);
     }
 
     _renderStartButton() {
@@ -402,145 +198,17 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    _renderConfigChevron() {
-        return html`
-            <svg class="config-chevron" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-        `;
-    }
-
-    _renderChatMode() {
-        const hasError = this._keyError ? 'error' : '';
-
-        return html`
-            <details class="config-section" open>
-                <summary class="config-summary">
-                    <span class="config-summary-text">
-                        <span class="config-summary-title">Chat model</span>
-                        <span class="config-summary-description">Any OpenAI-compatible API</span>
-                    </span>
-                    ${this._renderConfigChevron()}
-                </summary>
-                <div class="config-content">
-                    <div class="form-group">
-                        <label class="form-label">API Base URL</label>
-                        <input
-                            type="text"
-                            placeholder=${DEFAULT_CHAT_BASE_URL}
-                            .value=${this._chatBaseUrl}
-                            @input=${e => this._saveChatBaseUrl(e.target.value)}
-                            class=${hasError}
-                        />
-                        <div class="form-hint">Requests go to &lt;base url&gt;/chat/completions.</div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">API Key</label>
-                        <input
-                            type="password"
-                            placeholder="Required"
-                            .value=${this._chatKey}
-                            @input=${e => this._saveChatKey(e.target.value)}
-                            class=${hasError}
-                        />
-                        <div class="form-hint">
-                            <span class="link" @click=${() => this.onExternalLink('https://platform.deepseek.com/api_keys')}>Get API Key</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Model</label>
-                        <input
-                            type="text"
-                            placeholder=${DEFAULT_CHAT_MODEL}
-                            .value=${this._chatModel}
-                            @input=${e => this._saveChatModel(e.target.value)}
-                            class=${hasError}
-                        />
-                        <div class="form-hint">Write the model name exactly as the endpoint expects it.</div>
-                    </div>
-                </div>
-            </details>
-        `;
-    }
-
-    _renderTranscriptionSection() {
-        const hasError = this._keyError ? 'error' : '';
-
-        return html`
-            <details class="config-section">
-                <summary class="config-summary">
-                    <span class="config-summary-text">
-                        <span class="config-summary-title">Transcription</span>
-                        <span class="config-summary-description">Aliyun Bailian streaming</span>
-                    </span>
-                    ${this._renderConfigChevron()}
-                </summary>
-                <div class="config-content">
-                    <div class="form-group">
-                        <label class="form-label">Bailian API Key</label>
-                        <input
-                            type="password"
-                            placeholder="Required"
-                            .value=${this._bailianKey}
-                            @input=${e => this._saveBailianKey(e.target.value)}
-                            class=${hasError}
-                        />
-                        <div class="form-hint">
-                            <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get API Key</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">WebSocket URL</label>
-                        <input
-                            type="text"
-                            placeholder=${DEFAULT_BAILIAN_WS_URL}
-                            .value=${this._bailianWsUrl}
-                            @input=${e => this._saveBailianWsUrl(e.target.value)}
-                            class=${hasError}
-                        />
-                        <div class="form-hint">
-                            <span>Use the wss:// API Host for the same region and workspace as the API Key and model.</span><br />
-                            <span
-                                class="link"
-                                @click=${() =>
-                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide')}
-                                >WebSocket Documentation</span
-                            >
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Bailian Model</label>
-                        <input
-                            type="text"
-                            placeholder=${DEFAULT_BAILIAN_MODEL}
-                            .value=${this._bailianModel}
-                            @input=${e => this._saveBailianModel(e.target.value)}
-                        />
-                        <div class="form-hint">
-                            <span>Speech is streamed live to Aliyun and transcribed as you talk.</span><br />
-                            <span
-                                class="link"
-                                @click=${() =>
-                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
-                                >Speech Model Marketplace</span
-                            >
-                        </div>
-                    </div>
-                </div>
-            </details>
-        `;
-    }
-
     render() {
         return html`
             <div class="form-wrapper">
                 <div class="page-title">offer hunter</div>
                 <div class="page-subtitle">OpenAI-compatible chat with live transcription</div>
-                ${this._renderChatMode()} ${this._renderTranscriptionSection()} ${this._renderStartButton()}
+                ${this._renderStartButton()}
+                <div class="config-hint">
+                    <span class="link" @click=${() => this.onOpenConfig()}
+                        >${t('Configure chat and speech models', '配置对话与语音模型')}</span
+                    >
+                </div>
             </div>
         `;
     }

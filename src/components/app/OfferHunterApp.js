@@ -3,6 +3,7 @@ import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, setUiLanguage, isChinese } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
 import { MainView } from '../views/MainView.js';
+import { ApiConfigView } from '../views/ApiConfigView.js';
 import { CustomizeView } from '../views/CustomizeView.js';
 import { HelpView } from '../views/HelpView.js';
 import { HistoryView } from '../views/HistoryView.js';
@@ -340,10 +341,14 @@ export class OfferHunterApp extends LocalizedLitElement {
                 flex-direction: column;
             }
 
+            /* position:fixed 会逃出 :host 的 overflow:hidden + border-radius 裁剪，而这层又是不透明底色，
+               不自己收圆角就会在窗口四角露出一圈直角黑边（圆角面板背后垫着黑色矩形）。 */
             .fullscreen {
                 position: fixed;
                 inset: 0;
                 z-index: 100;
+                border-radius: 12px;
+                overflow: hidden;
                 background: var(--bg-app);
             }
         `,
@@ -756,20 +761,15 @@ export class OfferHunterApp extends LocalizedLitElement {
         // 只要求有所选识别器的那把 key；对话那把永远是 DeepSeek 的。
         const [chatKey, asrKey] = await Promise.all([offerHunter.storage.getDeepseekApiKey(), offerHunter.storage.getBailianApiKey()]);
 
+        // 缺密钥或初始化失败都指向同一个地方——「API 配置」页，那里才是唯一能改密钥的入口。
         if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
-            const mainView = this.shadowRoot.querySelector('main-view');
-            if (mainView && mainView.triggerApiKeyError) {
-                mainView.triggerApiKeyError();
-            }
+            this.navigate('api-config');
             return;
         }
 
         const success = await offerHunter.initializeChat();
         if (!success) {
-            const mainView = this.shadowRoot.querySelector('main-view');
-            if (mainView && mainView.triggerApiKeyError) {
-                mainView.triggerApiKeyError();
-            }
+            this.navigate('api-config');
             return;
         }
 
@@ -849,8 +849,11 @@ export class OfferHunterApp extends LocalizedLitElement {
 
             case 'main':
                 return html`
-                    <main-view .onStart=${() => this.handleStart()} .onExternalLink=${url => this.handleExternalLinkClick(url)}></main-view>
+                    <main-view .onStart=${() => this.handleStart()} .onOpenConfig=${() => this.navigate('api-config')}></main-view>
                 `;
+
+            case 'api-config':
+                return html`<api-config-view .onExternalLink=${url => this.handleExternalLinkClick(url)}></api-config-view>`;
 
             case 'ai-customize':
                 return html`<ai-customize-view></ai-customize-view>`;
@@ -903,6 +906,16 @@ export class OfferHunterApp extends LocalizedLitElement {
                             d="m19 8.71l-5.333-4.148a2.666 2.666 0 0 0-3.274 0L5.059 8.71a2.67 2.67 0 0 0-1.029 2.105v7.2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.2c0-.823-.38-1.6-1.03-2.105"
                         />
                         <path d="M16 15c-2.21 1.333-5.792 1.333-8 0" />
+                    </g>
+                </svg>`,
+            },
+            {
+                id: 'api-config',
+                label: 'API Configuration',
+                icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24">
+                    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+                        <path d="M15.5 7.5a3.5 3.5 0 1 0-3.4 4.3L4 20v-2h2v-2h2v-2h1.6" />
+                        <circle cx="16" cy="8" r="0.5" fill="currentColor" />
                     </g>
                 </svg>`,
             },

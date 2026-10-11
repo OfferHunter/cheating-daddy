@@ -1,4 +1,4 @@
-const { BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
+const { BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer } = require('electron');
 const path = require('node:path');
 const storage = require('../storage');
 const { getDefaultKeybinds } = require('./keybinds');
@@ -9,6 +9,25 @@ let currentKeybinds = null;
 
 const DEFAULT_MAIN_WINDOW_SIZE = { width: 1100, height: 800 };
 const MIN_WINDOW_SIZE = { width: 700, height: 320 };
+
+// 每个 getDisplayMedia（桌面回环音）请求都要给它挑一块屏。desktopCapturer.getSources 是同步慢调用，实测会把
+// 主进程事件循环卡住 235~771ms（进程内首调更久，可到 ~1.9s）——这段时间窗口收不到消息，表现为「进设置页卡一下，
+// 像在同步等音频连上」。本应用永远只用唯一那块屏（sources[0]），所以枚举一次后缓存复用：命中缓存时
+// getDisplayMedia 从 ~1.2s 降到 ~0.2s，且主进程不再被卡。启动时预热一次，把首次枚举的代价挪到尚无交互的启动阶段。
+let cachedScreenSource = null;
+let screenSourcePending = null;
+let screenSourceWired = false;
+
+function getScreenSource() {
+    if (cachedScreenSource) return Promise.resolve(cachedScreenSource);
+    if (!screenSourcePending) {
+        screenSourcePending = desktopCapturer
+            .getSources({ types: ['screen'] })
+            .then(sources => (cachedScreenSource = sources[0]))
+            .finally(() => (screenSourcePending = null));
+    }
+    return screenSourcePending;
+}
 
 function createWindow(sendToRenderer) {
     let windowWidth = DEFAULT_MAIN_WINDOW_SIZE.width;
@@ -40,15 +59,22 @@ function createWindow(sendToRenderer) {
         backgroundColor: '#00000000',
     });
 
-    const { session, desktopCapturer } = require('electron');
     session.defaultSession.setDisplayMediaRequestHandler(
         (request, callback) => {
-            desktopCapturer.getSources({ types: ['screen'] }).then(sources => {
-                callback({ video: sources[0], audio: 'loopback' });
-            });
+            getScreenSource().then(source => callback({ video: source, audio: 'loopback' }));
         },
         { useSystemPicker: true }
     );
+
+    // 只在首次建窗时预热并挂显示器事件：显示器的增/减会让缓存源的 id 失效（源 id 与屏幕绑定），这时清空缓存，
+    // 下次请求重新枚举一次。'activate' 重建窗口不走这里，避免重复挂监听。
+    if (!screenSourceWired) {
+        screenSourceWired = true;
+        ['display-added', 'display-removed', 'display-metrics-changed'].forEach(event =>
+            screen.on(event, () => (cachedScreenSource = null))
+        );
+        getScreenSource();
+    }
 
     mainWindow.setContentProtection(true);
     if (process.platform === 'win32') {
