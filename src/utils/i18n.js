@@ -15,7 +15,6 @@ const zh = {
     Feedback: '反馈',
     Customize: '自定义',
     'AI Settings': 'AI 设置',
-    'AI Customization': 'AI 自定义',
     'AI Context': 'AI 上下文',
     'New Session': '新建会话',
     'Start Session': '开始会话',
@@ -119,6 +118,9 @@ const zh = {
     'Thinking in the screenshot reply': '截图回答启用思考',
     'Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come back empty. Takes effect on the next session.':
         '回答前思考会增加少量等待，但通常能提高质量。建议简短回答关闭、详细回答开启。截图回答单独控制，因为图片请求的思考也占用超时时间；复杂截图可能在输出正文前就耗尽时间。下次会话生效。',
+    'Summarize the screenshot into the conversation': '把截图概括写入对话',
+    'Before the answer, a small extra request turns the screenshot into a text line — that line is what the transcript shows, and the only trace of the turn in the model\'s context later. Turn it off to skip that request and show just “[屏幕截图]”; the screenshot is still answered in the detail pane, and the turn is left out of the replayed context. Takes effect on the next session.':
+        '作答之前会额外发一个小请求，把截图概括成一行文字：这行就是对话记录里显示的内容，也是这一轮之后在模型上下文里唯一的痕迹。关闭后不再发这个请求，对话记录只显示「[屏幕截图]」；截图本身仍会在详细面板里作答，这一轮也不再回放给模型。下次会话生效。',
     'Context Turns': '上下文轮数',
     'How many previous turns are replayed to the model, in both the fast and the detailed answer. Higher keeps more of the interview in view but makes every request larger and slower. 1-100. Takes effect on the next session.':
         '简短和详细回答会向模型重放的历史轮数。数值越高，保留的面试内容越多，但请求更大、更慢。范围 1–100，下次会话生效。',
@@ -132,6 +134,9 @@ const zh = {
     'All text, including the answers in the live transcript. Independent of the panels.':
         '所有文字的透明度，包括实时转录中的回答；与面板透明度相互独立。',
     'Response Font Size': '回答字号',
+    'Session window cannot be focused': '会话界面不可聚焦',
+    'Some websites and meeting apps check whether their window keeps focus. Turn this off only if you need to.':
+        '部分网站/会议软件会检测聚焦率，请谨慎关闭。',
     'Keyboard Shortcuts': '键盘快捷键',
     'Reset to defaults': '恢复默认快捷键',
     'Privacy and Data': '隐私与数据',
@@ -175,8 +180,8 @@ const zh = {
     'Custom Prompt': '自定义提示词',
     'Knowledge Folder': '知识库文件夹',
     Knowledge: '知识库',
-    'Custom Instructions': '自定义指令',
-    'Resume details, role requirements, constraints...': '简历信息、职位要求、约束条件…',
+    'User Information Context': '用户信息上下文',
+    'Resume details, role requirements, constraints...': '请把您的简历和相关信息以文本形式，粘贴到这里',
     'Sent as context at session start. Keep it short.': '会在会话开始时作为上下文发送，请尽量简短。',
     'No Knowledge Directories Selected': '尚未选择知识库目录',
     'Change folder': '更换目录',

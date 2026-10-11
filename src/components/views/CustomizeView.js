@@ -257,6 +257,8 @@ export class CustomizeView extends LocalizedLitElement {
         briefThinking: { type: Boolean },
         detailThinking: { type: Boolean },
         screenshotThinking: { type: Boolean },
+        screenshotSummary: { type: Boolean },
+        nonFocusableSession: { type: Boolean },
         chatContextTurns: { type: Number },
         chatMaxTokens: { type: Number },
     };
@@ -292,6 +294,8 @@ export class CustomizeView extends LocalizedLitElement {
         this.briefThinking = DEFAULT_PREFERENCES.briefThinking;
         this.detailThinking = DEFAULT_PREFERENCES.detailThinking;
         this.screenshotThinking = DEFAULT_PREFERENCES.screenshotThinking;
+        this.screenshotSummary = DEFAULT_PREFERENCES.screenshotSummary;
+        this.nonFocusableSession = DEFAULT_PREFERENCES.nonFocusableSession;
         this.chatContextTurns = DEFAULT_PREFERENCES.chatContextTurns;
         this.chatMaxTokens = DEFAULT_PREFERENCES.chatMaxTokens;
         this._loadFromStorage();
@@ -365,6 +369,8 @@ export class CustomizeView extends LocalizedLitElement {
             this.briefThinking = prefs.briefThinking ?? DEFAULT_PREFERENCES.briefThinking;
             this.detailThinking = prefs.detailThinking ?? DEFAULT_PREFERENCES.detailThinking;
             this.screenshotThinking = prefs.screenshotThinking ?? DEFAULT_PREFERENCES.screenshotThinking;
+            this.screenshotSummary = prefs.screenshotSummary ?? DEFAULT_PREFERENCES.screenshotSummary;
+            this.nonFocusableSession = prefs.nonFocusableSession ?? DEFAULT_PREFERENCES.nonFocusableSession;
             this.chatContextTurns = prefs.chatContextTurns ?? DEFAULT_PREFERENCES.chatContextTurns;
             this.chatMaxTokens = prefs.chatMaxTokens ?? DEFAULT_PREFERENCES.chatMaxTokens;
             this.uiLanguage = prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage;
@@ -497,6 +503,17 @@ export class CustomizeView extends LocalizedLitElement {
     async handleScreenshotThinkingChange(checked) {
         this.screenshotThinking = checked;
         await offerHunter.storage.updatePreference('screenshotThinking', checked);
+    }
+
+    async handleScreenshotSummaryChange(checked) {
+        this.screenshotSummary = checked;
+        await offerHunter.storage.updatePreference('screenshotSummary', checked);
+    }
+
+    async handleNonFocusableSessionChange(checked) {
+        this.nonFocusableSession = checked;
+        // 只落盘即可：主进程在切进实时视图（view-changed）时现读这份偏好，无需额外 IPC。
+        await offerHunter.storage.updatePreference('nonFocusableSession', checked);
     }
 
     // “系统默认”必须始终存在。Chromium 通常会枚举出 deviceId 为 default 的伪设备，但在页面刚重建、
@@ -684,6 +701,8 @@ export class CustomizeView extends LocalizedLitElement {
             this.briefThinking = defaults.briefThinking;
             this.detailThinking = defaults.detailThinking;
             this.screenshotThinking = defaults.screenshotThinking;
+            this.screenshotSummary = defaults.screenshotSummary;
+            this.nonFocusableSession = defaults.nonFocusableSession;
             this.chatContextTurns = defaults.chatContextTurns;
             this.chatMaxTokens = defaults.chatMaxTokens;
 
@@ -922,6 +941,20 @@ export class CustomizeView extends LocalizedLitElement {
                         because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a
                         whole problem statement can run out the clock and come back empty. Takes effect on the next session.
                     </div>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.screenshotSummary}
+                            @change=${e => this.handleScreenshotSummaryChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Summarize the screenshot into the conversation</span>
+                    </label>
+                    <div class="form-help">
+                        Before the answer, a small extra request turns the screenshot into a text line — that line is what the transcript shows, and the
+                        only trace of the turn in the model's context later. Turn it off to skip that request and show just “[屏幕截图]”; the screenshot
+                        is still answered in the detail pane, and the turn is left out of the replayed context. Takes effect on the next session.
+                    </div>
                     <div class="form-group vertical">
                         <label class="form-label">Context Turns</label>
                         <input
@@ -1016,6 +1049,18 @@ export class CustomizeView extends LocalizedLitElement {
                             .value=${this.fontSize}
                             @input=${this.handleFontSizeChange}
                         />
+                    </div>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.nonFocusableSession}
+                            @change=${e => this.handleNonFocusableSessionChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Session window cannot be focused</span>
+                    </label>
+                    <div class="form-help">
+                        Some websites and meeting apps check whether their window keeps focus. Turn this off only if you need to.
                     </div>
                 </div>
             </section>

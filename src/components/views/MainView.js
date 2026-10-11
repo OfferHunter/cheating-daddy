@@ -1,6 +1,49 @@
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, t } from '../../utils/i18n.js';
 
+// 提词方式分页。加一页时：往这个数组里加一个 id，在 _renderPage 里加一个 case，文案用 t() 直接给中英两种。
+// 只有一页时两个箭头是禁用态。顺序就是箭头切换的顺序。
+const MODE_PAGES = ['desktop', 'desktopPhone'];
+
+const chevronLeft = html`<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+>
+    <path d="M15 18l-6-6 6-6" />
+</svg>`;
+const chevronRight = html`<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+>
+    <path d="M9 18l6-6-6-6" />
+</svg>`;
+// 两个提词方式的图标由用户提供（icon_f32vraid3mq/），是 1024 见方的填充路径；填色改成 currentColor
+// 以跟随主题，尺寸统一到 20×20 与标题里的文字对齐。
+const desktopIcon = html`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 1028 1024" fill="currentColor">
+    <path
+        d="M581.12 753.28v137.6h206.72a34.56 34.56 0 1 1 0 69.12H305.28a34.56 34.56 0 1 1 0-69.12H512v-137.6H201.6A137.6 137.6 0 0 1 64 615.68V201.6A137.6 137.6 0 0 1 201.6 64h689.28a137.6 137.6 0 0 1 137.6 137.6v414.08a137.6 137.6 0 0 1-137.6 137.6zM201.6 133.12a69.76 69.76 0 0 0-68.48 68.48v414.08a69.76 69.76 0 0 0 69.12 69.12h688.64A69.76 69.76 0 0 0 960 615.68V201.6a69.76 69.76 0 0 0-69.12-69.12z"
+    />
+</svg>`;
+const desktopPhoneIcon = html`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 1024 1024" fill="currentColor">
+    <path
+        d="M832 128a64 64 0 0 1 64 64v96a16 16 0 0 1-16 16h-32A16 16 0 0 1 832 288V208a16 16 0 0 0-16-16H144a16 16 0 0 0-16 16v416c0 8.832 7.168 16 16 16h416a16 16 0 0 1 16 16v32a16 16 0 0 1-16 16H512v128h48a16 16 0 0 1 16 16v32a16 16 0 0 1-16 16h-320a16 16 0 0 1-16-16v-32a16 16 0 0 1 16-16H448v-128H128a64 64 0 0 1-64-64V192a64 64 0 0 1 64-64h704z m64 240a64 64 0 0 1 64 64V832a64 64 0 0 1-64 64h-192a64 64 0 0 1-64-64V432a64 64 0 0 1 64-64h192z m-16 64h-160A16 16 0 0 0 704 448v368c0 8.832 7.168 16 16 16h160a16 16 0 0 0 16-16V448a16 16 0 0 0-16-16z m-48 320a16 16 0 0 1 16 16v16a16 16 0 0 1-16 16h-64a16 16 0 0 1-16-16V768a16 16 0 0 1 16-16h64z"
+    />
+</svg>`;
+
 export class MainView extends LocalizedLitElement {
     static styles = css`
         * {
@@ -27,17 +70,68 @@ export class MainView extends LocalizedLitElement {
             gap: var(--space-md);
         }
 
+        .mode-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-sm);
+            width: 100%;
+            margin-bottom: var(--space-sm);
+        }
+
+        .mode-title {
+            flex: 1;
+            text-align: center;
+            font-size: var(--font-size-lg);
+            font-weight: var(--font-weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .mode-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            flex-shrink: 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+
+        .mode-arrow:hover:not(:disabled) {
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        .mode-arrow:disabled {
+            opacity: 0.3;
+            cursor: default;
+        }
+
         .page-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
             font-size: var(--font-size-xl);
             font-weight: var(--font-weight-semibold);
             color: var(--text-primary);
             margin-bottom: var(--space-xs);
         }
 
-        .page-subtitle {
-            font-size: var(--font-size-sm);
-            color: var(--text-muted);
-            margin-bottom: var(--space-md);
+        .page-title svg {
+            flex-shrink: 0;
+        }
+
+        .page-note {
+            font-size: var(--font-size-base);
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: var(--space-xs);
         }
 
         .config-hint {
@@ -104,6 +198,7 @@ export class MainView extends LocalizedLitElement {
         onStart: { type: Function },
         onOpenConfig: { type: Function },
         isInitializing: { type: Boolean },
+        pageIndex: { type: Number },
     };
 
     constructor() {
@@ -111,6 +206,7 @@ export class MainView extends LocalizedLitElement {
         this.onStart = () => {};
         this.onOpenConfig = () => {};
         this.isInitializing = false;
+        this.pageIndex = 0;
 
         this.boundKeydownHandler = this._handleKeydown.bind(this);
     }
@@ -127,10 +223,15 @@ export class MainView extends LocalizedLitElement {
 
     _handleKeydown(e) {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'Enter') {
+        if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'Enter' && this._canStartSession()) {
             e.preventDefault();
             this._handleStart();
         }
+    }
+
+    // 只有已实现的提词方式能真正开始会话：占位的第二页，按钮和快捷键都不接会话。
+    _canStartSession() {
+        return MODE_PAGES[this.pageIndex] === 'desktop';
     }
 
     _handleStart() {
@@ -138,7 +239,40 @@ export class MainView extends LocalizedLitElement {
         this.onStart();
     }
 
-    _renderStartButton() {
+    // 环形切换：到两端再点就回到另一头。
+    _stepPage(delta) {
+        const count = MODE_PAGES.length;
+        if (count < 2) return;
+        this.pageIndex = (this.pageIndex + delta + count) % count;
+    }
+
+    _renderModeBar() {
+        const multi = MODE_PAGES.length > 1;
+
+        return html`
+            <div class="mode-bar">
+                <button
+                    class="mode-arrow"
+                    ?disabled=${!multi}
+                    aria-label=${t('Previous prompting mode', '上一种提词方式')}
+                    @click=${() => this._stepPage(-1)}
+                >
+                    ${chevronLeft}
+                </button>
+                <div class="mode-title">${t('Choose how you want to be prompted', '请选择您的提词方式')}</div>
+                <button
+                    class="mode-arrow"
+                    ?disabled=${!multi}
+                    aria-label=${t('Next prompting mode', '下一种提词方式')}
+                    @click=${() => this._stepPage(1)}
+                >
+                    ${chevronRight}
+                </button>
+            </div>
+        `;
+    }
+
+    _renderStartButton(interactive = true) {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
         const cmdIcon = html`<svg
@@ -188,7 +322,7 @@ export class MainView extends LocalizedLitElement {
             <button
                 class="start-button ${this.isInitializing ? 'disabled' : ''}"
                 ?disabled=${this.isInitializing}
-                @click=${() => this._handleStart()}
+                @click=${interactive ? () => this._handleStart() : null}
             >
                 <span class="btn-label">
                     Start Session
@@ -198,19 +332,57 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    render() {
+    // 纯电脑端提词：一切靠本机采集，代价是网页/会议软件仍可能从快捷键、失焦事件、失焦频率上察觉这个窗口。
+    _renderDesktopPage() {
         return html`
-            <div class="form-wrapper">
-                <div class="page-title">offer hunter</div>
-                <div class="page-subtitle">OpenAI-compatible chat with live transcription</div>
-                ${this._renderStartButton()}
-                <div class="config-hint">
-                    <span class="link" @click=${() => this.onOpenConfig()}
-                        >${t('Configure chat and speech models', '配置对话与语音模型')}</span
-                    >
-                </div>
+            <div class="page-title">${desktopIcon}${t('Desktop-only prompting', '纯电脑端提词')}</div>
+            <div class="page-note">
+                ${t(
+                    'Even though this app stays hidden, some websites may still pick up shortcuts, blur events or how often you leave the page — use this mode with care. Turning on “Session window cannot be focused” keeps the meeting app or web page focused at all times, but then you cannot type in the input box below (rarely needed) and moving the mouse into the app area still registers blur events. Turning on “click-through” makes the app fully transparent (moving the mouse over it triggers no blur events), but then its controls cannot be clicked either.',
+                    '虽然本应用隐身，但部分网站可能会捕捉快捷键、离屏事件、离屏率等，请你谨慎使用此模式。开启「会话界面不可聚焦」可以让会议软件/网页始终保持聚焦，但无法使用下方输入框打字（一般情况下用不上），且鼠标移进应用区域仍会被捕捉离屏事件；开启「鼠标穿透」可以彻底让本应用透明化（鼠标移动到本应用上不触发离屏事件），但也无法点击本应用的控件。'
+                )}
+            </div>
+            ${this._renderStartButton()}
+            <div class="config-hint">
+                <span class="link" @click=${() => this.onOpenConfig()}
+                    >${t('Configure chat and speech models', '配置对话与语音模型')}</span
+                >
             </div>
         `;
+    }
+
+    // 电脑+手机端提词：手机负责显示与操作，本机窗口只在开始后隐藏。功能未实现，按钮和快捷键都是占位。
+    _renderDesktopPhonePage() {
+        return html`
+            <div class="page-title">${desktopPhoneIcon}${t('Desktop + phone prompting', '电脑+手机端提词')}</div>
+            <div class="page-note">
+                ${t(
+                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones. After you pick this mode, the app hides its window until the session is ended from the phone.',
+                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的情况下面试软件需要控制您的一部手机。选择此模式后，本应用将隐藏窗口，直到手机端结束会话。'
+                )}
+            </div>
+            ${this._renderStartButton(false)}
+            <div class="config-hint">
+                <span class="link" @click=${() => this.onOpenConfig()}
+                    >${t('Configure chat and speech models', '配置对话与语音模型')}</span
+                >
+            </div>
+        `;
+    }
+
+    // 加页时在这里加 case；默认回落到第一页，免得 pageIndex 与 MODE_PAGES 不同步时白屏。
+    _renderPage() {
+        switch (MODE_PAGES[this.pageIndex]) {
+            case 'desktopPhone':
+                return this._renderDesktopPhonePage();
+            case 'desktop':
+            default:
+                return this._renderDesktopPage();
+        }
+    }
+
+    render() {
+        return html` <div class="form-wrapper">${this._renderModeBar()}${this._renderPage()}</div> `;
     }
 }
 

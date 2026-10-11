@@ -338,6 +338,17 @@ function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
             if (!isLiveMode) {
                 mainWindow.setIgnoreMouseEvents(false);
             }
+
+            // 实时视图叠在视频/会议窗上：点面板上的按钮不该把焦点从背后窗口夺走。Win 下 setFocusable(false)
+            // 即 WS_EX_NOACTIVATE——窗口不再被激活，但鼠标点击照旧可达（按钮、拖拽、滚轮都正常），于是背后
+            // 窗口保持焦点。代价是实时视图收不到键盘输入：Type a message 输入框打不了字（快捷键全是
+            // globalShortcut，不受影响）。默认开启，但部分网站/会议软件会检测窗口聚焦率，所以留了
+            // nonFocusableSession 偏好可关（关掉后实时视图恢复可聚焦）。其它视图必须保持可聚焦，否则激活页
+            // 的激活码、设置页的 API Key 等输入框都打不了字。setFocusable 只支持 Win/macOS。
+            if (process.platform !== 'linux') {
+                const nonFocusable = storage.getPreferences().nonFocusableSession !== false;
+                mainWindow.setFocusable(!(isLiveMode && nonFocusable));
+            }
         }
     });
 

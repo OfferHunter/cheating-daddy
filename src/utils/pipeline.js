@@ -32,6 +32,8 @@ let briefThinkingEnabled = DEFAULT_PREFERENCES.briefThinking;
 let detailThinkingEnabled = DEFAULT_PREFERENCES.detailThinking;
 // 截图回答独立控制，默认开启思考。
 let screenshotThinkingEnabled = DEFAULT_PREFERENCES.screenshotThinking;
+// 是否把截图的文字概述写进对话上下文（并显示成对话记录里的那一行）。关闭时截图轮只剩标签，且整轮不被回放。
+let screenshotSummaryEnabled = DEFAULT_PREFERENCES.screenshotSummary;
 // 会话开始时那份条目，既用来生成提示词里的索引，也用来决定值不值得声明工具。只有**索引**是快照——执行器
 // 是现读目录的，所以这里过期最坏只是查不到，不会变成错误的事实。
 let detailKnowledgeEntries = [];
@@ -93,6 +95,9 @@ const STREAM_SEND_INTERVAL_MS = 40;
 // 截图是面试官写在屏幕上的一道题，所以它带着自己的标签进上下文：模型看到的是一串 user 消息，否则分不清
 // 一张图和一个口头提问。文本本身是摘要请求的结果，也是这张图在后续任何提示词里唯一的痕迹——它的回答只
 // 显示一次、从不回放，base64 根本不进上下文。
+//
+// 概述可以被关掉（screenshotSummary）：关掉后这行只有标签、没有正文，而且这一轮会被整个排除在回放之外——
+// 没有正文可回放，回放它就等于往提示词里塞一条没有回答的问题。开着时下面这些标签规则才成立。
 //
 // 写入用的标签和**回放**用的标签故意不同：对话记录里用短的那个（行上显示的就是它），提示词里用长的那个，
 // 免得一整道题干被读成一件待办的事。其他轮次都带说话人标签、且后面跟着模型写过的回答；而回答从不回放，
@@ -440,9 +445,15 @@ function userContent(entry, isCurrent = false) {
 // 上一个回答的改写。
 //
 // 结果是一串连续的 `user` 消息，API 接受这种形式；最后一条永远是此刻正在作答的问题。
+// 关掉概述后截图轮的 contextText 恰好只剩标签（createTurn 拿它当占位文本），没有可回放的内容，跳过它。
+// 概述正常返回时它带着正文，失败时它带「图片内容识别失败」，两者都仍然回放。
+function isBareScreenTurn(entry) {
+    return entry.persistKind === 'screen' && entry.contextText === SCREEN_PREFIX;
+}
+
 function buildUserSideHistory(excludeEntry) {
     return turnLog
-        .filter(entry => entry !== excludeEntry && entry.seq > contextFloorSeq)
+        .filter(entry => entry !== excludeEntry && entry.seq > contextFloorSeq && !isBareScreenTurn(entry))
         .slice(-chatContextTurns)
         .map(entry => ({ role: 'user', content: userContent(entry) }));
 }
@@ -888,6 +899,7 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     briefThinkingEnabled = prefs.briefThinking;
     detailThinkingEnabled = prefs.detailThinking;
     screenshotThinkingEnabled = prefs.screenshotThinking;
+    screenshotSummaryEnabled = prefs.screenshotSummary;
     chatContextTurns = getChatContextTurns();
 
     transcriptionLanguage = selectedLanguage;
@@ -1059,20 +1071,29 @@ async function sendLocalImage(base64Data) {
     commitCandidateSpeech();
     // 先用占位符开行而不是用提示词：截图轮的 contextText 为空时 userContent 会退回 requestContent，而
     // 对截图来说那个退路就是整张 base64 图，会被回放进之后每一个提示词。从这里起，截图轮的 contextText
-    // 永不为空。
-    const entry = createTurn(requestContent, SCREEN_PENDING_LINE, 'screen');
+    // 永不为空。关掉概述时占位符就是最终文本「[屏幕截图]」，这行不再改写。
+    const placeholder = screenshotSummaryEnabled ? SCREEN_PENDING_LINE : SCREEN_PREFIX;
+    const entry = createTurn(requestContent, placeholder, 'screen');
     // 这一轮永远不会有东西流进来：它本该装着的回答在面板里，而它等的摘要是另一个独立请求。留在待处理状态
     // 会永远声称有回答在路上。
     entry.status = 'done';
 
     // 字幕要用文字说出图里问的是什么：行在图到达时就开好，摘要回来时原地改写——在面试官还在说话时拍的图，
     // 它的那行不能被挤到后面那个提问的下面。
-    sendToRenderer('transcription-update', { text: SCREEN_PENDING_LINE, speaker: 'screen', blockId: entry.seq });
+    sendToRenderer('transcription-update', { text: placeholder, speaker: 'screen', blockId: entry.seq });
     sendToRenderer('update-status', 'Analyzing image...');
 
     startScreenshotAnswer(entry);
     // 不 await，而且先于回答启动，让两个请求重叠：摘要是关掉思考的一个小请求，回答是开着思考的一个长请求。
-    runScreenshotSummary(entry, base64Data);
+    if (screenshotSummaryEnabled) {
+        runScreenshotSummary(entry, base64Data);
+    } else {
+        // 没有概述请求要等：这一行立刻落定，并像概述回来时那样落盘、放开状态行。截图轮不在 turnLog 里占待处理
+        // 位，不调 updateStreamingStatus 会把「正在分析图像…」一直挂到下一次转录。
+        sendToRenderer('transcription-final', { text: SCREEN_PREFIX, speaker: 'screen', blockId: entry.seq });
+        saveConversationTurn(SCREEN_PREFIX, '', entry.seq);
+        updateStreamingStatus();
+    }
 
     return { success: true, model: getChatModel(), turnId: entry.seq };
 }

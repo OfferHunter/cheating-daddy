@@ -235,7 +235,7 @@ export class AICustomizeView extends LocalizedLitElement {
                     <section class="surface">
                         <div class="form-grid">
                             <div class="form-group vertical">
-                                <label class="form-label">Custom Instructions</label>
+                                <label class="form-label">User Information Context</label>
                                 <textarea
                                     class="control"
                                     placeholder="Resume details, role requirements, constraints..."

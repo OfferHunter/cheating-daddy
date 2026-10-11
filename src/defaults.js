@@ -36,6 +36,10 @@ const DEFAULT_PREFERENCES = Object.freeze({
     detailThinking: false,
     // Screenshot answers enable reasoning by default, independently of text answers.
     screenshotThinking: true,
+    // 截图到达时并发一个小请求，把图概括成一行文字，这行就是它在对话记录里显示的内容、也是它在之后每个提示词
+    // 里唯一的痕迹（图本身不进上下文）。关闭后不再发这个请求，对话记录里只留「[屏幕截图]」，这一轮也不会被
+    // 回放给模型；截图本身的作答（详细面板）不受影响。是开关而非内容，所以「恢复默认」会重置它。
+    screenshotSummary: true,
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
     selectedScreenshotInterval: '5',
@@ -78,6 +82,10 @@ const DEFAULT_PREFERENCES = Object.freeze({
     detailPaneWidth: 0.38,
     // Written by the theme picker in Settings, which is why it lives here and not in config.json.
     theme: 'gruvbox',
+    // 实时视图（会话界面）默认不可聚焦：Win 下 setFocusable(false) 即 WS_EX_NOACTIVATE，点面板上的按钮不会把
+    // 焦点从背后的视频/会议窗口夺走。代价是实时视图收不到键盘输入（Type a message 打不了字）。做成开关是因为
+    // 部分网站/会议软件会检测窗口聚焦率，那种场合要关掉、让窗口恢复可聚焦。是开关而非内容，「恢复默认」会重置。
+    nonFocusableSession: true,
 });
 
 // Saved values override defaults; false, zero and empty strings are intentional values.
