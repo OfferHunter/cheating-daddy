@@ -23,6 +23,9 @@ const DEFAULT_CREDENTIALS = Object.freeze({
 const DEFAULT_PREFERENCES = Object.freeze({
     uiLanguage: 'zh-CN',
     customPrompt: ``,
+    // 用户对系统提示词各段的覆盖，键对应 prompts.js 的 DEFAULT_PROMPT_SEGMENTS，缺失的键用默认文案。
+    // 空对象表示全部用默认。是内容而非开关，所以和 customPrompt 一样，「恢复默认」刻意跳过它。
+    promptOverrides: {},
     // A directory the user owns, holding one .md per knowledge entry. The model sees only the summaries;
     // the content is read on demand. Empty means the feature is off, and nothing else reads it — which
     // is why it is a preference the "restore defaults" action deliberately skips, like customPrompt.
@@ -96,7 +99,7 @@ function mergeDefaults(defaults, saved) {
 
 // Preserve user content and the independently managed split-pane layout on reset.
 function getResetPreferences() {
-    const { customPrompt, knowledgeDir, detailPaneWidth, ...settings } = DEFAULT_PREFERENCES;
+    const { customPrompt, promptOverrides, knowledgeDir, detailPaneWidth, ...settings } = DEFAULT_PREFERENCES;
     return settings;
 }
 

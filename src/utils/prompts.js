@@ -64,13 +64,36 @@ const detailPrompt = {
 直接输出这份详细回答本身，不要教练式点评、不要「好，我来回答……」、不要解释 —— 让用户能根据详细信息自主作答。这份回答必须遵守开头的语言要求。`,
 };
 
+// 系统提示词各段的默认文案。编辑面板按这些键预填每个文本框，「恢复默认」清空覆盖后回退到这里；
+// 主进程拼装时也用同一份表：某段没有覆盖就用默认值。「通用规则」两段被简短与详细两侧共用。
+const DEFAULT_PROMPT_SEGMENTS = Object.freeze({
+    languageRule: LANGUAGE_RULE,
+    contextRule: CONTEXT_RULE,
+    briefIntro: interviewPrompt.intro,
+    briefFormat: interviewPrompt.formatRequirements,
+    briefContent: interviewPrompt.content,
+    briefOutput: interviewPrompt.outputInstructions,
+    detailIntro: detailPrompt.intro,
+    detailFormat: detailPrompt.formatRequirements,
+    detailContent: detailPrompt.content,
+    detailKnowledgeRule: detailPrompt.knowledgeRule,
+    detailOutput: detailPrompt.outputInstructions,
+});
+
+// 有覆盖就用覆盖值，没有才用默认值。用 hasOwnProperty 而不是真假判断：把某段清空是合法取值，
+// 不能因为它是空串就退回默认。
+function seg(overrides, key) {
+    return overrides && Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : DEFAULT_PROMPT_SEGMENTS[key];
+}
+
 // 两个 builder 的骨架一模一样，只差中间那段知识库规则与索引，所以拼装只写一遍。
 // 顺序本身是提示词的一部分（语言要求首尾各一次、CONTEXT_RULE 压在最后），改动这里等于改提示词。
-function assemblePrompt(persona, customPrompt, middle = '') {
+function assemblePrompt(persona, customPrompt, middle, overrides) {
+    const languageRule = seg(overrides, 'languageRule');
     return [
         persona.intro,
         '\n\n',
-        LANGUAGE_RULE,
+        languageRule,
         '\n\n',
         persona.formatRequirements,
         '\n\n',
@@ -81,21 +104,41 @@ function assemblePrompt(persona, customPrompt, middle = '') {
         '\n-----\n\n',
         persona.outputInstructions,
         '\n\n',
-        CONTEXT_RULE,
+        seg(overrides, 'contextRule'),
         '\n\n',
-        LANGUAGE_RULE,
+        languageRule,
     ].join('');
 }
 
 // `knowledgeSummary` 是 knowledge.formatKnowledgeSummary 生成的索引：空串表示这一轮没有知识库可查，
 // 整段规则与索引都不出现，而不是留一个空列表。
-function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '') {
-    const middle = knowledgeSummary ? `\n${detailPrompt.knowledgeRule}\n\n${knowledgeSummary}\n` : '';
-    return assemblePrompt(detailPrompt, customPrompt, middle);
+function getDetailSystemPrompt(customPrompt = '', knowledgeSummary = '', overrides = {}) {
+    const middle = knowledgeSummary ? `\n${seg(overrides, 'detailKnowledgeRule')}\n\n${knowledgeSummary}\n` : '';
+    return assemblePrompt(
+        {
+            intro: seg(overrides, 'detailIntro'),
+            formatRequirements: seg(overrides, 'detailFormat'),
+            content: seg(overrides, 'detailContent'),
+            outputInstructions: seg(overrides, 'detailOutput'),
+        },
+        customPrompt,
+        middle,
+        overrides
+    );
 }
 
-function getSystemPrompt(customPrompt = '') {
-    return assemblePrompt(interviewPrompt, customPrompt);
+function getSystemPrompt(customPrompt = '', overrides = {}) {
+    return assemblePrompt(
+        {
+            intro: seg(overrides, 'briefIntro'),
+            formatRequirements: seg(overrides, 'briefFormat'),
+            content: seg(overrides, 'briefContent'),
+            outputInstructions: seg(overrides, 'briefOutput'),
+        },
+        customPrompt,
+        '',
+        overrides
+    );
 }
 
 // 拍题走详细链作答（那条请求带的是图本身），但对话记录里得有一句话说明图里问了什么——就是这个并发小
@@ -126,6 +169,7 @@ function getScreenshotAnswerPrompt() {
 }
 
 module.exports = {
+    DEFAULT_PROMPT_SEGMENTS,
     getSystemPrompt,
     getDetailSystemPrompt,
     getScreenshotSummaryPrompt,

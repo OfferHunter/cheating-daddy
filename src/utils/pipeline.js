@@ -885,17 +885,19 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
-    currentSystemPrompt = getSystemPrompt(customPrompt);
 
     // 开关和知识库索引都在这里一次性读好。索引故意是快照而不是每轮重建：那会给每个回答前面加一次目录
     // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
     // 的执行器会按调用时刻的目录校验。
     const prefs = getPreferences();
+    // 用户在编辑面板里改过的系统提示词分段；空对象即全用内置默认。
+    const promptOverrides = prefs.promptOverrides || {};
+    currentSystemPrompt = getSystemPrompt(customPrompt, promptOverrides);
     detailModeEnabled = prefs.detailMode;
     detailKnowledgeEntries = detailModeEnabled ? listKnowledgeEntries(getKnowledgeDir()) : [];
-    currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries));
+    currentDetailSystemPrompt = getDetailSystemPrompt(customPrompt, formatKnowledgeSummary(detailKnowledgeEntries), promptOverrides);
     // 传空摘要就是追问用的那份提示词：知识库规则和索引都以此为前提，所以这就是两样都没有的同一份提示词。
-    currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '');
+    currentDetailFollowUpSystemPrompt = getDetailSystemPrompt(customPrompt, '', promptOverrides);
     briefThinkingEnabled = prefs.briefThinking;
     detailThinkingEnabled = prefs.detailThinking;
     screenshotThinkingEnabled = prefs.screenshotThinking;

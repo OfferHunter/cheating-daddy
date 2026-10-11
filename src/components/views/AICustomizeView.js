@@ -2,6 +2,42 @@ import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, isChinese, t } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
+// 与主进程同一份默认分段文案：面板按它预填各文本框，某段没有覆盖就显示默认值。
+const { DEFAULT_PROMPT_SEGMENTS } = window.require('./utils/prompts');
+
+// 系统提示词编辑面板的分组。[段键, 英文标签, 中文标签]；段键对应 prompts.js 的 DEFAULT_PROMPT_SEGMENTS。
+const PROMPT_GROUPS = [
+    {
+        title: 'Brief answer',
+        titleZh: '简短回答',
+        fields: [
+            ['briefIntro', 'Opening persona', '开场人设'],
+            ['briefFormat', 'Answer format', '回答格式要求'],
+            ['briefContent', 'Content requirements', '内容要求'],
+            ['briefOutput', 'Output requirements', '输出要求'],
+        ],
+    },
+    {
+        title: 'Detailed answer',
+        titleZh: '详细回答',
+        fields: [
+            ['detailIntro', 'Opening persona', '开场人设'],
+            ['detailFormat', 'Answer format', '回答格式要求'],
+            ['detailContent', 'Content requirements', '内容要求'],
+            ['detailKnowledgeRule', 'Knowledge rule', '知识库规则'],
+            ['detailOutput', 'Output requirements', '输出要求'],
+        ],
+    },
+    {
+        title: 'Shared rules',
+        titleZh: '通用规则',
+        fields: [
+            ['languageRule', 'Language rule', '语言要求'],
+            ['contextRule', 'Context rule', '上下文约定'],
+        ],
+    },
+];
+
 export class AICustomizeView extends LocalizedLitElement {
     static styles = [
         unifiedPageStyles,
@@ -115,11 +151,83 @@ export class AICustomizeView extends LocalizedLitElement {
                 font-size: var(--font-size-xs);
                 line-height: 1.5;
             }
+
+            /* 提示词编辑面板：整块默认折叠，标题行点击展开。 */
+            .prompt-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: var(--space-sm);
+                cursor: pointer;
+            }
+
+            .prompt-toggle .surface-title {
+                margin: 0;
+            }
+
+            .prompt-caret {
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+                color: var(--text-muted);
+                transition: transform var(--transition);
+            }
+
+            .prompt-caret.open {
+                transform: rotate(90deg);
+            }
+
+            .prompt-body {
+                margin-top: var(--space-md);
+            }
+
+            .prompt-warn {
+                color: var(--warning);
+                margin-bottom: var(--space-sm);
+            }
+
+            .prompt-actions {
+                margin-bottom: var(--space-md);
+            }
+
+            .prompt-group {
+                margin-top: var(--space-md);
+                padding-top: var(--space-md);
+                border-top: 1px solid var(--border);
+            }
+
+            .prompt-group-title {
+                color: var(--text-secondary);
+                font-size: var(--font-size-sm);
+                font-weight: var(--font-weight-medium);
+                margin-bottom: var(--space-sm);
+            }
+
+            .seg-field {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                margin-bottom: var(--space-sm);
+            }
+
+            .seg-label {
+                color: var(--text-muted);
+                font-size: var(--font-size-xs);
+            }
+
+            /* 覆盖组件里 textarea.control 的 min-height/resize：这些段是短文本块，不必撑到 160px，且允许手动拉高。 */
+            textarea.seg-input {
+                min-height: 84px;
+                resize: vertical;
+                user-select: text;
+            }
         `,
     ];
 
     static properties = {
         _context: { state: true },
+        _promptOpen: { state: true },
+        _promptOverrides: { state: true },
         _knowledgeDir: { state: true },
         _knowledgeEntries: { state: true },
         _knowledgeError: { state: true },
@@ -131,6 +239,8 @@ export class AICustomizeView extends LocalizedLitElement {
     constructor() {
         super();
         this._context = '';
+        this._promptOpen = false;
+        this._promptOverrides = {};
         this._knowledgeDir = '';
         this._knowledgeEntries = [];
         this._knowledgeError = '';
@@ -145,6 +255,7 @@ export class AICustomizeView extends LocalizedLitElement {
         try {
             const prefs = await offerHunter.storage.getPreferences();
             this._context = prefs.customPrompt || '';
+            this._promptOverrides = { ...(prefs.promptOverrides || {}) };
             this.requestUpdate();
         } catch (error) {
             console.error('Error loading AI customize storage:', error);
@@ -154,6 +265,28 @@ export class AICustomizeView extends LocalizedLitElement {
     async _saveContext(val) {
         this._context = val;
         await offerHunter.storage.updatePreference('customPrompt', val);
+    }
+
+    _togglePromptPanel() {
+        this._promptOpen = !this._promptOpen;
+        this.requestUpdate();
+    }
+
+    // 某段的显示值：有覆盖用覆盖，否则用内置默认。
+    _segmentValue(key) {
+        return Object.prototype.hasOwnProperty.call(this._promptOverrides, key) ? this._promptOverrides[key] : DEFAULT_PROMPT_SEGMENTS[key];
+    }
+
+    async _setSegment(key, value) {
+        this._promptOverrides = { ...this._promptOverrides, [key]: value };
+        await offerHunter.storage.updatePreference('promptOverrides', this._promptOverrides);
+    }
+
+    // 清空全部覆盖，各段回退到内置默认。
+    async _restorePromptDefaults() {
+        this._promptOverrides = {};
+        await offerHunter.storage.updatePreference('promptOverrides', {});
+        this.requestUpdate();
     }
 
     async _loadKnowledge() {
@@ -232,6 +365,25 @@ export class AICustomizeView extends LocalizedLitElement {
                         <div class="page-title">AI Context</div>
                     </div>
 
+                    <section class="surface auto">
+                        <div class="prompt-toggle" @click=${this._togglePromptPanel}>
+                            <div class="surface-title">${t('System Prompt', '系统提示词')}</div>
+                            <svg
+                                class="prompt-caret ${this._promptOpen ? 'open' : ''}"
+                                xmlns="http://www.w3.org/2000/svg"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path d="M9 6l6 6-6 6" />
+                            </svg>
+                        </div>
+                        ${this._promptOpen ? this._renderPromptEditor() : ''}
+                    </section>
+
                     <section class="surface">
                         <div class="form-grid">
                             <div class="form-group vertical">
@@ -281,6 +433,43 @@ export class AICustomizeView extends LocalizedLitElement {
                     </section>
                 </div>
             </div>
+        `;
+    }
+
+    _renderPromptEditor() {
+        return html`
+            <div class="prompt-body">
+                <div class="form-help prompt-warn">
+                    ${
+                        t(
+                            'Edit with care — these are the model\'s core instructions. A careless change affects every answer.',
+                            '谨慎修改：以下是模型的核心指令，会直接影响每一次回答，改错可能让回答质量下降。'
+                        )
+                    }
+                </div>
+                <div class="prompt-actions">
+                    <button class="control btn-inline" @click=${this._restorePromptDefaults}>${t('Restore default', '恢复默认')}</button>
+                </div>
+                ${PROMPT_GROUPS.map(group => this._renderPromptGroup(group))}
+            </div>
+        `;
+    }
+
+    _renderPromptGroup(group) {
+        return html`
+            <div class="prompt-group">
+                <div class="prompt-group-title">${t(group.title, group.titleZh)}</div>
+                ${group.fields.map(([key, en, zh]) => this._renderSegment(key, en, zh))}
+            </div>
+        `;
+    }
+
+    _renderSegment(key, en, zh) {
+        return html`
+            <label class="seg-field">
+                <span class="seg-label">${t(en, zh)}</span>
+                <textarea class="control seg-input" .value=${this._segmentValue(key)} @input=${e => this._setSegment(key, e.target.value)}></textarea>
+            </label>
         `;
     }
 
