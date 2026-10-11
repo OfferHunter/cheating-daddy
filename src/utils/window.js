@@ -179,7 +179,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
     if (keybinds.screenShot) {
         try {
             globalShortcut.register(keybinds.screenShot, async () => {
-                console.log('Next step shortcut triggered');
+                console.log('Screenshot shortcut triggered');
                 try {
                     const isMac = process.platform === 'darwin';
                     const shortcutKey = isMac ? 'cmd+enter' : 'ctrl+enter';
@@ -188,7 +188,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                         offerHunter.handleShortcut('${shortcutKey}');
                     `);
                 } catch (error) {
-                    console.error('Error handling next step shortcut:', error);
+                    console.error('Error handling screenshot shortcut:', error);
                 }
             });
             console.log(`Registered screenShot: ${keybinds.screenShot}`);

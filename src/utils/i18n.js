@@ -221,8 +221,6 @@ const zh = {
     'Get Started': '开始使用',
     Continue: '继续',
     Back: '返回',
-    'Real-time AI that listens, watches, and helps during interviews, meetings, and exams.':
-        '实时聆听、观察，并在面试、会议和考试中提供帮助的 AI 助手。',
     'Paste your resume or any info the AI should know. You can skip this and add it later.':
         '粘贴简历或其他需要 AI 了解的信息。也可以跳过，稍后再添加。',
     'Move Window Up': '窗口上移',
@@ -256,6 +254,7 @@ const zh = {
     Session: '会话',
     'Empty session': '空会话',
     'Activate your product': '激活产品',
+    'Activation successful': '已成功激活',
     'This copy is locked to this computer. Send the machine code below to the seller, then enter the activation code you get back.':
         '本软件与当前电脑绑定。请将下方机器码发送给商家，并填写商家回复的激活码。',
     'Machine Code': '机器码',

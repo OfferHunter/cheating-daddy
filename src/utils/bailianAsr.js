@@ -11,7 +11,7 @@ const { getConfig, getBailianApiKey } = require('../storage');
 
 const DEFAULT_ENDPOINT = DEFAULT_CONFIG.bailianWsUrl;
 const DEFAULT_MODEL = DEFAULT_CONFIG.bailianModel;
-const CONNECT_TIMEOUT_MS = 5000;
+const CONNECT_TIMEOUT_MS = 10000;
 const TASK_STARTED_TIMEOUT_MS = 4000;
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 const BUFFER_LIMIT_BYTES = 64000; // 16kHz 单声道 s16，约 2 秒
@@ -59,6 +59,10 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
         const dying = socket;
         socket = null;
         dying.removeAllListeners();
+        // terminate() 对还在 CONNECTING（握手没完成）的 socket 不会同步抛错，而是 nextTick 里 emit('error')
+        // 再 emit('close')。上面刚把监听器全清了，这个 error 事件就没有处理者，会升级成主进程未捕获异常、
+        // 弹出 Electron 的错误框——外层的 try/catch 抓不到它，因为抛出点在下一个 tick。补一个空监听器接住。
+        dying.on('error', () => {});
         try {
             dying.terminate();
         } catch {

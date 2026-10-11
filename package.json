@@ -10,6 +10,7 @@
         "make": "electron-forge make",
         "release": "node scripts/release.js",
         "license:generate": "node scripts/license-generate.js",
+        "pixelate": "electron scripts/pixelate.js",
         "publish": "electron-forge publish",
         "lint": "echo \"No linting configured\""
     },

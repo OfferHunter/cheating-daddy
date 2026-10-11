@@ -26,6 +26,17 @@ if (debugRequested) {
     app.exit(1);
 }
 
+// 面试进行中，主进程任何未捕获异常都不许把进程带走：Electron 默认会弹「A JavaScript error occurred in
+// the main process」并中断会话。注册自己的监听器即取代那个默认弹窗（Electron 按 listenerCount 判断是否
+// 已有用户监听器），这里只记日志，让会话继续跑。unhandledRejection 同理，在 Electron 里默认也会终止进程。
+process.on('uncaughtException', error => {
+    console.error('[Main] Uncaught exception (kept alive):', error);
+});
+
+process.on('unhandledRejection', reason => {
+    console.error('[Main] Unhandled rejection (kept alive):', reason);
+});
+
 let mainWindow = null;
 
 function createMainWindow() {

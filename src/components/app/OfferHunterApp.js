@@ -1,6 +1,6 @@
 const { DEFAULT_PREFERENCES, DEFAULT_CONFIG } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement, setUiLanguage } from '../../utils/i18n.js';
+import { LocalizedLitElement, setUiLanguage, isChinese } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
 import { MainView } from '../views/MainView.js';
 import { CustomizeView } from '../views/CustomizeView.js';
@@ -445,7 +445,11 @@ export class OfferHunterApp extends LocalizedLitElement {
         ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
             this._isClickThrough = isEnabled;
         });
-        ipcRenderer.on('reconnect-failed', (_, data) => this.addNewResponse(data.message));
+        // 这条消息落进回答气泡（.message-body），而 localizeTree 有意跳过气泡正文（模型回答不能被翻译），
+        // 所以不走映射表，按当前界面语言直接给文字。英文仍是主进程送来的原文。
+        ipcRenderer.on('reconnect-failed', (_, data) =>
+            this.addNewResponse(isChinese() ? '语音识别服务连接失败: 连接次数达到上限' : data.message)
+        );
         ipcRenderer.on('new-detail-response', (_, data) => this.addDetailResponse(data));
         ipcRenderer.on('update-detail-response', (_, data) => this.updateDetailResponse(data));
         ipcRenderer.on('detail-response-complete', (_, data) => this.completeDetailResponse(data));

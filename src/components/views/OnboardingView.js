@@ -50,21 +50,88 @@ export class OnboardingView extends LocalizedLitElement {
             left: 0;
             width: 100%;
             height: 100%;
-            z-index: 1;
+            z-index: 2;
             opacity: 0.12;
             mix-blend-mode: overlay;
             pointer-events: none;
             image-rendering: pixelated;
         }
 
+        /* 像素水豚叠在极光之上、噪点之下：关掉插值放大成块状，边缘径向羽化融进极光。 */
+        .pixel-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        .pixel-capy {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            image-rendering: pixelated;
+            opacity: 0.38;
+            /* 图铺满整屏，只在四边留窄窄一段过渡；横向、纵向两条渐变取交集，四角不会先糊掉。 */
+            -webkit-mask-image: linear-gradient(to right, transparent, #000 4%, #000 96%, transparent),
+                linear-gradient(to bottom, transparent, #000 4%, #000 96%, transparent);
+            -webkit-mask-composite: source-in;
+            mask-image: linear-gradient(to right, transparent, #000 4%, #000 96%, transparent),
+                linear-gradient(to bottom, transparent, #000 4%, #000 96%, transparent);
+            mask-composite: intersect;
+            animation: capy-float 9s ease-in-out infinite;
+        }
+
+        @keyframes capy-float {
+            0%,
+            100% {
+                transform: translateY(-6px);
+            }
+            50% {
+                transform: translateY(6px);
+            }
+        }
+
+        /* 极光/水豚都是中间调，灰色说明文字压上去会糊；在表单后面留一圈浅色光，保住可读性。 */
+        .scrim {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+            pointer-events: none;
+            background: radial-gradient(ellipse 46% 40% at 50% 50%, rgba(240, 240, 240, 0.72), rgba(240, 240, 240, 0) 72%);
+        }
+
+        /* 激活前后是两套控件：都留在 DOM 里，靠 opacity 交叉淡入淡出，避免直接换 DOM 造成跳变。 */
+        .slide-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 4;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.35s ease, visibility 0.35s ease;
+        }
+
+        .slide-layer.active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+
         .slide {
             position: relative;
-            z-index: 2;
+            z-index: 4;
             display: flex;
             flex-direction: column;
             align-items: center;
             text-align: center;
-            max-width: 400px;
+            /* 32 位机器码（含连字符）要一行放下：400 时内容区只剩 320，扣掉框内边距和复制按钮会折行。 */
+            max-width: 460px;
             padding: var(--space-xl);
             gap: var(--space-md);
         }
@@ -130,8 +197,17 @@ export class OnboardingView extends LocalizedLitElement {
             color: #888888;
         }
 
+        /* 机器码和复制图标同一行，图标固定在右侧；码本身仍居中、允许折行。 */
+        .machine-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+        }
+
         /* 机器码要能被选中、复制，而 .onboarding * 全局禁用了选择，所以这里单独放开。 */
         .machine-code {
+            flex: 1;
             font-family: var(--font-mono);
             font-size: 15px;
             font-weight: 600;
@@ -143,20 +219,31 @@ export class OnboardingView extends LocalizedLitElement {
             cursor: text;
         }
 
-        .btn-ghost {
-            background: none;
+        .btn-copy {
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            padding: 0;
             border: none;
-            color: #555555;
-            font-size: 12px;
-            font-weight: 500;
-            padding: 2px 8px;
             border-radius: 6px;
+            background: none;
+            color: #555555;
             cursor: pointer;
-            transition: background 0.15s;
+            transition: background 0.15s, color 0.15s;
         }
 
-        .btn-ghost:hover {
+        .btn-copy:hover {
             background: rgba(0, 0, 0, 0.06);
+            color: #111111;
+        }
+
+        .btn-copy svg {
+            width: 16px;
+            height: 16px;
+            display: block;
         }
 
         .code-input {
@@ -512,8 +599,22 @@ export class OnboardingView extends LocalizedLitElement {
                 </div>
                 <div class="machine-box">
                     <div class="machine-label">Machine Code</div>
-                    <div class="machine-code" data-no-localize>${this._machineCode || '...'}</div>
-                    <button class="btn-ghost" @click=${this.copyMachineCode}>${this._copied ? 'Copied' : 'Copy'}</button>
+                    <div class="machine-row">
+                        <div class="machine-code" data-no-localize>${this._machineCode || '...'}</div>
+                        <button
+                            class="btn-copy"
+                            title=${this._copied ? 'Copied' : 'Copy'}
+                            aria-label=${this._copied ? 'Copied' : 'Copy'}
+                            @click=${this.copyMachineCode}
+                        >
+                            ${this._copied
+                                ? html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>`
+                                : html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                  </svg>`}
+                        </button>
+                    </div>
                 </div>
                 <input
                     class="code-input"
@@ -540,8 +641,7 @@ export class OnboardingView extends LocalizedLitElement {
     renderSlide() {
         return html`
             <div class="slide">
-                <div class="slide-title">offer hunter</div>
-                <div class="slide-text">Real-time AI that listens, watches, and helps during interviews, meetings, and exams.</div>
+                <div class="slide-title">Activation successful</div>
                 <div class="actions">
                     <button class="btn-primary" @click=${this.completeOnboarding}>Continue</button>
                 </div>
@@ -553,8 +653,11 @@ export class OnboardingView extends LocalizedLitElement {
         return html`
             <div class="onboarding">
                 <canvas class="aurora"></canvas>
+                <div class="pixel-layer"><img class="pixel-capy" src="assets/onboarding/capybara.png" alt="" /></div>
                 <canvas class="dither"></canvas>
-                ${this._activated ? this.renderSlide() : this.renderActivation()}
+                <div class="scrim"></div>
+                <div class="slide-layer ${this._activated ? '' : 'active'}">${this.renderActivation()}</div>
+                <div class="slide-layer ${this._activated ? 'active' : ''}">${this.renderSlide()}</div>
             </div>
         `;
     }
