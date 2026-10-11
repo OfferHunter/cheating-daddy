@@ -237,9 +237,10 @@ Windows 中的完整路径通常为 `C:\Users\<用户名>\AppData\Roaming\offer-
 release/
 ├── README.md
 ├── offer hunter-<版本> Setup.exe # Windows 安装程序
-└── offer hunter-win32-x64-<版本>.zip # Windows 便携版，完整解压后运行
+├── offer hunter-win32-x64-<版本>.zip # Windows 便携版，完整解压后运行
+└── Source Code/ # 源码包，可在别处重新构建
 ```
 
 macOS 上按配置生成 DMG 和 ZIP。普通 Windows 用户只需要安装程序或便携 ZIP 其中之一。
 
-发布只输出可运行产物，不再附带源码包。构建中间文件保留在 `out/release-build-*`。发布采用就地覆盖：只生成或覆盖同名产物，不会删除 `release` 目录里已有的其他文件，构建失败时不写入任何产物。
+源码包内含 `src`、`scripts`、构建配置与 LICENSE 等重新构建所需的内容。排除规则跟随 `.gitignore`：被 git 忽略的文件一律不打包，另外 `.gitignore` 自身与 `.git` 也始终排除。构建中间文件保留在 `out/release-build-*`。发布采用就地覆盖：只生成或覆盖同名产物，不会删除 `release` 目录里已有的其他文件，构建失败时不写入任何产物。
