@@ -2,6 +2,7 @@ const { BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { startTransportLog, closeTransportLog } = require('./transportLogger');
+const teleprompter = require('./teleprompter');
 
 // 延迟加载：pipeline.js 反过来 require 本模块，直接写在顶部会成环。
 let _pipeline = null;
@@ -27,11 +28,15 @@ let currentCustomPrompt = null;
 
 let systemAudioProc = null;
 
+// 主进程→渲染端全部推送的唯一出口,手机提词也搭在这里:白名单频道再往已配对的手机发一份。筛选发生在
+// teleprompter 内部,这里只把每一条都交出去,这个函数保持「什么都从这里过」的形态。
 function sendToRenderer(channel, data) {
     const windows = BrowserWindow.getAllWindows();
     if (windows.length > 0) {
         windows[0].webContents.send(channel, data);
     }
+
+    teleprompter.broadcast(channel, data);
 }
 
 function initializeNewSession(customPrompt = null) {

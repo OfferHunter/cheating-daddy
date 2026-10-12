@@ -10,6 +10,7 @@ const path = require('path');
 const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');
+const teleprompter = require('./utils/teleprompter');
 const storage = require('./storage');
 
 // 透明窗在 Windows 上 hide()/showInactive() 时，DWM 会先把上一次的透明合成表面贴一帧再收起重画，
@@ -67,7 +68,15 @@ app.whenReady().then(async () => {
     setupKnowledgeIpcHandlers();
     setupGeneralIpcHandlers();
     setupLicenseIpcHandlers();
+    setupTeleprompterIpcHandlers();
     require('./utils/asrTest').setupAsrTestIpcHandlers();
+
+    // 跟着 app 常驻,不随会话起停:面试前就能配对好、把手机页面开着。端口占用/防火墙提示都在这里发生。
+    try {
+        await teleprompter.startTeleprompter();
+    } catch (error) {
+        console.error('[Teleprompter] Failed to start:', error);
+    }
 });
 
 app.on('window-all-closed', () => {
@@ -81,6 +90,7 @@ app.on('before-quit', () => {
     stopMacOSAudioCapture();
     require('./utils/pipeline').closeLocalSession();
     require('./utils/asrTest').stopAsrTest();
+    teleprompter.stopTeleprompter();
 });
 
 app.on('activate', () => {
@@ -454,6 +464,27 @@ function setupGeneralIpcHandlers() {
     // Debug logging from renderer
     ipcMain.on('log-message', (event, msg) => {
         console.log(msg);
+    });
+}
+
+// 手机提词的服务状态:地址、配对码都只在渲染端展示,令牌本身不出主进程——配对码换令牌那一步在页面上完成。
+function setupTeleprompterIpcHandlers() {
+    ipcMain.handle('teleprompter:get-status', async () => {
+        try {
+            return { success: true, data: teleprompter.getStatus() };
+        } catch (error) {
+            console.error('Error reading teleprompter status:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('teleprompter:regenerate-code', async () => {
+        try {
+            return { success: true, data: teleprompter.regenerateCode() };
+        } catch (error) {
+            console.error('Error regenerating teleprompter code:', error);
+            return { success: false, error: error.message };
+        }
     });
 }
 

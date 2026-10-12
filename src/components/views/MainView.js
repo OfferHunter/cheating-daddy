@@ -192,6 +192,107 @@ export class MainView extends LocalizedLitElement {
             opacity: 0.5;
             font-family: var(--font-mono);
         }
+
+        .pair-box {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+            padding: var(--space-md);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-elevated);
+        }
+
+        .pair-field {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-xs);
+        }
+
+        .pair-label {
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+        }
+
+        .pair-row {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+        }
+
+        .pair-value {
+            flex: 1;
+            min-width: 0;
+            font-family: var(--font-mono);
+            font-size: var(--font-size-base);
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: text;
+        }
+
+        .pair-code {
+            flex: 1;
+            min-width: 0;
+            font-family: var(--font-mono);
+            font-size: var(--font-size-xl);
+            letter-spacing: 0.32em;
+            color: var(--text-primary);
+            user-select: text;
+        }
+
+        .pair-btn {
+            flex: none;
+            padding: 6px 10px;
+            font-size: var(--font-size-xs);
+            color: var(--text-secondary);
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+
+        .pair-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--border-strong);
+        }
+
+        .pair-status {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+        }
+
+        .pair-status::before {
+            content: '';
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .pair-status.ok {
+            color: var(--text-secondary);
+        }
+
+        .pair-status.ok::before {
+            background: #22c55e;
+        }
+
+        .pair-hint {
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .pair-error {
+            font-size: var(--font-size-xs);
+            color: var(--danger);
+        }
     `;
 
     static properties = {
@@ -199,6 +300,11 @@ export class MainView extends LocalizedLitElement {
         onOpenConfig: { type: Function },
         isInitializing: { type: Boolean },
         pageIndex: { type: Number },
+        teleprompterUrl: { type: String },
+        teleprompterCode: { type: String },
+        teleprompterRunning: { type: Boolean },
+        teleprompterPaired: { type: Boolean },
+        teleprompterCopied: { type: Boolean },
     };
 
     constructor() {
@@ -207,6 +313,11 @@ export class MainView extends LocalizedLitElement {
         this.onOpenConfig = () => {};
         this.isInitializing = false;
         this.pageIndex = 0;
+        this.teleprompterUrl = '';
+        this.teleprompterCode = '';
+        this.teleprompterRunning = false;
+        this.teleprompterPaired = false;
+        this.teleprompterCopied = false;
 
         this.boundKeydownHandler = this._handleKeydown.bind(this);
     }
@@ -214,11 +325,47 @@ export class MainView extends LocalizedLitElement {
     connectedCallback() {
         super.connectedCallback();
         document.addEventListener('keydown', this.boundKeydownHandler);
+        // 配对是主进程那边的状态,渲染端没有事件可听,轮询最省事:主页在会话开始前才挂着,这点开销可忽略。
+        this._refreshTeleprompter();
+        this._teleprompterTimer = setInterval(() => this._refreshTeleprompter(), 1500);
     }
 
     disconnectedCallback() {
         super.disconnectedCallback();
         document.removeEventListener('keydown', this.boundKeydownHandler);
+        clearInterval(this._teleprompterTimer);
+        clearTimeout(this._copiedTimer);
+    }
+
+    async _refreshTeleprompter() {
+        if (!window.offerHunter?.teleprompter) return;
+        const status = await window.offerHunter.teleprompter.getStatus();
+        if (!status) return;
+        this.teleprompterRunning = Boolean(status.running);
+        this.teleprompterUrl = status.url || '';
+        this.teleprompterCode = status.code || '';
+        this.teleprompterPaired = Boolean(status.paired);
+    }
+
+    async _copyTeleprompterUrl() {
+        if (!this.teleprompterUrl) return;
+        try {
+            await navigator.clipboard.writeText(this.teleprompterUrl);
+        } catch {
+            // 剪贴板不可用也不至于卡住流程:地址本来就印在屏幕上,手抄一份即可。
+        }
+        this.teleprompterCopied = true;
+        clearTimeout(this._copiedTimer);
+        this._copiedTimer = setTimeout(() => {
+            this.teleprompterCopied = false;
+        }, 1500);
+    }
+
+    async _regenerateTeleprompterCode() {
+        const status = await window.offerHunter?.teleprompter?.regenerateCode();
+        if (!status) return;
+        this.teleprompterCode = status.code || '';
+        this.teleprompterPaired = Boolean(status.paired);
     }
 
     _handleKeydown(e) {
@@ -229,13 +376,15 @@ export class MainView extends LocalizedLitElement {
         }
     }
 
-    // 只有已实现的提词方式能真正开始会话：占位的第二页，按钮和快捷键都不接会话。
+    // 电脑+手机端这一模式里手机才是显示端,没配对就开会话等于对着没人看的窗口说话,所以必须先连上手机。
     _canStartSession() {
-        return MODE_PAGES[this.pageIndex] === 'desktop';
+        const page = MODE_PAGES[this.pageIndex];
+        if (page === 'desktopPhone') return this.teleprompterPaired;
+        return page === 'desktop';
     }
 
     _handleStart() {
-        if (this.isInitializing) return;
+        if (this.isInitializing || !this._canStartSession()) return;
         this.onStart();
     }
 
@@ -272,8 +421,9 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    _renderStartButton(interactive = true) {
+    _renderStartButton(enabled = true) {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const disabled = this.isInitializing || !enabled;
 
         const cmdIcon = html`<svg
             xmlns="http://www.w3.org/2000/svg"
@@ -320,9 +470,9 @@ export class MainView extends LocalizedLitElement {
 
         return html`
             <button
-                class="start-button ${this.isInitializing ? 'disabled' : ''}"
-                ?disabled=${this.isInitializing}
-                @click=${interactive ? () => this._handleStart() : null}
+                class="start-button ${disabled ? 'disabled' : ''}"
+                ?disabled=${disabled}
+                @click=${() => this._handleStart()}
             >
                 <span class="btn-label">
                     Start Session
@@ -339,7 +489,7 @@ export class MainView extends LocalizedLitElement {
             <div class="page-note">
                 ${t(
                     'Even though this app stays hidden, some websites may still pick up shortcuts, blur events or how often you leave the page — use this mode with care. Turning on “Session window cannot be focused” keeps the meeting app or web page focused at all times, but then you cannot type in the input box below (rarely needed) and moving the mouse into the app area still registers blur events. Turning on “click-through” makes the app fully transparent (moving the mouse over it triggers no blur events), but then its controls cannot be clicked either.',
-                    '虽然本应用隐身，但部分网站可能会捕捉快捷键、离屏事件、离屏率等，请你谨慎使用此模式。开启「会话界面不可聚焦」可以让会议软件/网页始终保持聚焦，但无法使用下方输入框打字（一般情况下用不上），且鼠标移进应用区域仍会被捕捉离屏事件；开启「鼠标穿透」可以彻底让本应用透明化（鼠标移动到本应用上不触发离屏事件），但也无法点击本应用的控件。'
+                    '虽然本应用隐身，但部分网站可能会捕捉快捷键、离屏事件、离屏率等，请你谨慎使用此模式。\n设置中开启「会话界面不可聚焦」可以让会议软件/网页始终保持聚焦，但无法使用下方输入框打字（一般情况下用不上），且鼠标移进应用区域仍会被捕捉离屏事件；\n开启「鼠标穿透」可以彻底让本应用透明化（鼠标移动到本应用上不触发离屏事件），但也会让您无法点击本应用的控件；\n建议将快捷键设置为常用单键如空格、回车和字母键，这样即使被捕捉到也无所谓，但可能会触发其他应用的其他控件。'
                 )}
             </div>
             ${this._renderStartButton()}
@@ -351,17 +501,61 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    // 电脑+手机端提词：手机负责显示与操作，本机窗口只在开始后隐藏。功能未实现，按钮和快捷键都是占位。
+    // 配对区就放在「电脑+手机端」这一页:这一模式的显示端是手机,地址和配对码必须在选它、开会话之前就看得到。
+    // 只此一处渲染,不做第二份——配对码可重新生成,两份很容易显示不同的码。
+    _renderPairingBox() {
+        if (!this.teleprompterRunning) {
+            return html`<div class="pair-box">
+                <div class="pair-error">${t('Teleprompter is not running', '提词服务未运行')}</div>
+            </div>`;
+        }
+
+        return html`
+            <div class="pair-box">
+                <div class="pair-field">
+                    <span class="pair-label">${t('Address', '地址')}</span>
+                    <div class="pair-row">
+                        <span class="pair-value">${this.teleprompterUrl}</span>
+                        <button class="pair-btn" @click=${this._copyTeleprompterUrl}>
+                            ${this.teleprompterCopied ? t('Copied', '已复制') : t('Copy link', '复制链接')}
+                        </button>
+                    </div>
+                </div>
+                <div class="pair-field">
+                    <span class="pair-label">${t('Pairing code', '配对码')}</span>
+                    <div class="pair-row">
+                        <span class="pair-code">${this.teleprompterCode}</span>
+                        <button class="pair-btn" @click=${this._regenerateTeleprompterCode}>
+                            ${t('New pairing code', '重新生成配对码')}
+                        </button>
+                    </div>
+                </div>
+                <div class="pair-status ${this.teleprompterPaired ? 'ok' : ''}">
+                    ${this.teleprompterPaired
+                        ? t('Phone connected', '手机已连接')
+                        : t('Waiting for a phone to connect…', '等待手机连接…')}
+                </div>
+                <div class="pair-hint">
+                    ${t(
+                        'Open this address in a phone browser on the same Wi-Fi, then enter the code.',
+                        '用同一 Wi-Fi 下的手机浏览器打开上面的地址，再输入配对码。'
+                    )}
+                </div>
+            </div>
+        `;
+    }
+
+    // 电脑+手机端提词：手机负责显示，先在下面配对，连上之后「开始会话」才放行。
     _renderDesktopPhonePage() {
         return html`
             <div class="page-title">${desktopPhoneIcon}${t('Desktop + phone prompting', '电脑+手机端提词')}</div>
             <div class="page-note">
                 ${t(
-                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones. After you pick this mode, the app hides its window until the session is ended from the phone.',
-                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的情况下面试软件需要控制您的一部手机。选择此模式后，本应用将隐藏窗口，直到手机端结束会话。'
+                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones.',
+                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的情况下面试软件需要控制您的一部手机。'
                 )}
             </div>
-            ${this._renderStartButton(false)}
+            ${this._renderPairingBox()} ${this._renderStartButton(this.teleprompterPaired)}
             <div class="config-hint">
                 <span class="link" @click=${() => this.onOpenConfig()}
                     >${t('Configure chat and speech models', '配置对话与语音模型')}</span

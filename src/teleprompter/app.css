@@ -1,0 +1,368 @@
+:root {
+    --bg: #14100c;
+    --bg-elevated: #1d1913;
+    --text: #f2e9db;
+    --text-dim: #a99e8b;
+    --text-muted: #6f6555;
+    --border: #332c22;
+    --accent: #fe8019;
+    --danger: #ef4444;
+    --ok: #22c55e;
+    /* 问题和回答共用一个字号:用户要的就是两者一样大。设置页把它写成显式 px,这里只是首屏默认值。 */
+    --font-size: 17px;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* 两屏都靠 hidden 属性切换,而 .pairing/.stage 的 display:flex 会盖掉 UA 的 [hidden]{display:none},
+   于是两屏同时铺满叠在一起、下面的输入框点不到。用 !important 把 hidden 的语义夺回来。 */
+[hidden] {
+    display: none !important;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    overscroll-behavior: none;
+}
+
+.screen {
+    position: fixed;
+    inset: 0;
+}
+
+/* ---------- pairing ---------- */
+
+.pairing {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.pair-card {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    text-align: center;
+}
+
+.pair-card h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.hint {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-dim);
+}
+
+.code-input {
+    width: 100%;
+    padding: 14px;
+    font-size: 30px;
+    letter-spacing: 0.4em;
+    text-align: center;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    color: var(--text);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    outline: none;
+}
+
+.code-input:focus {
+    border-color: var(--accent);
+}
+
+.primary {
+    padding: 15px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #1a1207;
+    background: var(--accent);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.primary:disabled {
+    opacity: 0.5;
+}
+
+.error {
+    margin: 0;
+    font-size: 14px;
+    color: var(--danger);
+}
+
+/* ---------- stage ---------- */
+
+.stage {
+    display: flex;
+    flex-direction: column;
+}
+
+.topbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+}
+
+.conn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+}
+
+.conn::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.conn.online::before {
+    background: var(--ok);
+}
+
+.conn.offline::before {
+    background: var(--danger);
+}
+
+.modes {
+    display: flex;
+    gap: 6px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+}
+
+.mode {
+    padding: 6px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.mode.active {
+    color: #1a1207;
+    background: var(--accent);
+}
+
+/* 右上角三条横线。用三个 span 画线而不是字符,免得依赖字体里有没有 ☰。 */
+.icon-btn {
+    flex: none;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.icon-btn span {
+    display: block;
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--text-dim);
+}
+
+.icon-btn.close {
+    font-size: 18px;
+    color: var(--text-dim);
+}
+
+/* ---------- settings ---------- */
+
+.settings {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+}
+
+.settings-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.settings-body {
+    padding: 20px 16px;
+}
+
+.setting-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    font-size: 15px;
+    color: var(--text);
+}
+
+.setting-value {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.range {
+    width: 100%;
+    accent-color: var(--accent);
+}
+
+.sample {
+    margin: 20px 0 0;
+    font-size: var(--font-size);
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+.feed {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
+    padding: 18px 16px calc(env(safe-area-inset-bottom) + 40px);
+    scrollbar-width: thin;
+}
+
+.turn {
+    padding-bottom: 28px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+}
+
+.turn:last-child {
+    border-bottom: none;
+}
+
+.question {
+    margin: 0 0 10px;
+    font-size: var(--font-size);
+    line-height: 1.5;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.question .tag {
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-right: 6px;
+}
+
+.answer {
+    font-size: var(--font-size);
+    line-height: 1.55;
+    color: var(--text);
+    word-break: break-word;
+    user-select: text;
+}
+
+.answer > *:first-child {
+    margin-top: 0;
+}
+
+.answer > *:last-child {
+    margin-bottom: 0;
+}
+
+.answer p,
+.answer ul,
+.answer ol,
+.answer pre,
+.answer blockquote,
+.answer h1,
+.answer h2,
+.answer h3,
+.answer h4 {
+    margin: 0 0 0.6em;
+}
+
+.answer code {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--bg-elevated);
+    padding: 0.1em 0.3em;
+    border-radius: 4px;
+}
+
+.answer pre {
+    overflow-x: auto;
+    padding: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.answer pre code {
+    background: none;
+    padding: 0;
+}
+
+.answer a {
+    color: var(--accent);
+}
+
+.answer ul,
+.answer ol {
+    padding-left: 1.3em;
+}
+
+.cursor::after {
+    content: '▎';
+    color: var(--accent);
+    animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+.empty {
+    color: var(--text-muted);
+    font-size: 16px;
+    text-align: center;
+    margin-top: 30vh;
+}
+
+.stay-hint {
+    flex: none;
+    margin: 0;
+    padding: 8px 14px calc(env(safe-area-inset-bottom) + 8px);
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    border-top: 1px solid var(--border);
+}

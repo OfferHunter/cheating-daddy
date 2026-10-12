@@ -128,6 +128,18 @@ const knowledge = {
     },
 };
 
+// 手机提词:渲染端只拿地址和配对码用于展示,长效令牌始终留在主进程。
+const teleprompter = {
+    async getStatus() {
+        const result = await ipcRenderer.invoke('teleprompter:get-status');
+        return result.success ? result.data : { running: false, port: null, url: '', code: '' };
+    },
+    async regenerateCode() {
+        const result = await ipcRenderer.invoke('teleprompter:regenerate-code');
+        return result.success ? result.data : null;
+    },
+};
+
 // 激活相关只走主进程：这里读到的机器码由主进程从本机硬件算出，渲染端不参与，也无从伪造。
 const license = {
     async getMachineCode() {
@@ -1176,6 +1188,8 @@ const offerHunter = {
     knowledge,
 
     license,
+
+    teleprompter,
 
     theme,
 

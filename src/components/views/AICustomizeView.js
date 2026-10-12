@@ -215,10 +215,11 @@ export class AICustomizeView extends LocalizedLitElement {
                 font-size: var(--font-size-xs);
             }
 
-            /* 覆盖组件里 textarea.control 的 min-height/resize：这些段是短文本块，不必撑到 160px，且允许手动拉高。 */
+            /* 覆盖组件里 textarea.control 的 min-height：这些段是短文本块，不必撑到 160px。
+               resize 保持 none，去掉右下角那个原生缩放手柄——它和这套主题不搭，而且手动拉高会和上面的弹性布局打架。 */
             textarea.seg-input {
                 min-height: 84px;
-                resize: vertical;
+                resize: none;
                 user-select: text;
             }
         `,

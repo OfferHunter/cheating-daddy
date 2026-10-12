@@ -10,6 +10,10 @@ const DEFAULT_CONFIG = Object.freeze({
     deepseekModel: 'deepseek-flash',
     bailianWsUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
     bailianModel: 'fun-asr-realtime-2026-02-28',
+    // 手机提词的局域网服务端口。被别的程序占用时启动会退到系统分配的临时端口,并把实际端口写回这里,这样
+    // 手机上的地址能稳定下来。teleprompterToken 是配对一次后换来的长效令牌,首次运行生成后落盘。
+    teleprompterPort: 8765,
+    teleprompterToken: '',
 });
 
 const DEFAULT_CREDENTIALS = Object.freeze({

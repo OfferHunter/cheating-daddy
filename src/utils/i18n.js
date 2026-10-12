@@ -127,10 +127,10 @@ const zh = {
     'Max Tokens': '最大 Token 数',
     'The ceiling on a single reply, thinking included — a thinking reply is charged for its reasoning from this same number, and a hard question can spend all of a low one before writing anything, which arrives as an empty answer. Leave it high and the model stops on its own. Takes effect on the next turn.':
         '单次回答的 Token 上限，思考过程也计入其中。上限过低时，复杂问题可能在输出正文前耗尽额度，最终显示为空回答。建议保持较高数值，让模型自行停止。下一轮生效。',
-    'Component Transparency': '控件透明度',
+    'Component Transparency': '控件不透明度',
     'Panels, bubbles, inputs and borders. Lower means more of what is behind the window shows through.':
         '控制面板、气泡、输入框和边框的透明度。数值越低，窗口后方内容越清晰。',
-    'Text Transparency': '文字透明度',
+    'Text Transparency': '文字不透明度',
     'All text, including the answers in the live transcript. Independent of the panels.':
         '所有文字的透明度，包括实时转录中的回答；与面板透明度相互独立。',
     'Response Font Size': '回答字号',

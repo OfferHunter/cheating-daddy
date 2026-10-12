@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+        <meta name="color-scheme" content="dark" />
+        <title>提词 / Teleprompter</title>
+        <link rel="stylesheet" href="/app.css" />
+    </head>
+    <body>
+        <section id="pairing" class="screen pairing">
+            <div class="pair-card">
+                <h1 data-i18n="pairTitle"></h1>
+                <p class="hint" data-i18n="pairHint"></p>
+                <input id="code" class="code-input" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="6" placeholder="••••••" />
+                <button id="pairBtn" class="primary" data-i18n="pairBtn"></button>
+                <p id="pairError" class="error" hidden></p>
+            </div>
+        </section>
+
+        <section id="stage" class="screen stage" hidden>
+            <header class="topbar">
+                <span id="conn" class="conn"></span>
+                <div class="modes">
+                    <button id="modeBrief" class="mode active" data-i18n="modeBrief"></button>
+                    <button id="modeDetail" class="mode" data-i18n="modeDetail"></button>
+                </div>
+                <button id="settingsBtn" class="icon-btn" aria-label="Settings">
+                    <span></span><span></span><span></span>
+                </button>
+            </header>
+            <main id="feed" class="feed"></main>
+            <p id="stayHint" class="stay-hint" hidden data-i18n="stayHint"></p>
+        </section>
+
+        <section id="settings" class="screen settings" hidden>
+            <header class="topbar">
+                <h1 class="settings-title" data-i18n="settingsTitle"></h1>
+                <button id="settingsClose" class="icon-btn close" aria-label="Close">✕</button>
+            </header>
+            <div class="settings-body">
+                <div class="setting-head">
+                    <label for="fontRange" data-i18n="fontSizeLabel"></label>
+                    <span id="fontValue" class="setting-value"></span>
+                </div>
+                <input id="fontRange" class="range" type="range" min="12" max="32" step="1" />
+                <p class="sample" data-i18n="fontSample"></p>
+            </div>
+        </section>
+
+        <script src="/marked.min.js"></script>
+        <script src="/app.js"></script>
+    </body>
+</html>
