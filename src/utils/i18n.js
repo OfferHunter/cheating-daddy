@@ -134,6 +134,7 @@ const zh = {
     'All text, including the answers in the live transcript. Independent of the panels.':
         '所有文字的透明度，包括实时转录中的回答；与面板透明度相互独立。',
     'Response Font Size': '回答字号',
+    'This is the answer font size': '这是回答字号',
     'Session window cannot be focused': '会话界面不可聚焦',
     'Some websites and meeting apps check whether their window keeps focus. Turn this off only if you need to.':
         '部分网站/会议软件会检测聚焦率，请谨慎关闭。',

@@ -444,8 +444,8 @@ export class OfferHunterApp extends LocalizedLitElement {
         ipcRenderer.on('new-response', (_, response) => this.addNewResponse(response));
         ipcRenderer.on('update-response', (_, response) => this.updateCurrentResponse(response));
         ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
-        ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId));
-        ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId));
+        ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId, data.turnId));
+        ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId, data.turnId));
         ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
         ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
             this._isClickThrough = isEnabled;
@@ -515,7 +515,7 @@ export class OfferHunterApp extends LocalizedLitElement {
     // 转录是以「整轮快照」到达的：要么改写还开着的那条气泡，要么新开一条；已落定的气泡永不再动。两个说话人
     // 同时流式，所以查找从尾部开始并按角色匹配——一个人的开着的某条气泡不会被另一个人改写，气泡也保留在它主人
     // 开始说话时的位置。
-    upsertTranscription(text, final, speaker = 'interviewer', blockId = null) {
+    upsertTranscription(text, final, speaker = 'interviewer', blockId = null, turnId = null) {
         const role = speaker === 'user' ? 'user' : 'interviewer';
         // `final` 是给下面那个遍历看的落定标记。它对截图那行问题有意义，对面试者的普通文本没有：下一个片段接
         // 着同一条气泡写，标记在那里没有含义，所以无论事件怎么说都按下不表。
@@ -547,13 +547,14 @@ export class OfferHunterApp extends LocalizedLitElement {
             if (message.blockId != null) continue;
 
             const next = [...this.messages];
-            next[i] = { ...message, text, final };
+            // 定稿那条会带上 turnId（流水线随问题一起发出），补写进来，回答到达时才能按 id 精确配对。
+            next[i] = { ...message, text, final, turnId: turnId ?? message.turnId };
             this.messages = next;
             this.requestUpdate();
             return;
         }
 
-        this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final }];
+        this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final, turnId }];
         this.requestUpdate();
     }
 
@@ -574,8 +575,24 @@ export class OfferHunterApp extends LocalizedLitElement {
         const { turnId = null, text = '', final = false } = typeof data === 'string' ? { text: data, final: true } : data;
         // 清空上下文之前派发的轮次不得在清空之后重新出现。只拦创建；已存在的气泡由下面两个调用方继续更新。
         if (turnId !== null && turnId <= this._turnFloorId) return;
-        this.messages = [...this.messages, { id: ++this._msgSeq, turnId, role: 'assistant', text, ts: Date.now(), final }];
+        const message = { id: ++this._msgSeq, turnId, role: 'assistant', text, ts: Date.now(), final };
+        this.messages = this._withAssistantAfterQuestion(turnId, message);
         this.requestUpdate();
+    }
+
+    // 回答插到自己那条问题后面，而不是一律追加到末尾：快速连问时问题会先攒成一串，再来的回答全堆在最后，
+    // 读起来就成了「问、问、问、答、答、答」。问题自流水线起就带着 turnId，所以这里能精确配对。
+    _withAssistantAfterQuestion(turnId, message) {
+        const next = [...this.messages];
+        if (turnId !== null) {
+            const questionIndex = next.findIndex(m => m.role === 'interviewer' && m.turnId === turnId);
+            if (questionIndex !== -1) {
+                next.splice(questionIndex + 1, 0, message);
+                return next;
+            }
+        }
+        next.push(message);
+        return next;
     }
 
     updateCurrentResponse(data) {
@@ -738,9 +755,10 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    // 既丢掉模型看过的内容，也丢掉显示这些内容的已落定气泡。还在飞行中的一律留着跑完：把半句识别结果或半截
-    // 流式回答冻在原地就是截断，而这是唯一绝不能做的事。上面那两个 floor 则拦住被丢掉的轮次在回答最终落地时
-    // 重新冒出来。
+    // 既丢掉模型看过的内容，也丢掉显示这些内容的已落定气泡。还在飞行中的回答一律留着跑完：把半截流式回答
+    // 冻在原地就是截断，而这是唯一绝不能做的事；它那条问题也一起留，好让留下的回答不至于孤零零没有上文。
+    // 问题本身只要背后没有还在跑的回答就一律清掉——清空后还孤零零挂着一个「考官问题」正是要避免的。上面那
+    // 两个 floor 则拦住被丢掉的轮次在回答最终落地时重新冒出来。
     async handleClearContext() {
         const res = await offerHunter.clearContext();
         if (!res?.success) return;
@@ -748,9 +766,14 @@ export class OfferHunterApp extends LocalizedLitElement {
         this._turnFloorId = res.turnSeq;
         this._detailFloorId = res.detailSeq;
 
+        const inFlightTurns = new Set(this.messages.filter(m => m.role === 'assistant' && m.final !== true).map(m => m.turnId));
         // 面试者的行是一个不断变长的块，从不带落定标记，所以唯一能留的就是那个还开着的块——id 最大的那个。
         const openBlockId = Math.max(0, ...this.messages.filter(m => m.role === 'user').map(m => m.blockId));
-        this.messages = this.messages.filter(m => (m.role === 'user' ? m.blockId === openBlockId : m.final !== true));
+        this.messages = this.messages.filter(m => {
+            if (m.role === 'user') return m.blockId === openBlockId;
+            if (m.role === 'interviewer') return m.turnId != null && inFlightTurns.has(m.turnId);
+            return m.final !== true;
+        });
         this.detailMessages = this.detailMessages.filter(m => m.final !== true);
         if (this._detailIndex(this.detailCurrent) === -1) this.detailCurrent = null;
         this._detailFollowing = true;

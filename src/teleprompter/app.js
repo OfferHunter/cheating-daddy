@@ -3,8 +3,14 @@
 'use strict';
 
 const TOKEN_KEY = 'offerHunterTeleprompterToken';
-const FONT_KEY = 'offerHunterTeleprompterFontSize';
-const DEFAULT_FONT = 17;
+// 问题与回答各存一个字号。旧版只有一个 offerHunterTeleprompterFontSize,读到时当两边的初始值,升级不丢。
+const QUESTION_FONT_KEY = 'offerHunterTeleprompterQuestionFont';
+const ANSWER_FONT_KEY = 'offerHunterTeleprompterAnswerFont';
+const LEGACY_FONT_KEY = 'offerHunterTeleprompterFontSize';
+// 默认取滑块最小档:提词时字号小一点,一屏能多放几轮,需要更大再自己调。
+const DEFAULT_FONT = 12;
+// 「有新消息时锁定到最底端」的开关状态。
+const BOTTOM_LOCK_KEY = 'offerHunterTeleprompterBottomLock';
 // 只带问题、还没被回答收养的占位块用这个 id。收养那一刻它会被换成答案真正的 id。
 const OPEN_ID = '__open_question__';
 
@@ -18,15 +24,18 @@ const STRINGS = {
         networkError: '连接失败，请确认手机与电脑在同一网络',
         modeBrief: '精要',
         modeDetail: '详细',
-        stayHint: '建议关闭手机自动锁屏以保持常亮',
         online: '已连接',
-        offline: '已断开，正在重连…',
+        offline: '重连中…',
         waiting: '等待面试开始…',
         detailError: '（详细回答生成失败）',
         qLabel: '问',
         settingsTitle: '设置',
-        fontSizeLabel: '字体大小',
-        fontSample: '问题和回答都按这个大小显示',
+        questionFontLabel: '问题字体大小',
+        answerFontLabel: '回答字体大小',
+        fontSampleQuestion: '这是问题示例',
+        fontSampleAnswer: '这是回答示例',
+        lockBottom: '有新消息时锁定到最底端',
+        shotBtn: '截图',
     },
     en: {
         pairTitle: 'Connect to desktop',
@@ -37,15 +46,18 @@ const STRINGS = {
         networkError: 'Could not reach the desktop. Make sure both devices share the same network.',
         modeBrief: 'Brief',
         modeDetail: 'Detailed',
-        stayHint: 'Consider turning off auto-lock to keep the screen on',
         online: 'Connected',
         offline: 'Disconnected, reconnecting…',
         waiting: 'Waiting for the session to start…',
         detailError: '(detailed answer failed)',
         qLabel: 'Q',
         settingsTitle: 'Settings',
-        fontSizeLabel: 'Font size',
-        fontSample: 'Question and answer both render at this size',
+        questionFontLabel: 'Question font size',
+        answerFontLabel: 'Answer font size',
+        fontSampleQuestion: 'This is a question',
+        fontSampleAnswer: 'This is an answer',
+        lockBottom: 'Lock to bottom on new messages',
+        shotBtn: 'Screenshot',
     },
 };
 
@@ -57,6 +69,8 @@ const state = {
     screen: 'pair',
     answerMode: 'brief',
     following: true,
+    // 有新内容时滚到最底端而不是最新一块的顶部。默认关,保持提词器「从这轮回答第一个字开始读」的本意。
+    bottomLock: readBottomLock(),
     authed: false,
     token: readToken(),
     briefs: [],
@@ -75,13 +89,18 @@ const dom = {
     pairError: document.getElementById('pairError'),
     feed: document.getElementById('feed'),
     conn: document.getElementById('conn'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    nav: document.getElementById('nav'),
     modeBrief: document.getElementById('modeBrief'),
     modeDetail: document.getElementById('modeDetail'),
-    stayHint: document.getElementById('stayHint'),
     settingsBtn: document.getElementById('settingsBtn'),
-    settingsClose: document.getElementById('settingsClose'),
-    fontRange: document.getElementById('fontRange'),
-    fontValue: document.getElementById('fontValue'),
+    settingsBack: document.getElementById('settingsBack'),
+    questionRange: document.getElementById('questionRange'),
+    questionValue: document.getElementById('questionValue'),
+    answerRange: document.getElementById('answerRange'),
+    answerValue: document.getElementById('answerValue'),
+    shotBtn: document.getElementById('shotBtn'),
+    bottomLockToggle: document.getElementById('bottomLockToggle'),
 };
 
 const esc = value =>
@@ -259,6 +278,12 @@ function scheduleReconnect() {
     reconnectTimer = setTimeout(connect, 1500);
 }
 
+// 手机上点了需要桌面动手的按钮时走这里。没连上就静默丢弃:指令没有补发语义,重连后再点一次即可。
+function sendCommand(action) {
+    if (!socket || socket.readyState !== WebSocket.OPEN || !state.authed) return;
+    socket.send(JSON.stringify({ type: 'command', action }));
+}
+
 // ---------- 数据合并 ----------
 
 function findEntry(mode, id) {
@@ -297,7 +322,8 @@ function claimEntry(mode, id, text, question) {
     open.id = id;
     open.open = false;
     open.questionFinal = true;
-    if (question && !open.question) open.question = question;
+    // 收养时以事件带来的问题为准:快速连问下这个占位块可能是别的问题留下的,原样留着会把错的问题带给这条回答。
+    if (question) open.question = question;
     open.text = text;
     const node = blockEls.get(oldKey);
     if (node) {
@@ -307,9 +333,11 @@ function claimEntry(mode, id, text, question) {
     return open;
 }
 
-// 问题比它的回答早到几百毫秒到几秒。先给这一轮立一个只有问题的占位块,问题就能像回答一样逐字流式出现;
-// 回答到达时由 claimEntry 收养同一个块。
-function handleQuestion(text, final) {
+// 问题比它的回答早到几百毫秒到几秒。先给这一轮立一个只有问题的占位块,问题就能像回答一样逐字流式出现。
+// 精要列表的回答靠轮次 id(turnId)寻址,所以问题一定稿就顺手把占位块改名成那个 id:回答到达时按 id 精确
+// 配对——连续快速提问时,靠「谁是开着的那个块」去认必然认错。详细列表的回答用的是另一个 id(detailId),
+// 且问题文本随 detail 事件一起来,所以它保持可收养状态,仍交给 claimEntry。
+function handleQuestion(text, final, turnId) {
     state.pendingQuestion = text;
 
     // 上一个问题已定稿却还没被任何回答收养(那一轮没派发出回答),又来新文本 → 这是下一轮提问了:把旧占位
@@ -333,6 +361,18 @@ function handleQuestion(text, final) {
         }
         open.question = text;
         open.questionFinal = Boolean(final);
+
+        if (mode === 'brief' && final && turnId != null && open.id !== String(turnId)) {
+            const oldKey = `${mode}:${open.id}`;
+            const node = blockEls.get(oldKey);
+            if (node) {
+                blockEls.delete(oldKey);
+                blockEls.set(`${mode}:${String(turnId)}`, node);
+            }
+            open.id = String(turnId);
+            open.open = false;
+        }
+
         updateBlock(mode, open);
     }
 
@@ -355,7 +395,7 @@ function applyEvent({ channel, data }) {
         case 'transcription-update':
         case 'transcription-final':
             if (!data || data.speaker === 'user') return;
-            handleQuestion(data.text || '', channel === 'transcription-final');
+            handleQuestion(data.text || '', channel === 'transcription-final', data.turnId);
             return;
 
         case 'new-response':
@@ -401,6 +441,8 @@ function applyEvent({ channel, data }) {
 // ---------- 渲染 ----------
 
 const blockEls = new Map();
+// 左侧导航的一条条短横线,与 activeList() 一一对应(占位块也算一条)。
+let navEls = [];
 let anchor = 0;
 let suppressScroll = false;
 
@@ -412,6 +454,8 @@ function rebuild() {
     if (state.screen !== 'stage') return;
     dom.feed.innerHTML = '';
     blockEls.clear();
+    navEls = [];
+    dom.nav.innerHTML = '';
 
     const list = activeList();
     if (!list.length) {
@@ -419,6 +463,7 @@ function rebuild() {
         return;
     }
     for (const entry of list) upsertNode(state.answerMode, entry);
+    syncNav();
     if (state.following) anchorToLast();
 }
 
@@ -477,20 +522,99 @@ function updateBlock(mode, entry) {
     if (placeholder && placeholder.classList.contains('empty')) dom.feed.innerHTML = '';
 
     upsertNode(mode, entry);
+    syncNav();
     if (state.following) anchorToLast();
 }
 
 // 跟随的是「最新一块的顶部」而不是底部:提词器要让人从这一轮回答的第一个字开始读,而不是读它的结尾。
+// 开了「锁定到最底端」则改跟底部,像普通聊天那样始终停在最新内容。
 function anchorToLast() {
     const last = dom.feed.lastElementChild;
     if (!last || last.classList.contains('empty')) return;
 
     suppressScroll = true;
-    anchor = last.offsetTop;
-    dom.feed.scrollTop = anchor;
+    dom.feed.scrollTop = state.bottomLock ? dom.feed.scrollHeight - dom.feed.clientHeight : last.offsetTop;
+    // 以实际落点为准:滚到底部附近时 scrollTop 会被夹住,记成目标值会让后续的「是否仍在跟随」判断失准。
+    anchor = dom.feed.scrollTop;
     requestAnimationFrame(() => {
         suppressScroll = false;
     });
+    updateNavActive();
+}
+
+// 导航条与 activeList() 同源。条数变了才重建(重建会重挂点击,条目对象在同一列表里是稳定的,收养只改
+// 字段不换对象);条数没变只把条目指针挪一挪,免得每次流式更新都重造一遍 DOM。
+function syncNav() {
+    const list = activeList();
+    if (navEls.length !== list.length) {
+        dom.nav.innerHTML = '';
+        navEls = list.map(entry => {
+            const el = document.createElement('button');
+            el.type = 'button';
+            el.className = 'nav-dash';
+            el.addEventListener('click', () => jumpTo(entry));
+            dom.nav.appendChild(el);
+            return { entry, el };
+        });
+    } else {
+        navEls.forEach((item, index) => {
+            item.entry = list[index];
+        });
+    }
+    layoutNav();
+    updateNavActive();
+}
+
+// 悬浮导航的间距规则:先按「一段固定的小间距」排;一旦这样排出来的总长超过屏幕高的 1/3,就改用灵活间距,
+// 把总长压到 1/3。高度交给 flex 的 space-between 去分配,这里只算该给多高——所以固定间距写成常量,
+// 灵活间距由 CSS 自己摊。NAV_FIXED_GAP 是先给的经验值,后面按观感调。
+const NAV_FIXED_GAP = 8;
+const NAV_DASH_HEIGHT = 3;
+
+function layoutNav() {
+    if (navEls.length === 0) return;
+    const span = Math.round(window.innerHeight / 3);
+    const natural = navEls.length * NAV_DASH_HEIGHT + (navEls.length - 1) * NAV_FIXED_GAP;
+    dom.nav.style.height = `${Math.min(natural, span)}px`;
+}
+
+// 点某条横线就把它那块滚到顶部。跳转即停止跟随,否则下一次流式更新会把视线又拽回末尾。
+function jumpTo(entry) {
+    const node = blockEls.get(`${state.answerMode}:${entry.id}`);
+    if (!node) return;
+    state.following = false;
+    dom.feed.scrollTop = node.el.offsetTop;
+    updateNavActive();
+}
+
+// 高亮「当前压在顶部的那一块」:滚动位置落在谁的地界里就点亮谁;都没越过时点亮第一条。滚到底部时最后
+// 一块往往顶不到最上沿(下面没内容了),这时按「到底了」处理,点亮最后一条而不是上面那条。
+function updateNavActive() {
+    if (!navEls.length) return;
+    const top = dom.feed.scrollTop;
+    const maxTop = dom.feed.scrollHeight - dom.feed.clientHeight;
+    let activeIndex = 0;
+    if (maxTop > 0 && top >= maxTop - 2) {
+        activeIndex = navEls.length - 1;
+    } else {
+        navEls.forEach((item, index) => {
+            const node = blockEls.get(`${state.answerMode}:${item.entry.id}`);
+            if (node && node.el.offsetTop <= top + 8) activeIndex = index;
+        });
+    }
+    navEls.forEach((item, index) => item.el.classList.toggle('active', index === activeIndex));
+}
+
+// 手机端「清空上下文」:和桌面一致,只留下还在流式的回答——截断半句是唯一绝不能做的事。判断要看回答是否
+// 真的开始了(有正文且未定稿),而不是只看未定稿:只有问题的占位块也是未定稿的,留着就会在清空后孤零零地
+// 挂一个「考官问题」。
+const stillStreaming = entry => !entry.final && Boolean(entry.text);
+
+function clearConversation() {
+    state.briefs = state.briefs.filter(stillStreaming);
+    state.details = state.details.filter(stillStreaming);
+    state.following = true;
+    rebuild();
 }
 
 function setMode(mode) {
@@ -504,17 +628,13 @@ function setMode(mode) {
 
 // ---------- 屏幕常亮 ----------
 
-// http://192.168.x.x 不是安全上下文,navigator.wakeLock 通常不存在,所以拿不到时只提示用户手动关自动锁屏,
-// 不再套一层循环静音视频的 hack(那个在不同机型上并不可靠,反而更难排查)。
+// http://192.168.x.x 不是安全上下文,navigator.wakeLock 通常不存在,那就什么都做不了——不套循环静音视频的
+// hack(那个在不同机型上并不可靠,反而更难排查)。拿得到就申请,页面重新可见时再申请一次。
 async function keepAwake() {
-    if (!navigator.wakeLock) {
-        dom.stayHint.hidden = false;
-        return;
-    }
+    if (!navigator.wakeLock) return;
     try {
         await navigator.wakeLock.request('screen');
     } catch {
-        dom.stayHint.hidden = false;
         return;
     }
     document.addEventListener('visibilitychange', () => {
@@ -524,24 +644,39 @@ async function keepAwake() {
 
 // ---------- 设置 ----------
 
-// 字号存在 localStorage 并写进 :root 的 --font-size,问题和回答都读它,所以调一处两边一起变。
-function readFont() {
+// 两个字号各存 localStorage 并分别写进 :root 的 --q-font-size / --a-font-size,问题读前者、回答读后者,
+// 互不影响。
+function readStoredFont(key) {
     try {
-        const value = Number(localStorage.getItem(FONT_KEY));
-        return value > 0 ? value : DEFAULT_FONT;
+        const value = Number(localStorage.getItem(key));
+        return value > 0 ? value : null;
     } catch {
-        return DEFAULT_FONT;
+        return null;
     }
 }
 
-function applyFont(px) {
-    document.documentElement.style.setProperty('--font-size', `${px}px`);
-    dom.fontValue.textContent = `${px}px`;
+// 首次打开读一次:各自的键优先,缺了回落到旧版的单键(等于把升级前的字号原样保留给两边),都没有才用默认。
+function readInitialFonts() {
+    const legacy = readStoredFont(LEGACY_FONT_KEY);
+    return {
+        question: readStoredFont(QUESTION_FONT_KEY) || legacy || DEFAULT_FONT,
+        answer: readStoredFont(ANSWER_FONT_KEY) || legacy || DEFAULT_FONT,
+    };
 }
 
-function saveFont(px) {
+function applyQuestionFont(px) {
+    document.documentElement.style.setProperty('--q-font-size', `${px}px`);
+    dom.questionValue.textContent = `${px}px`;
+}
+
+function applyAnswerFont(px) {
+    document.documentElement.style.setProperty('--a-font-size', `${px}px`);
+    dom.answerValue.textContent = `${px}px`;
+}
+
+function saveFont(key, px) {
     try {
-        localStorage.setItem(FONT_KEY, String(px));
+        localStorage.setItem(key, String(px));
     } catch {
         // 隐私模式下写不进去:本次仍生效,刷新后回默认。
     }
@@ -555,12 +690,37 @@ function closeSettings() {
     dom.settings.hidden = true;
 }
 
+// 有新消息时是否滚到最底端。默认关:提词器要人从这轮回答第一个字读起,滚到底反而看不到开头。
+function readBottomLock() {
+    try {
+        return localStorage.getItem(BOTTOM_LOCK_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function saveBottomLock(value) {
+    try {
+        localStorage.setItem(BOTTOM_LOCK_KEY, value ? '1' : '0');
+    } catch {
+        // 隐私模式下写不进去:本次仍生效,刷新后回默认。
+    }
+}
+
+function applyBottomLock(value) {
+    state.bottomLock = value;
+    dom.bottomLockToggle.checked = value;
+}
+
 // ---------- 启动 ----------
 
 dom.feed.addEventListener('scroll', () => {
-    if (suppressScroll) return;
-    state.following = Math.abs(dom.feed.scrollTop - anchor) <= 32;
+    if (!suppressScroll) state.following = Math.abs(dom.feed.scrollTop - anchor) <= 32;
+    updateNavActive();
 });
+
+// 横竖屏切换、地址栏收放都会改窗口高,导航的 1/3 上限跟着重算。
+window.addEventListener('resize', layoutNav);
 
 dom.modeBrief.addEventListener('click', () => setMode('brief'));
 dom.modeDetail.addEventListener('click', () => setMode('detail'));
@@ -570,17 +730,37 @@ dom.code.addEventListener('input', () => {
     if (dom.code.value.length === 6) tryPair(dom.code.value);
 });
 
-dom.settingsBtn.addEventListener('click', openSettings);
-dom.settingsClose.addEventListener('click', closeSettings);
-dom.fontRange.addEventListener('input', () => {
-    const px = Number(dom.fontRange.value);
-    applyFont(px);
-    saveFont(px);
+// 刷新即「清空上下文」:请桌面把模型记忆清掉,本地同步丢掉已定稿的块,两边看到的一致。
+dom.refreshBtn.addEventListener('click', () => {
+    sendCommand('clear-context');
+    clearConversation();
 });
 
-const initialFont = readFont();
-dom.fontRange.value = String(initialFont);
-applyFont(initialFont);
+dom.shotBtn.addEventListener('click', () => sendCommand('screenshot'));
+
+dom.settingsBtn.addEventListener('click', openSettings);
+dom.settingsBack.addEventListener('click', closeSettings);
+dom.questionRange.addEventListener('input', () => {
+    const px = Number(dom.questionRange.value);
+    applyQuestionFont(px);
+    saveFont(QUESTION_FONT_KEY, px);
+});
+dom.answerRange.addEventListener('input', () => {
+    const px = Number(dom.answerRange.value);
+    applyAnswerFont(px);
+    saveFont(ANSWER_FONT_KEY, px);
+});
+dom.bottomLockToggle.addEventListener('change', () => {
+    applyBottomLock(dom.bottomLockToggle.checked);
+    saveBottomLock(dom.bottomLockToggle.checked);
+});
+
+const initialFonts = readInitialFonts();
+dom.questionRange.value = String(initialFonts.question);
+dom.answerRange.value = String(initialFonts.answer);
+applyQuestionFont(initialFonts.question);
+applyAnswerFont(initialFonts.answer);
+applyBottomLock(state.bottomLock);
 
 localize();
 if (state.token) {

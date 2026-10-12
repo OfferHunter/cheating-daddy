@@ -1026,18 +1026,20 @@ const theme = {
         };
     },
 
+    // 表面色由背景色按固定步长派生：亮色压暗、暗色提亮。applyBackgrounds（带 uiAlpha）与 opaqueTokens
+    // （推给手机）共用，免得两处步长漂移。
+    deriveSurfaces(backgroundColor) {
+        const base = this.hexToRgb(backgroundColor);
+        const isLight = (base.r + base.g + base.b) / 3 > 128;
+        const adjust = isLight ? this.darkenColor.bind(this) : this.lightenColor.bind(this);
+        return { base, secondary: adjust(base, 10), tertiary: adjust(base, 22), hover: adjust(base, 28) };
+    },
+
     // 每个表面 token 的 alpha 写成 var() 而不是定值：拖动透明度滑块只需要重写 --ui-alpha，整个界面一帧
     // 之内就重新解析完。
     applyBackgrounds(backgroundColor) {
         const root = document.documentElement;
-        const baseRgb = this.hexToRgb(backgroundColor);
-
-        const isLight = (baseRgb.r + baseRgb.g + baseRgb.b) / 3 > 128;
-        const adjust = isLight ? this.darkenColor.bind(this) : this.lightenColor.bind(this);
-
-        const secondary = adjust(baseRgb, 10);
-        const tertiary = adjust(baseRgb, 22);
-        const hover = adjust(baseRgb, 28);
+        const { base: baseRgb, secondary, tertiary, hover } = this.deriveSurfaces(backgroundColor);
 
         const bgBase = `rgba(${baseRgb.r}, ${baseRgb.g}, ${baseRgb.b}, var(--ui-alpha))`;
         const bgSurface = `rgba(${secondary.r}, ${secondary.g}, ${secondary.b}, var(--ui-alpha))`;
@@ -1060,6 +1062,29 @@ const theme = {
         root.style.setProperty('--input-focus-background', bgElevated);
         root.style.setProperty('--hover-background', bgHover);
         root.style.setProperty('--scrollbar-background', bgBase);
+    },
+
+    // 手机提词页是普通浏览器上下文，读不到本页的 :root，只能由这里把当前主题的解析值推过去。推的是不透明
+    // 值：手机不是叠在别的内容上的浮窗，带 uiAlpha 会直接露出浏览器的白底。
+    opaqueTokens() {
+        const colors = this.get(this.current);
+        const { base, secondary, tertiary, hover } = this.deriveSurfaces(colors.background);
+        const rgb = ({ r, g, b }) => `rgb(${r}, ${g}, ${b})`;
+        return {
+            '--bg-app': rgb(base),
+            '--bg-surface': rgb(secondary),
+            '--bg-elevated': rgb(tertiary),
+            '--bg-hover': rgb(hover),
+            '--text-primary': colors.text,
+            '--text-secondary': colors.textSecondary,
+            '--text-muted': colors.textMuted,
+            '--border': colors.border,
+            '--border-strong': colors.accent,
+            '--accent': colors.btnPrimaryBg,
+            '--accent-hover': colors.btnPrimaryHover,
+            '--link-color': colors.btnPrimaryBg,
+            '--btn-primary-text': colors.btnPrimaryText,
+        };
     },
 
     // 运行时唯一会变的两个数字。所有 token 都引用它们，所以拖一次滑块只是两次 setProperty，不必重建每
@@ -1127,6 +1152,10 @@ const theme = {
         root.style.setProperty('--success-color', '#4caf50');
 
         this.applyBackgrounds(colors.background);
+
+        // apply 是主题变更的唯一漏斗（load / save / togglePolarity 都走它），所以手机提词页的令牌在这里
+        // 推一次即可，主进程缓存后供 /theme.css 读取。
+        ipcRenderer.send('teleprompter:theme', this.opaqueTokens());
     },
 
     async load() {

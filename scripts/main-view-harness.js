@@ -1,4 +1,4 @@
-// 主页「电脑+手机端」的门控验证:离屏加载真实的 MainView.js,把 offerHunter.teleprompter 换成可控的桩,
+// 主页「电脑+移动端」的门控验证:离屏加载真实的 MainView.js,把 offerHunter.teleprompter 换成可控的桩,
 // 断言未配对时「开始会话」禁用、配对翻转后启用。跑真实组件比读代码可靠——按钮状态是渲染出来的。
 //
 // 运行:node_modules/electron/dist/electron.exe scripts/main-view-harness.js
@@ -112,9 +112,16 @@ app.whenReady().then(async () => {
         check('main-view element mounted', await exec(`!!document.querySelector('main-view')`));
         check('start button rendered', await exec(`!!window.__q('.start-button')`));
 
-        // 切到「电脑+手机端」那一页。
+        // 第一页「纯电脑端」:标题右侧有说明,note 按 \n 拆成多行。
+        check('desktop page title has a right-side description', (await exec(`window.__q('.page-title-desc').textContent`)).trim() === '在电脑上面试/笔试，在本应用看AI提词');
+        check('desktop note breaks into one line per sentence', (await exec(`window.__q('.page-note').querySelectorAll('br').length`)) === 3);
+
+        // 切到「电脑+移动端」那一页。
         await exec(`document.querySelector('main-view').pageIndex = 1`);
         await wait(150);
+
+        check('desktop+phone page title has a right-side description', (await exec(`window.__q('.page-title-desc').textContent`)).trim() === '在电脑上面试/笔试，在手机、平板网页看电脑提词');
+        check('desktop+phone note breaks into one line per sentence', (await exec(`window.__q('.page-note').querySelectorAll('br').length`)) === 2);
 
         check('pairing box shows the address', (await exec(`window.__q('.pair-value').textContent`)).trim() === 'http://192.168.1.5:8765');
         check('pairing box shows the code', (await exec(`window.__q('.pair-code').textContent`)).trim() === '123456');

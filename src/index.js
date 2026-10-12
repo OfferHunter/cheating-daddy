@@ -486,6 +486,26 @@ function setupTeleprompterIpcHandlers() {
             return { success: false, error: error.message };
         }
     });
+
+    // 渲染端换主题后把解析令牌推来,缓存进提词服务,供手机页的 /theme.css 取一次。
+    ipcMain.on('teleprompter:theme', (event, tokens) => {
+        teleprompter.setTheme(tokens);
+    });
+
+    // 手机下达的指令落到桌面:截图必须走渲染端(采集流在那里),清空上下文则复用桌面自己那套——同时清模型
+    // 记忆和已落定气泡,不另写一份逻辑。没会话时两者都会自行拒绝,所以这里不做额外校验。
+    teleprompter.setCommandHandler(action => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (!win) return;
+        if (action === 'screenshot') {
+            win.webContents.executeJavaScript('window.captureManualScreenshot && window.captureManualScreenshot()', true);
+        } else if (action === 'clear-context') {
+            win.webContents.executeJavaScript(
+                'window.offerHunter && window.offerHunter.element && window.offerHunter.element().handleClearContext()',
+                true
+            );
+        }
+    });
 }
 
 // 激活码的核验全在主进程：渲染端只拿到"是否已激活"和机器码，验签与私钥相关的一切都不出这里。

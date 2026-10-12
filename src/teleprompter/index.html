@@ -6,6 +6,8 @@
         <meta name="color-scheme" content="dark" />
         <title>提词 / Teleprompter</title>
         <link rel="stylesheet" href="/app.css" />
+        <!-- 桌面当前主题的令牌,由提词服务按渲染端推来的值动态生成;排在 app.css 之后,同名令牌以它为准。 -->
+        <link rel="stylesheet" href="/theme.css" />
     </head>
     <body>
         <section id="pairing" class="screen pairing">
@@ -20,7 +22,16 @@
 
         <section id="stage" class="screen stage" hidden>
             <header class="topbar">
-                <span id="conn" class="conn"></span>
+                <div class="topbar-left">
+                    <span id="conn" class="conn"></span>
+                    <button id="refreshBtn" class="icon-btn" aria-label="Clear context">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 4v6h-6" />
+                            <path d="M1 20v-6h6" />
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </svg>
+                    </button>
+                </div>
                 <div class="modes">
                     <button id="modeBrief" class="mode active" data-i18n="modeBrief"></button>
                     <button id="modeDetail" class="mode" data-i18n="modeDetail"></button>
@@ -29,22 +40,51 @@
                     <span></span><span></span><span></span>
                 </button>
             </header>
-            <main id="feed" class="feed"></main>
-            <p id="stayHint" class="stay-hint" hidden data-i18n="stayHint"></p>
+            <div class="stage-body">
+                <nav id="nav" class="nav" aria-label="Turns"></nav>
+                <main id="feed" class="feed"></main>
+            </div>
+            <div id="controlbar" class="controlbar">
+                <div id="controlItems" class="control-items">
+                    <button id="shotBtn" class="control-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                            <circle cx="12" cy="13" r="4" />
+                        </svg>
+                        <span data-i18n="shotBtn"></span>
+                    </button>
+                </div>
+            </div>
         </section>
 
         <section id="settings" class="screen settings" hidden>
             <header class="topbar">
+                <button id="settingsBack" class="icon-btn back" aria-label="Back">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                </button>
                 <h1 class="settings-title" data-i18n="settingsTitle"></h1>
-                <button id="settingsClose" class="icon-btn close" aria-label="Close">✕</button>
             </header>
             <div class="settings-body">
                 <div class="setting-head">
-                    <label for="fontRange" data-i18n="fontSizeLabel"></label>
-                    <span id="fontValue" class="setting-value"></span>
+                    <label for="questionRange" data-i18n="questionFontLabel"></label>
+                    <span id="questionValue" class="setting-value"></span>
                 </div>
-                <input id="fontRange" class="range" type="range" min="12" max="32" step="1" />
-                <p class="sample" data-i18n="fontSample"></p>
+                <input id="questionRange" class="range" type="range" min="12" max="32" step="1" />
+                <p class="sample question-sample" data-i18n="fontSampleQuestion"></p>
+
+                <div class="setting-head">
+                    <label for="answerRange" data-i18n="answerFontLabel"></label>
+                    <span id="answerValue" class="setting-value"></span>
+                </div>
+                <input id="answerRange" class="range" type="range" min="12" max="32" step="1" />
+                <p class="sample answer-sample" data-i18n="fontSampleAnswer"></p>
+
+                <label class="toggle-row">
+                    <input id="bottomLockToggle" class="toggle-input" type="checkbox" />
+                    <span class="toggle-label" data-i18n="lockBottom"></span>
+                </label>
             </div>
         </section>
 

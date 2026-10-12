@@ -73,14 +73,46 @@ app.whenReady().then(async () => {
             for (const blocker of blockers) blocker.close();
         }
 
+        // 手机下达的指令在服务里只是一个回调:harness 收下动作名即可断言,不必真的去驱动一个桌面窗口。
+        const commands = [];
+        teleprompter.setCommandHandler(action => commands.push(action));
+
         const url = `http://127.0.0.1:${status.port}/`;
         const code = status.code;
+
+        // ---- 主题跟随:桌面推来的令牌渲染成 /theme.css,手机页打开时取一次 ----
+        const fetchText = target =>
+            new Promise((resolve, reject) => {
+                http.get(target, res => {
+                    let body = '';
+                    res.on('data', chunk => (body += chunk));
+                    res.on('end', () => resolve({ status: res.statusCode, body }));
+                }).on('error', reject);
+            });
+
+        // 推主题之前:空 :root,手机页继续用 app.css 的兜底值(gruvbox)。
+        check('theme.css is empty before the desktop pushes a theme', (await fetchText(`${url}theme.css`)).body === ':root{}');
+
+        // 用一个亮色背景,顺带验证 color-scheme 跟着背景亮度走(而不是 html 里写死的 dark)。
+        teleprompter.setTheme({
+            '--bg-app': 'rgb(240, 240, 240)',
+            '--text-primary': 'rgb(20, 20, 20)',
+            '--accent': '#123456',
+            '--btn-primary-text': '#654321',
+        });
+        const themeCss = (await fetchText(`${url}theme.css`)).body;
+        check('theme.css carries the pushed tokens', themeCss.includes('--accent:#123456'));
+        check('a light background flips color-scheme to light', themeCss.includes('color-scheme:light'));
 
         const win = new BrowserWindow({ show: false, width: 420, height: 900 });
         await win.loadURL(url);
         await wait(400);
 
         const exec = js => win.webContents.executeJavaScript(js, true);
+
+        check('pushed token lands on :root', (await exec(`getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()`)) === '#123456');
+        check('pushed token reaches a rendered element', (await exec(`getComputedStyle(document.getElementById('pairBtn')).backgroundColor`)) === 'rgb(18, 52, 86)');
+        check('color-scheme follows the pushed background', (await exec(`getComputedStyle(document.documentElement).colorScheme`)) === 'light');
 
         // 用 computed display 判断显隐,而不是 .hidden 属性:属性为 true 不等于真的没渲染
         // (`display: flex` 会盖掉 `hidden` 的 `display: none`,两屏就会叠在一起)。
@@ -100,6 +132,22 @@ app.whenReady().then(async () => {
         check('conn online after pairing', await exec(`document.getElementById('conn').classList.contains('online')`));
         check('desktop language preference drives phone UI', (await exec(`document.getElementById('modeBrief').textContent`)).trim() === '精要');
 
+        // ---- 底部控制栏(一栏按钮,不再折叠)+ 顶栏刷新:动作要能变成发给桌面的指令 ----
+        check('control bar has a screenshot button', await exec(`!!document.getElementById('shotBtn')`));
+        check('control buttons are visible', await exec(`getComputedStyle(document.getElementById('controlItems')).display !== 'none'`));
+        check('control bar has no collapse toggle', await exec(`!document.getElementById('controlToggle')`));
+        check('control bar sits flush with the bottom edge', await exec(`Math.abs(document.getElementById('controlbar').getBoundingClientRect().bottom - window.innerHeight) <= 1`));
+        await exec(`document.getElementById('shotBtn').click()`);
+        await wait(120);
+        check('screenshot button sends the screenshot command', commands.includes('screenshot'));
+        await exec(`document.getElementById('refreshBtn').click()`);
+        await wait(120);
+        check('refresh button sends the clear-context command', commands.includes('clear-context'));
+
+        // ---- 左侧导航:悬浮在正文上、没有分割线 ----
+        check('nav floats above the feed', await exec(`getComputedStyle(document.getElementById('nav')).position === 'absolute'`));
+        check('nav has no divider line', await exec(`getComputedStyle(document.getElementById('nav')).borderRightWidth === '0px'`));
+
         // ---- 问题 ----
         teleprompter.broadcast('transcription-final', { text: '什么是闭包？', speaker: 'interviewer' });
         await wait(150);
@@ -108,6 +156,8 @@ app.whenReady().then(async () => {
         teleprompter.broadcast('new-response', { turnId: 1, text: '闭包是**函数**加其词法环境。' });
         await wait(150);
         check('brief turn rendered', await exec(`document.querySelectorAll('#feed .turn').length === 1`));
+        check('nav shows one dash per turn', await exec(`document.querySelectorAll('#nav .nav-dash').length === 1`));
+        check('nav keeps its natural size with a single dash', await exec(`Math.abs(document.getElementById('nav').getBoundingClientRect().height - 3) <= 1`));
         check('brief markdown applied', await exec(`!!document.querySelector('#feed .answer strong')`));
         check('brief question attached', await exec(`document.querySelector('#feed .question').textContent.includes('闭包')`));
         check('cursor shown while streaming', await exec(`document.querySelector('#feed .answer').classList.contains('cursor')`));
@@ -170,6 +220,23 @@ app.whenReady().then(async () => {
         await wait(600);
         check('back-to-back bursts lose no events', (await exec(`document.querySelectorAll('#feed .error').length`)) === 60);
 
+        // ---- 左侧导航:每条回答一横线,点击跳到那块开头并高亮 ----
+        check('nav tracks every turn', (await exec(`document.querySelectorAll('#nav .nav-dash').length`)) === 60);
+        check('nav clamps its span to a third of the screen', await exec(`(() => {
+            const n = 60;
+            const expected = Math.min(n * 3 + (n - 1) * 8, Math.round(window.innerHeight / 3));
+            return Math.abs(document.getElementById('nav').getBoundingClientRect().height - expected) <= 1;
+        })()`));
+        const firstTurnTop = await exec(`document.querySelector('#feed .turn').offsetTop`);
+        await exec(`document.querySelectorAll('#nav .nav-dash')[0].click()`);
+        await wait(150);
+        check('clicking the first dash jumps to the first turn', (await exec(`document.getElementById('feed').scrollTop`)) === firstTurnTop);
+        check('first dash highlighted after jump', await exec(`document.querySelectorAll('#nav .nav-dash')[0].classList.contains('active')`));
+        await exec(`document.querySelectorAll('#nav .nav-dash')[59].click()`);
+        await wait(150);
+        check('clicking the last dash jumps toward the bottom', await exec(`document.getElementById('feed').scrollTop > 0`));
+        check('last dash highlighted after jump', await exec(`document.querySelectorAll('#nav .nav-dash')[59].classList.contains('active')`));
+
         // ---- 问题流式:先于回答出现、随转录增长、定稿后停光标 ----
         teleprompter.broadcast('session-initializing', true);
         await wait(150);
@@ -197,23 +264,88 @@ app.whenReady().then(async () => {
         teleprompter.broadcast('response-complete', { turnId: 7 });
         await wait(150);
 
-        // ---- 字号:问题与回答同用一个默认值,设置页调一处两边一起变并持久化 ----
-        check('question and answer share one default size', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === (await exec(`getComputedStyle(document.querySelector('#feed .answer')).fontSize`)));
+        // ---- 字号:问题与回答各自独立,默认都是最小档 12px,分别调节、各自持久化 ----
+        check('question defaults to the 12px floor', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === '12px');
+        check('answer defaults to the 12px floor', (await exec(`getComputedStyle(document.querySelector('#feed .answer')).fontSize`)) === '12px');
         check('settings hidden initially', await exec(`!(${shown('settings')})`));
         await exec(`document.getElementById('settingsBtn').click()`);
         await wait(120);
         check('hamburger opens settings', await exec(shown('settings')));
+        // 设置页顶栏:左上角是返回键,右上角是标题「设置」。
+        check('settings bar leads with the back button', await exec(`document.querySelector('#settings .topbar').firstElementChild.id === 'settingsBack'`));
+        check('settings title sits on the right', await exec(`document.querySelector('#settings .topbar').lastElementChild.classList.contains('settings-title') && document.querySelector('.settings-title').textContent.trim() === '设置'`));
 
-        await exec(`(() => { const r = document.getElementById('fontRange'); r.value = '24'; r.dispatchEvent(new Event('input')); })()`);
+        await exec(`(() => { const r = document.getElementById('questionRange'); r.value = '24'; r.dispatchEvent(new Event('input')); })()`);
         await wait(120);
-        check('font size applies to answer', (await exec(`getComputedStyle(document.querySelector('#feed .answer')).fontSize`)) === '24px');
-        check('font size applies to question too', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === '24px');
-        check('font size persisted to localStorage', (await exec(`localStorage.getItem('offerHunterTeleprompterFontSize')`)) === '24');
-        check('font value label reflects the size', (await exec(`document.getElementById('fontValue').textContent`)).trim() === '24px');
+        check('question size applies to question', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === '24px');
+        check('question knob leaves answer untouched', (await exec(`getComputedStyle(document.querySelector('#feed .answer')).fontSize`)) !== '24px');
+        check('question size persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterQuestionFont')`)) === '24');
+        check('question value label reflects the size', (await exec(`document.getElementById('questionValue').textContent`)).trim() === '24px');
 
-        await exec(`document.getElementById('settingsClose').click()`);
+        await exec(`(() => { const r = document.getElementById('answerRange'); r.value = '30'; r.dispatchEvent(new Event('input')); })()`);
         await wait(120);
-        check('close button hides settings', await exec(`!(${shown('settings')})`));
+        check('answer size applies to answer', (await exec(`getComputedStyle(document.querySelector('#feed .answer')).fontSize`)) === '30px');
+        check('answer knob leaves question untouched', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === '24px');
+        check('answer size persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterAnswerFont')`)) === '30');
+
+        // ---- 有新消息时锁定到最底端:默认关,开了要持久化 ----
+        check('settings has a bottom-lock toggle', await exec(`!!document.getElementById('bottomLockToggle')`));
+        check('bottom lock is off by default', await exec(`!document.getElementById('bottomLockToggle').checked`));
+        await exec(`(() => { const c = document.getElementById('bottomLockToggle'); c.checked = true; c.dispatchEvent(new Event('change')); })()`);
+        await wait(120);
+        check('bottom lock persisted when enabled', (await exec(`localStorage.getItem('offerHunterTeleprompterBottomLock')`)) === '1');
+
+        await exec(`document.getElementById('settingsBack').click()`);
+        await wait(120);
+        check('back button hides settings', await exec(`!(${shown('settings')})`));
+
+        // ---- 快速连问:三个问题先到齐、回答才陆续来,必须一一配对且各自留下正确的问题文本 ----
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        // 第一个问题先来一段中间态再去定稿:定稿事件带着该轮的 turnId,占位块据此改名成答案的 id。
+        teleprompter.broadcast('transcription-update', { text: 'JVM的内存', speaker: 'interviewer' });
+        teleprompter.broadcast('transcription-final', { text: 'JVM的内存机制', speaker: 'interviewer', turnId: 1 });
+        teleprompter.broadcast('transcription-final', { text: 'Java的双亲委派机制', speaker: 'interviewer', turnId: 2 });
+        teleprompter.broadcast('transcription-final', { text: 'Java的面向对象机制有哪些部分', speaker: 'interviewer', turnId: 3 });
+        await wait(150);
+        check('rapid questions render one block each', await exec(`document.querySelectorAll('#feed .turn').length === 3`));
+        check('rapid questions keep their own text', await exec(`(() => {
+            const qs = Array.from(document.querySelectorAll('#feed .turn .question')).map(q => q.textContent);
+            return qs[0].includes('JVM的内存机制') && qs[1].includes('Java的双亲委派机制') && qs[2].includes('Java的面向对象机制有哪些部分');
+        })()`));
+
+        teleprompter.broadcast('new-response', { turnId: 1, text: '答一' });
+        teleprompter.broadcast('new-response', { turnId: 2, text: '答二' });
+        teleprompter.broadcast('new-response', { turnId: 3, text: '答三' });
+        teleprompter.broadcast('response-complete', { turnId: 1 });
+        teleprompter.broadcast('response-complete', { turnId: 2 });
+        teleprompter.broadcast('response-complete', { turnId: 3 });
+        await wait(200);
+        check('every answer pairs with its own question', await exec(`(() => {
+            const pairs = Array.from(document.querySelectorAll('#feed .turn')).map(t => [t.querySelector('.question').textContent, t.querySelector('.answer').textContent]);
+            return pairs.length === 3
+                && pairs.some(([q, a]) => q.includes('JVM') && a.includes('答一'))
+                && pairs.some(([q, a]) => q.includes('双亲委派') && a.includes('答二'))
+                && pairs.some(([q, a]) => q.includes('面向对象') && a.includes('答三'));
+        })()`));
+
+        // ---- 清空上下文:不留孤零零的考官问题,但仍在流式的回答要保住 ----
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        teleprompter.broadcast('transcription-final', { text: '一个没有得到回答的问题', speaker: 'interviewer', turnId: 99 });
+        await wait(150);
+        check('an unanswered question still renders as a block', await exec(`document.querySelectorAll('#feed .turn').length === 1`));
+        await exec(`document.getElementById('refreshBtn').click()`);
+        await wait(150);
+        check('clearing drops a question that was never answered', await exec(`document.querySelectorAll('#feed .turn').length === 0`));
+        check('clearing falls back to the waiting placeholder', await exec(`!!document.querySelector('#feed .empty')`));
+
+        teleprompter.broadcast('transcription-final', { text: '正在流式回答的问题', speaker: 'interviewer', turnId: 100 });
+        teleprompter.broadcast('new-response', { turnId: 100, text: '半个回答' });
+        await wait(150);
+        await exec(`document.getElementById('refreshBtn').click()`);
+        await wait(150);
+        check('clearing keeps an answer that is still streaming', await exec(`document.querySelectorAll('#feed .turn').length === 1 && document.querySelector('#feed .answer').textContent.includes('半个回答')`));
 
         win.destroy();
     } catch (error) {

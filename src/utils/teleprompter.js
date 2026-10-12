@@ -21,6 +21,10 @@ const AUTH_TIMEOUT_MS = 10 * 1000;
 // 断线重连(手机锁屏、切后台)后要能把画面补齐,所以留一小段最近事件做回放。小到不值得担心内存。
 const REPLAY_LIMIT = 80;
 
+// 手机能下达的指令白名单。手机是显示器,这两条是它唯一被允许反过来驱动桌面的动作,所以只认精确字符串,
+// 且必须来自已鉴权的连接。
+const COMMANDS = new Set(['screenshot', 'clear-context']);
+
 // 只有这些频道会外发。这是安全边界而不是过滤优化:`save-session-context` 带 customPrompt、任何凭证都
 // 不在此列,一律不出主进程。
 const FORWARDED_CHANNELS = new Set([
@@ -53,6 +57,37 @@ let pairAttempts = 0;
 let lockedUntil = 0;
 let replay = [];
 const clients = new Set();
+
+// 桌面当前主题的解析令牌,渲染端在每次换主题时推来。手机页拿不到桌面的 :root,只能靠这里把它渲染成
+// /theme.css 交过去。非会话状态,stop 时不清理。
+let themeTokens = null;
+
+// 主进程注册进来的指令处理器:手机点了截图/清空上下文,这里转成桌面上的实际动作。服务本身不懂 Electron,
+// 保持可独立测试——没注册时指令被静默丢弃。
+let commandHandler = null;
+
+function setCommandHandler(handler) {
+    commandHandler = handler;
+}
+
+function setTheme(tokens) {
+    themeTokens = tokens && typeof tokens === 'object' ? tokens : null;
+}
+
+// 由背景亮度定 color-scheme:亮主题下让表单控件、滚动条也走亮色,而不是 html 里写死的 dark。
+function prefersDark(tokens) {
+    const match = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/.exec((tokens && tokens['--bg-app']) || '');
+    if (!match) return true;
+    return (Number(match[1]) + Number(match[2]) + Number(match[3])) / 3 <= 128;
+}
+
+function themeCss() {
+    if (!themeTokens) return ':root{}';
+    const decls = Object.entries(themeTokens)
+        .map(([name, value]) => `${name}:${value};`)
+        .join('');
+    return `:root{color-scheme:${prefersDark(themeTokens) ? 'dark' : 'light'};${decls}}`;
+}
 
 function getLanUrl() {
     const interfaces = os.networkInterfaces();
@@ -139,6 +174,13 @@ function handleRequest(req, res) {
         return;
     }
 
+    // 动态路由:主题令牌由渲染端推来,不能进静态表。手机页用 <link> 引它,打开时取一次。
+    if (req.method === 'GET' && pathname === '/theme.css') {
+        res.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(themeCss());
+        return;
+    }
+
     const route = req.method === 'GET' ? STATIC_ROUTES[pathname] : null;
     if (!route) {
         res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
@@ -179,6 +221,12 @@ function handleSocket(ws) {
             for (const event of replay) {
                 ws.send(JSON.stringify(event));
             }
+            return;
+        }
+
+        // 指令只认已鉴权的连接。否则同网段任何人都能让桌面截图——那等于把屏幕内容喂给攻击者。
+        if (message.type === 'command' && client.authed && COMMANDS.has(message.action)) {
+            if (commandHandler) commandHandler(message.action);
         }
     });
 
@@ -303,4 +351,4 @@ function regenerateCode() {
     return getStatus();
 }
 
-module.exports = { startTeleprompter, stopTeleprompter, broadcast, getStatus, regenerateCode };
+module.exports = { startTeleprompter, stopTeleprompter, broadcast, getStatus, regenerateCode, setCommandHandler, setTheme };

@@ -116,7 +116,9 @@ export class MainView extends LocalizedLitElement {
         .page-title {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: var(--space-sm);
+            row-gap: 2px;
             font-size: var(--font-size-xl);
             font-weight: var(--font-weight-semibold);
             color: var(--text-primary);
@@ -125,6 +127,15 @@ export class MainView extends LocalizedLitElement {
 
         .page-title svg {
             flex-shrink: 0;
+        }
+
+        /* 标题右侧一句说明,窄屏放不下就整句折到下一行,而不是被挤成两行。 */
+        .page-title-desc {
+            margin-left: auto;
+            font-size: var(--font-size-xs);
+            font-weight: var(--font-weight-normal);
+            color: var(--text-muted);
+            text-align: right;
         }
 
         .page-note {
@@ -376,7 +387,7 @@ export class MainView extends LocalizedLitElement {
         }
     }
 
-    // 电脑+手机端这一模式里手机才是显示端,没配对就开会话等于对着没人看的窗口说话,所以必须先连上手机。
+    // 电脑+移动端这一模式里手机才是显示端,没配对就开会话等于对着没人看的窗口说话,所以必须先连上手机。
     _canStartSession() {
         const page = MODE_PAGES[this.pageIndex];
         if (page === 'desktopPhone') return this.teleprompterPaired;
@@ -485,12 +496,20 @@ export class MainView extends LocalizedLitElement {
     // 纯电脑端提词：一切靠本机采集，代价是网页/会议软件仍可能从快捷键、失焦事件、失焦频率上察觉这个窗口。
     _renderDesktopPage() {
         return html`
-            <div class="page-title">${desktopIcon}${t('Desktop-only prompting', '纯电脑端提词')}</div>
+            <div class="page-title">
+                ${desktopIcon}${t('Desktop-only prompting', '纯电脑端提词')}
+                <span class="page-title-desc"
+                    >${t(
+                        'Interview/test on the computer — read the AI prompts in this app',
+                        '在电脑上面试/笔试，在本应用看AI提词'
+                    )}</span
+                >
+            </div>
             <div class="page-note">
                 ${t(
-                    'Even though this app stays hidden, some websites may still pick up shortcuts, blur events or how often you leave the page — use this mode with care. Turning on “Session window cannot be focused” keeps the meeting app or web page focused at all times, but then you cannot type in the input box below (rarely needed) and moving the mouse into the app area still registers blur events. Turning on “click-through” makes the app fully transparent (moving the mouse over it triggers no blur events), but then its controls cannot be clicked either.',
+                    'Even though this app stays hidden, some websites may still pick up shortcuts, blur events or how often you leave the page — use this mode with care.\nTurning on “Session window cannot be focused” keeps the meeting app or web page focused at all times, but then you cannot type in the input box below (rarely needed) and moving the mouse into the app area still registers blur events.\nTurning on “click-through” makes the app fully transparent (moving the mouse over it triggers no blur events), but then its controls cannot be clicked either.\nSetting the shortcut to a common single key such as space, enter or a letter means it does not matter even if it gets picked up, though it may trigger other controls in other apps.',
                     '虽然本应用隐身，但部分网站可能会捕捉快捷键、离屏事件、离屏率等，请你谨慎使用此模式。\n设置中开启「会话界面不可聚焦」可以让会议软件/网页始终保持聚焦，但无法使用下方输入框打字（一般情况下用不上），且鼠标移进应用区域仍会被捕捉离屏事件；\n开启「鼠标穿透」可以彻底让本应用透明化（鼠标移动到本应用上不触发离屏事件），但也会让您无法点击本应用的控件；\n建议将快捷键设置为常用单键如空格、回车和字母键，这样即使被捕捉到也无所谓，但可能会触发其他应用的其他控件。'
-                )}
+                ).split('\n').map((line, i) => (i === 0 ? line : html`<br />${line}`))}
             </div>
             ${this._renderStartButton()}
             <div class="config-hint">
@@ -501,7 +520,7 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    // 配对区就放在「电脑+手机端」这一页:这一模式的显示端是手机,地址和配对码必须在选它、开会话之前就看得到。
+    // 配对区就放在「电脑+移动端」这一页:这一模式的显示端是手机,地址和配对码必须在选它、开会话之前就看得到。
     // 只此一处渲染,不做第二份——配对码可重新生成,两份很容易显示不同的码。
     _renderPairingBox() {
         if (!this.teleprompterRunning) {
@@ -545,15 +564,25 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    // 电脑+手机端提词：手机负责显示，先在下面配对，连上之后「开始会话」才放行。
+    // 电脑+移动端提词：手机负责显示，先在下面配对，连上之后「开始会话」才放行。
     _renderDesktopPhonePage() {
         return html`
-            <div class="page-title">${desktopPhoneIcon}${t('Desktop + phone prompting', '电脑+手机端提词')}</div>
+            <div class="page-title">
+                ${desktopPhoneIcon}${t('Desktop + phone prompting', '电脑+移动端提词')}
+                <span class="page-title-desc"
+                    >${t(
+                        'Interview/test on the computer — read the prompts in a phone/tablet browser',
+                        '在电脑上面试/笔试，在手机、平板网页看电脑提词'
+                    )}</span
+                >
+            </div>
             <div class="page-note">
                 ${t(
-                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones.',
-                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的情况下面试软件需要控制您的一部手机。'
-                )}
+                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones.\nPhone or tablet both work — a tablet gives more room and can hold longer answers.\nIn this mode you control the screenshot from the phone, sidestepping shortcut-based detection.',
+                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的面试软件需要控制您的一部手机。\n手机和平板均可使用，平板的可展示界面比手机更大，可以容纳更长的回答。\n使用此模式可在手机控制截图，从而规避快捷键检测。'
+                )
+                    .split('\n')
+                    .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
             </div>
             ${this._renderPairingBox()} ${this._renderStartButton(this.teleprompterPaired)}
             <div class="config-hint">

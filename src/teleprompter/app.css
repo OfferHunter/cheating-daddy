@@ -1,15 +1,32 @@
 :root {
-    --bg: #14100c;
-    --bg-elevated: #1d1913;
-    --text: #f2e9db;
-    --text-dim: #a99e8b;
-    --text-muted: #6f6555;
-    --border: #332c22;
+    /* 令牌与电脑端同名同义,值由桌面推来经 /theme.css 落进来。这里只是页面打开那一刻的兜底,取电脑端默认
+       主题 gruvbox 的解析结果——配色与桌面几乎一致,配对页在令牌到达前就已经长成电脑端的样。
+       两类例外:/theme.css 不含字体与圆角(它们不是颜色令牌),也没有 danger/success——这些在下面直接定死。 */
+    --bg-app: #1d2021;
+    --bg-surface: #272a2b;
+    --bg-elevated: #333637;
+    --bg-hover: #393c3d;
+    --text-primary: #ebdbb2;
+    --text-secondary: #a89984;
+    --text-muted: #665c54;
+    --border: #3c3836;
+    --border-strong: #fe8019;
     --accent: #fe8019;
+    --accent-hover: #fabd2f;
+    --link-color: #fe8019;
+    --btn-primary-text: #1d2021;
     --danger: #ef4444;
-    --ok: #22c55e;
-    /* 问题和回答共用一个字号:用户要的就是两者一样大。设置页把它写成显式 px,这里只是首屏默认值。 */
-    --font-size: 17px;
+    --success: #22c55e;
+
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* 问题和回答各有一个字号:提问通常要能在余光里扫过,回答要能读,两者诉求不同。设置页把它们写成显式
+       px,这里只是首屏默认值。 */
+    --q-font-size: 17px;
+    --a-font-size: 17px;
 }
 
 * {
@@ -27,9 +44,9 @@ html,
 body {
     margin: 0;
     height: 100%;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font);
     overscroll-behavior: none;
 }
 
@@ -66,7 +83,7 @@ body {
     margin: 0;
     font-size: 14px;
     line-height: 1.6;
-    color: var(--text-dim);
+    color: var(--text-secondary);
 }
 
 .code-input {
@@ -76,10 +93,10 @@ body {
     letter-spacing: 0.4em;
     text-align: center;
     font-family: ui-monospace, Menlo, Consolas, monospace;
-    color: var(--text);
+    color: var(--text-primary);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     outline: none;
 }
 
@@ -91,10 +108,10 @@ body {
     padding: 15px;
     font-size: 17px;
     font-weight: 600;
-    color: #1a1207;
+    color: var(--btn-primary-text);
     background: var(--accent);
     border: none;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     cursor: pointer;
 }
 
@@ -115,35 +132,90 @@ body {
     flex-direction: column;
 }
 
+/* 正文占满,左侧导航浮在它上面(悬浮)。min-height:0 是让 .feed 能在 flex 里正常滚动而不是把整列撑开。 */
+.stage-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+/* 一竖排短横线,每份回答一条,悬浮在正文左侧、垂直居中。高度由 JS 按「屏幕高 1/3」封顶后写进来,
+   再用 space-between 把间距铺满:条数少时就是那段固定间距,条数多到超上限时被压缩到刚好 1/3。 */
+.nav {
+    position: absolute;
+    left: 3px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    width: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0;
+    overflow: hidden;
+}
+
+.nav-dash {
+    flex: none;
+    width: 14px;
+    height: 3px;
+    padding: 0;
+    border: none;
+    border-radius: 2px;
+    background: var(--text-muted);
+    cursor: pointer;
+    transition:
+        background 0.15s,
+        width 0.15s;
+}
+
+.nav-dash:hover {
+    background: var(--text-secondary);
+}
+
+.nav-dash.active {
+    width: 18px;
+    background: var(--accent);
+}
+
 .topbar {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    gap: 9px;
+    padding: calc(env(safe-area-inset-top) + 7px) 12px 7px;
     border-bottom: 1px solid var(--border);
     background: var(--bg-elevated);
+}
+
+/* 「已连接/重连中」和刷新按钮编成一组,靠左;模式切换居中;设置靠右。 */
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .conn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--text-dim);
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-secondary);
 }
 
 .conn::before {
     content: '';
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--text-muted);
 }
 
 .conn.online::before {
-    background: var(--ok);
+    background: var(--success);
 }
 
 .conn.offline::before {
@@ -152,17 +224,17 @@ body {
 
 .modes {
     display: flex;
-    gap: 6px;
-    padding: 3px;
+    gap: 5px;
+    padding: 2px;
     border: 1px solid var(--border);
     border-radius: 999px;
 }
 
 .mode {
-    padding: 6px 18px;
-    font-size: 14px;
+    padding: 4px 14px;
+    font-size: 11px;
     font-weight: 600;
-    color: var(--text-dim);
+    color: var(--text-secondary);
     background: none;
     border: none;
     border-radius: 999px;
@@ -170,21 +242,22 @@ body {
 }
 
 .mode.active {
-    color: #1a1207;
+    color: var(--btn-primary-text);
     background: var(--accent);
 }
 
 /* 右上角三条横线。用三个 span 画线而不是字符,免得依赖字体里有没有 ☰。 */
 .icon-btn {
     flex: none;
-    width: 34px;
-    height: 34px;
+    width: 26px;
+    height: 26px;
     display: inline-flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 3px;
     padding: 0;
+    color: var(--text-secondary);
     background: none;
     border: none;
     cursor: pointer;
@@ -192,23 +265,24 @@ body {
 
 .icon-btn span {
     display: block;
-    width: 18px;
+    width: 14px;
     height: 2px;
     border-radius: 2px;
-    background: var(--text-dim);
+    background: var(--text-secondary);
 }
 
-.icon-btn.close {
-    font-size: 18px;
-    color: var(--text-dim);
+.icon-btn.back svg {
+    width: 20px;
+    height: 20px;
 }
+
 
 /* ---------- settings ---------- */
 
 .settings {
     display: flex;
     flex-direction: column;
-    background: var(--bg);
+    background: var(--bg-app);
 }
 
 .settings-title {
@@ -227,11 +301,11 @@ body {
     justify-content: space-between;
     margin-bottom: 12px;
     font-size: 15px;
-    color: var(--text);
+    color: var(--text-primary);
 }
 
 .setting-value {
-    color: var(--text-dim);
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -240,11 +314,22 @@ body {
     accent-color: var(--accent);
 }
 
+/* 样例随各自字号变,顺带预览了问题/回答的实际观感(颜色、字重),不只是大小。 */
 .sample {
-    margin: 20px 0 0;
-    font-size: var(--font-size);
+    margin: 12px 0 26px;
     line-height: 1.5;
-    color: var(--text-dim);
+    color: var(--text-secondary);
+}
+
+.question-sample {
+    font-size: var(--q-font-size);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.answer-sample {
+    font-size: var(--a-font-size);
+    color: var(--text-primary);
 }
 
 .feed {
@@ -252,7 +337,8 @@ body {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     position: relative;
-    padding: 18px 16px calc(env(safe-area-inset-bottom) + 40px);
+    /* 左边留出悬浮导航的地界,正文不会跑到横线底下。 */
+    padding: 18px 16px calc(env(safe-area-inset-bottom) + 40px) 28px;
     scrollbar-width: thin;
 }
 
@@ -268,7 +354,7 @@ body {
 
 .question {
     margin: 0 0 10px;
-    font-size: var(--font-size);
+    font-size: var(--q-font-size);
     line-height: 1.5;
     color: var(--accent);
     font-weight: 600;
@@ -281,9 +367,9 @@ body {
 }
 
 .answer {
-    font-size: var(--font-size);
+    font-size: var(--a-font-size);
     line-height: 1.55;
-    color: var(--text);
+    color: var(--text-primary);
     word-break: break-word;
     user-select: text;
 }
@@ -313,7 +399,7 @@ body {
     font-size: 0.9em;
     background: var(--bg-elevated);
     padding: 0.1em 0.3em;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 .answer pre {
@@ -321,7 +407,7 @@ body {
     padding: 12px;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
 }
 
 .answer pre code {
@@ -330,7 +416,7 @@ body {
 }
 
 .answer a {
-    color: var(--accent);
+    color: var(--link-color);
 }
 
 .answer ul,
@@ -357,12 +443,52 @@ body {
     margin-top: 30vh;
 }
 
-.stay-hint {
+/* 底部控制栏:一栏按钮,不再折叠。按钮下沿贴着屏幕底边,所以整条不留下方内边距。 */
+.controlbar {
     flex: none;
-    margin: 0;
-    padding: 8px 14px calc(env(safe-area-inset-bottom) + 8px);
-    font-size: 12px;
-    color: var(--text-muted);
-    text-align: center;
     border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+}
+
+.control-items {
+    display: flex;
+    gap: 8px;
+    padding: 6px 12px 0;
+}
+
+.control-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.control-btn:active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* ---------- settings toggle ---------- */
+
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 15px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.toggle-input {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
 }

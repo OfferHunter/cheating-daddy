@@ -343,8 +343,10 @@ function flushTurn(source) {
     }
 
     console.log('[Pipeline] Turn dispatched:', text);
-    sendToRenderer('transcription-final', { text, speaker: speakerFor(source) });
-    dispatchTurn(text);
+    // 先派发拿到这一轮的 id,再把它挂到问题上:渲染端据此把回答插到自己问题下面/配到自己问题上。
+    // 派发是同步的(网络请求在 await 里),所以这条 final 仍然早于任何 new-response 到达。
+    const entry = dispatchTurn(text);
+    sendToRenderer('transcription-final', { text, speaker: speakerFor(source), turnId: entry ? entry.seq : undefined });
 }
 
 // 已定稿的轮次只剩下提示词上下文的作用，所以长过 buildMessages 会读到的部分就可以丢掉。待处理的留着：
@@ -1048,8 +1050,9 @@ async function sendLocalText(text) {
     }
 
     // 发完就返回：手动输入的问题不该等一个还在流的回答，而失败会经由 runTurn 变成错误气泡，而不是返回值。
-    sendToRenderer('transcription-final', { text: trimmed });
+    // 同 flushTurn：派发拿到 id,再挂到问题上,渲染端才配得上。派发同步,所以问题仍先于回答到达。
     const entry = dispatchTurn(trimmed);
+    sendToRenderer('transcription-final', { text: trimmed, turnId: entry ? entry.seq : undefined });
     return { success: true, turnId: entry ? entry.seq : null };
 }
 

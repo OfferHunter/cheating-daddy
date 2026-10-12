@@ -1,6 +1,6 @@
 const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, getResetPreferences } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement, getUiLanguage, setUiLanguage } from '../../utils/i18n.js';
+import { LocalizedLitElement, getUiLanguage, setUiLanguage, t } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
@@ -91,6 +91,13 @@ export class CustomizeView extends LocalizedLitElement {
                 border: 1px solid var(--border);
                 border-radius: var(--radius-sm);
                 padding: 2px 8px;
+            }
+
+            /* 回答字号的实时样例:直接用 --response-font-size,和转录区里的回答同一个字号,拖滑块当场看到效果。 */
+            .font-sample {
+                margin-top: var(--space-sm);
+                font-size: var(--response-font-size, 16px);
+                color: var(--text-primary);
             }
 
             .slider-input {
@@ -1049,6 +1056,7 @@ export class CustomizeView extends LocalizedLitElement {
                             .value=${this.fontSize}
                             @input=${this.handleFontSizeChange}
                         />
+                        <div class="font-sample">${t('This is the answer font size', '这是回答字号')}</div>
                     </div>
                     <label class="toggle-row">
                         <input
