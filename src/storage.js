@@ -283,18 +283,25 @@ function setKeybinds(keybinds) {
 
 // ============ HISTORY ============
 
+// sessionId 只由 session.js 用 Date.now().toString() 生成（见 initializeNewSession），一定是纯数字，而它
+// 又是渲染端经 IPC 传进来的唯一路径输入：直接拼进 path.join 就等于把 history 目录的边界交给调用方，
+// 一次 '../../foo' 就能读/写/删配置目录乃至更外面的任意 .json（导出时还会被当文件名）。这里只放行纯数字，
+// 非法值返回 null，读/写/删在各自入口一并拒绝。
 function getSessionPath(sessionId) {
-    return path.join(getHistoryDir(), `${sessionId}.json`);
+    const id = String(sessionId);
+    if (!/^\d+$/.test(id)) return null;
+    return path.join(getHistoryDir(), `${id}.json`);
 }
 
 function saveSession(sessionId, data) {
     const sessionPath = getSessionPath(sessionId);
+    if (!sessionPath) return false;
 
     // Load existing session to preserve metadata
     const existingSession = readJsonFile(sessionPath, null);
 
     const sessionData = {
-        sessionId,
+        sessionId: String(sessionId),
         createdAt: existingSession?.createdAt || parseInt(sessionId),
         lastUpdated: Date.now(),
         // Profile context - set once when session starts
@@ -314,7 +321,8 @@ function saveSession(sessionId, data) {
 }
 
 function getSession(sessionId) {
-    return readJsonFile(getSessionPath(sessionId), null);
+    const sessionPath = getSessionPath(sessionId);
+    return sessionPath ? readJsonFile(sessionPath, null) : null;
 }
 
 function getAllSessions() {
@@ -389,6 +397,7 @@ function getAllSessions() {
 
 function deleteSession(sessionId) {
     const sessionPath = getSessionPath(sessionId);
+    if (!sessionPath) return false;
     try {
         if (fs.existsSync(sessionPath)) {
             fs.unlinkSync(sessionPath);

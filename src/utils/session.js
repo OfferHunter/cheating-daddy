@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { startTransportLog, closeTransportLog } = require('./transportLogger');
 const teleprompter = require('./teleprompter');
+const license = require('./license');
 
 // 延迟加载：pipeline.js 反过来 require 本模块，直接写在顶部会成环。
 let _pipeline = null;
@@ -245,6 +246,13 @@ function stopMacOSAudioCapture() {
 
 function setupIpcHandlers() {
     ipcMain.handle('initialize-chat', async (event, customPrompt) => {
+        // 激活门控只放在这一个入口:它把 chatSessionActive 置真,而音频/文本/截图/清空上下文全都先校验这个
+        // 标志,所以没激活时整条实时管线一起关掉,不必在每个 handler 里重复检查。渲染端本来也把未激活用户
+        // 挡在引导页,这里防的是绕过界面直接调 IPC——源码公开,改掉渲染端那行判断太容易了。
+        if (!license.isActivated()) {
+            console.error('initialize-chat refused: license not activated');
+            return false;
+        }
         chatSessionActive = getPipeline().initializeChatSession(customPrompt);
         return chatSessionActive;
     });

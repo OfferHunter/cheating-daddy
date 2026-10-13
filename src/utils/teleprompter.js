@@ -6,6 +6,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const net = require('node:net');
 const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const storage = require('../storage');
@@ -16,6 +17,9 @@ const PORT_SCAN_SPAN = 10;
 // 连续猜错这么多次就换码并锁一段时间。配对码只有 6 位,同网段暴力猜的门槛全靠这里。
 const MAX_PAIR_ATTEMPTS = 5;
 const PAIR_LOCK_MS = 30 * 1000;
+// 单个已鉴权客户端一直不读时,ws 会把待发数据无限堆在进程内存里(流式回答推得越多堆得越多)。超过这个量
+// 就断开它——手机会自动重连,回放窗口足以补齐画面,好过让一条死连接把主进程拖垮。
+const MAX_BUFFERED_BYTES = 1 << 20;
 // 连上但一直不鉴权的连接,超时就切断,免得空连接堆积。
 const AUTH_TIMEOUT_MS = 10 * 1000;
 // 断线重连(手机锁屏、切后台)后要能把画面补齐,所以留一小段最近事件做回放。小到不值得担心内存。
@@ -53,8 +57,9 @@ let server = null;
 let wss = null;
 let port = null;
 let pairingCode = null;
-let pairAttempts = 0;
-let lockedUntil = 0;
+// 每个来源 IP 各记各的失败次数与锁定截止时间。一个全局计数会被同网段任何一台机器刷满,把真正的用户一起锁
+// 在门外;按 IP 分开后,攻击者只锁得住自己。
+const pairState = new Map(); // ip -> { attempts, lockedUntil }
 let replay = [];
 const clients = new Set();
 
@@ -114,7 +119,16 @@ function ensureToken() {
 
 function rotateCode() {
     pairingCode = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    pairAttempts = 0;
+}
+
+// 只放行 localhost 与 IP 字面量(含 IPv6,形如 [::1]:8765)。攻击面是 DNS rebinding:恶意网页把自己的域名
+// 解析到本机的局域网地址,再以「同源」方式请求本服务读取响应;此时浏览器发出的 Host 是那个域名,而非 IP,
+// 这一步就把它挡在门外。合法用户看到的地址本来就是 IP,不受影响。
+function hostAllowed(hostHeader) {
+    if (!hostHeader) return false;
+    const ipv6 = /^\[([^\]]+)\](?::\d+)?$/.exec(hostHeader);
+    const host = ipv6 ? ipv6[1] : hostHeader.replace(/:\d+$/, '');
+    return host === 'localhost' || net.isIP(host) !== 0;
 }
 
 function readAsset(relative) {
@@ -128,6 +142,20 @@ function sendJson(res, status, body) {
 }
 
 function handlePair(req, res) {
+    // 只接受 JSON。text/plain 这类「简单请求」不触发 CORS 预检,是 DNS rebinding 里常用的载体;配合上面的
+    // Host 校验,rebinding 才被真正挡死。
+    if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
+        sendJson(res, 415, { error: 'unsupported-media-type' });
+        return;
+    }
+
+    const ip = req.socket.remoteAddress || '';
+    const state = pairState.get(ip) || { attempts: 0, lockedUntil: 0 };
+    if (Date.now() < state.lockedUntil) {
+        sendJson(res, 429, { error: 'locked', retryAfterMs: state.lockedUntil - Date.now() });
+        return;
+    }
+
     let body = '';
     req.on('data', chunk => {
         body += chunk;
@@ -135,11 +163,6 @@ function handlePair(req, res) {
         if (body.length > 4096) req.destroy();
     });
     req.on('end', () => {
-        if (Date.now() < lockedUntil) {
-            sendJson(res, 429, { error: 'locked', retryAfterMs: lockedUntil - Date.now() });
-            return;
-        }
-
         let code = '';
         try {
             code = String(JSON.parse(body).code || '');
@@ -148,20 +171,30 @@ function handlePair(req, res) {
         }
 
         if (code !== pairingCode) {
-            pairAttempts += 1;
-            if (pairAttempts >= MAX_PAIR_ATTEMPTS) {
+            state.attempts += 1;
+            if (state.attempts >= MAX_PAIR_ATTEMPTS) {
+                // 刷够次数就换码(顺带让可能已泄露的旧码失效),并只锁这个 IP。
                 rotateCode();
-                lockedUntil = Date.now() + PAIR_LOCK_MS;
+                state.lockedUntil = Date.now() + PAIR_LOCK_MS;
+                state.attempts = 0;
             }
+            pairState.set(ip, state);
             sendJson(res, 401, { error: 'bad-code' });
             return;
         }
 
+        pairState.delete(ip);
         sendJson(res, 200, { token: ensureToken(), lang: storage.getPreferences().uiLanguage || 'zh-CN' });
     });
 }
 
 function handleRequest(req, res) {
+    if (!hostAllowed(req.headers.host)) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden');
+        return;
+    }
+
     let pathname;
     try {
         pathname = new URL(req.url, 'http://localhost').pathname;
@@ -198,7 +231,13 @@ function handleRequest(req, res) {
     }
 }
 
-function handleSocket(ws) {
+function handleSocket(ws, req) {
+    // 与 HTTP 同一道门:Host 不是本机 IP/localhost 就断开,堵住经由 WebSocket 的 DNS rebinding。
+    if (!hostAllowed(req && req.headers ? req.headers.host : '')) {
+        ws.close();
+        return;
+    }
+
     const client = { ws, authed: false };
     clients.add(client);
 
@@ -322,6 +361,7 @@ function stopTeleprompter() {
     server = null;
     port = null;
     pairingCode = null;
+    pairState.clear();
 }
 
 // sendToRenderer 的唯一旁路点:白名单之外的一切在这里被丢掉。
@@ -334,7 +374,15 @@ function broadcast(channel, data) {
 
     const payload = JSON.stringify(event);
     for (const client of clients) {
-        if (client.authed && client.ws.readyState === 1) client.ws.send(payload);
+        if (client.authed && client.ws.readyState === 1) {
+            // 背压:客户端卡住(锁屏、切后台、网络半死)时 ws.send 只会往 bufferedAmount 里堆,流式回答推得
+            // 越多,主进程内存涨得越多。超阈就断开——手机会自动重连,回放窗口足以把画面补齐。
+            if (client.ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+                client.ws.close();
+                continue;
+            }
+            client.ws.send(payload);
+        }
     }
 }
 
@@ -353,7 +401,7 @@ function getStatus() {
 
 function regenerateCode() {
     rotateCode();
-    lockedUntil = 0;
+    pairState.clear();
     return getStatus();
 }
 

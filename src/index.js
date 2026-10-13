@@ -462,8 +462,20 @@ function setupGeneralIpcHandlers() {
         }
     });
 
+    // 渲染端的链接来自模型输出/回答里的 markdown，一律当不可信。shell.openExternal 会把 URL 原样交给系统
+    // 处理器：一个 file:// 或 search-ms:/ms-msdt: 之类的自定义协议就可能在用户机器上打开文件或启动程序
+    // （Electron 的经典开放重定向/RCE 面）。只放行 http(s)/mailto。
     ipcMain.handle('open-external', async (event, url) => {
         try {
+            let scheme = '';
+            try {
+                scheme = new URL(String(url)).protocol;
+            } catch {
+                scheme = '';
+            }
+            if (scheme !== 'http:' && scheme !== 'https:' && scheme !== 'mailto:') {
+                return { success: false, error: 'blocked scheme' };
+            }
             await shell.openExternal(url);
             return { success: true };
         } catch (error) {

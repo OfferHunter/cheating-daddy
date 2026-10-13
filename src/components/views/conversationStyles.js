@@ -190,7 +190,12 @@ function renderMarkdown(content) {
             window.marked.setOptions({
                 breaks: true,
                 gfm: true,
-                sanitize: false,
+                // marked 4.x 的 sanitize 已废弃但仍生效：它把裸 HTML 转义成文本、并清掉 javascript: 之类的 URL。
+                // 回答与背景资料都是模型输出，可能被提示注入带上 <img onerror> 这类载荷，而渲染端开着
+                // nodeIntegration，一条 xss 就能升级成 require('child_process') 的 RCE——必须在 markdown 这一步
+                // 就掐断。silent 抑制废弃警告（否则每次流式更新都会往控制台打一行）。
+                sanitize: true,
+                silent: true,
             });
             return window.marked.parse(content);
         } catch (error) {

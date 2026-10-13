@@ -1,6 +1,7 @@
 /assets/
 release/
 .license-private/
+TODO.md
 release-*
 # Logs
 src/data

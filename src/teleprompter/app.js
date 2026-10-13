@@ -140,7 +140,9 @@ function clearToken() {
 function md(text) {
     if (window.marked) {
         try {
-            window.marked.setOptions({ breaks: true, gfm: true, sanitize: false });
+            // sanitize:true 把裸 HTML 转义、清掉 javascript: 类 URL：回答是模型输出，这里又直接 innerHTML，
+            // 不消毒就是一条现成的 XSS 通道；手机页虽无 node 权限，但能窃取配对令牌。silent 抑制废弃警告。
+            window.marked.setOptions({ breaks: true, gfm: true, sanitize: true, silent: true });
             return window.marked.parse(text || '');
         } catch {
             return esc(text);
