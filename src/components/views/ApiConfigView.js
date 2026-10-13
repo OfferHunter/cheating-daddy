@@ -1,6 +1,6 @@
 const { DEFAULT_CONFIG } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement, t } from '../../utils/i18n.js';
+import { LocalizedLitElement, t, getUiLanguage } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
@@ -10,6 +10,95 @@ const DEFAULT_CHAT_BASE_URL = DEFAULT_CONFIG.chatBaseUrl;
 const DEFAULT_CHAT_MODEL = DEFAULT_CONFIG.deepseekModel;
 const DEFAULT_BAILIAN_MODEL = DEFAULT_CONFIG.bailianModel;
 const DEFAULT_BAILIAN_WS_URL = DEFAULT_CONFIG.bailianWsUrl;
+const DEFAULT_TENCENT_ENGINE = DEFAULT_CONFIG.tencentEngineModel;
+
+// 语音识别服务按页翻：两家支持的语种不同，各自一份配置，翻到哪页就编／试哪一家。
+const ASR_PAGES = ['bailian', 'tencent'];
+
+// 百炼识别端点要的是 ISO-639-1。这里给的是全集，模型对不上的语种由服务端报错——比在本地硬编码每个模型
+// 支持哪些语种更好维护。
+const BAILIAN_LANGUAGES = [
+    { code: 'zh', zh: '中文', en: 'Chinese' },
+    { code: 'en', zh: '英文', en: 'English' },
+    { code: 'ja', zh: '日语', en: 'Japanese' },
+    { code: 'ko', zh: '韩语', en: 'Korean' },
+    { code: 'vi', zh: '越南语', en: 'Vietnamese' },
+    { code: 'th', zh: '泰语', en: 'Thai' },
+    { code: 'id', zh: '印尼语', en: 'Indonesian' },
+    { code: 'ms', zh: '马来语', en: 'Malay' },
+    { code: 'tl', zh: '菲律宾语', en: 'Filipino' },
+    { code: 'hi', zh: '印地语', en: 'Hindi' },
+    { code: 'ar', zh: '阿拉伯语', en: 'Arabic' },
+    { code: 'fr', zh: '法语', en: 'French' },
+    { code: 'de', zh: '德语', en: 'German' },
+    { code: 'es', zh: '西班牙语', en: 'Spanish' },
+    { code: 'pt', zh: '葡萄牙语', en: 'Portuguese' },
+    { code: 'ru', zh: '俄语', en: 'Russian' },
+    { code: 'it', zh: '意大利语', en: 'Italian' },
+    { code: 'nl', zh: '荷兰语', en: 'Dutch' },
+    { code: 'sv', zh: '瑞典语', en: 'Swedish' },
+    { code: 'da', zh: '丹麦语', en: 'Danish' },
+    { code: 'fi', zh: '芬兰语', en: 'Finnish' },
+    { code: 'no', zh: '挪威语', en: 'Norwegian' },
+    { code: 'el', zh: '希腊语', en: 'Greek' },
+    { code: 'pl', zh: '波兰语', en: 'Polish' },
+    { code: 'cs', zh: '捷克语', en: 'Czech' },
+    { code: 'hu', zh: '匈牙利语', en: 'Hungarian' },
+    { code: 'ro', zh: '罗马尼亚语', en: 'Romanian' },
+    { code: 'bg', zh: '保加利亚语', en: 'Bulgarian' },
+    { code: 'hr', zh: '克罗地亚语', en: 'Croatian' },
+    { code: 'sk', zh: '斯洛伐克语', en: 'Slovak' },
+];
+
+// 腾讯云用引擎型号同时决定语言/方言，所以这一栏就是「语言」。按计费分档列出。
+const TENCENT_ENGINE_GROUPS = [
+    {
+        zh: '大模型2.0版',
+        en: 'LLM 2.0',
+        engines: [{ value: 'Hy-ASR-3.0-preview', zh: '中英+20种方言', en: 'Chinese/English + 20 dialects' }],
+    },
+    {
+        zh: '大模型1.0版',
+        en: 'LLM 1.0',
+        engines: [
+            { value: '8k_zh_large', zh: '中文电话场景', en: 'Chinese (phone)' },
+            { value: '16k_zh_en', zh: '中英+31种方言', en: 'Chinese/English + 31 dialects' },
+            { value: '16k_multi_lang', zh: '多语种（15种）', en: 'Multilingual (15)' },
+            { value: '16k_en_large', zh: '英文', en: 'English' },
+        ],
+    },
+    {
+        zh: '通用引擎',
+        en: 'General',
+        engines: [
+            { value: '8k_zh', zh: '中文电话通用', en: 'Chinese (phone)' },
+            { value: '8k_en', zh: '英文电话通用', en: 'English (phone)' },
+            { value: '16k_zh', zh: '中文通用', en: 'Chinese' },
+            { value: '16k_zh-TW', zh: '中文繁体', en: 'Chinese (traditional)' },
+            { value: '16k_zh_edu', zh: '中文教育', en: 'Chinese (education)' },
+            { value: '16k_zh_medical', zh: '中文医疗', en: 'Chinese (medical)' },
+            { value: '16k_zh_court', zh: '中文法庭', en: 'Chinese (court)' },
+            { value: '16k_yue', zh: '粤语', en: 'Cantonese' },
+            { value: '16k_en', zh: '英文通用', en: 'English' },
+            { value: '16k_en_game', zh: '英文游戏', en: 'English (gaming)' },
+            { value: '16k_en_edu', zh: '英文教育', en: 'English (education)' },
+            { value: '16k_ko', zh: '韩语', en: 'Korean' },
+            { value: '16k_ja', zh: '日语', en: 'Japanese' },
+            { value: '16k_th', zh: '泰语', en: 'Thai' },
+            { value: '16k_id', zh: '印度尼西亚语', en: 'Indonesian' },
+            { value: '16k_vi', zh: '越南语', en: 'Vietnamese' },
+            { value: '16k_ms', zh: '马来语', en: 'Malay' },
+            { value: '16k_fil', zh: '菲律宾语', en: 'Filipino' },
+            { value: '16k_pt', zh: '葡萄牙语', en: 'Portuguese' },
+            { value: '16k_tr', zh: '土耳其语', en: 'Turkish' },
+            { value: '16k_ar', zh: '阿拉伯语', en: 'Arabic' },
+            { value: '16k_es', zh: '西班牙语', en: 'Spanish' },
+            { value: '16k_hi', zh: '印地语', en: 'Hindi' },
+            { value: '16k_fr', zh: '法语', en: 'French' },
+            { value: '16k_de', zh: '德语', en: 'German' },
+        ],
+    },
+];
 
 // 试听采集统一按 16kHz 起 AudioContext，出来就是识别端点要的采样率，主进程不必再重采样。
 const TEST_SAMPLE_RATE = 16000;
@@ -60,6 +149,97 @@ export class ApiConfigView extends LocalizedLitElement {
                 align-items: baseline;
                 justify-content: space-between;
                 gap: var(--space-sm);
+            }
+
+            /* 服务翻页头：两侧箭头、中间标题与「使用」开关。标题组吃掉剩余宽度并居中，箭头固定尺寸不被挤扁。
+               开关放在标题文本右侧、紧贴标题，而不是被 flex 推到右边的翻页按钮旁边。 */
+            .asr-header {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+                margin-bottom: var(--space-sm);
+            }
+
+            .asr-title {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: var(--space-sm);
+            }
+
+            .asr-title-text {
+                font-size: var(--font-size-md);
+                font-weight: var(--font-weight-semibold);
+                color: var(--text-primary);
+            }
+
+            .asr-nav {
+                width: 32px;
+                height: 32px;
+                flex: none;
+                display: grid;
+                place-content: center;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                background: var(--bg-elevated);
+                color: var(--text-primary);
+                font-size: var(--font-size-md);
+                cursor: pointer;
+            }
+
+            .asr-nav:hover {
+                border-color: var(--border-strong);
+            }
+
+            /* 与设置页同样的圆形单选样式：这里用来选「会话用哪家服务」，两个页面互相排斥。紧贴标题文本右侧，
+               做成不带边框的行内控件，免得和两侧的翻页按钮抢视觉。 */
+            .toggle-row {
+                display: flex;
+                align-items: center;
+                gap: var(--space-xs);
+                flex: none;
+                cursor: pointer;
+            }
+
+            .toggle-input {
+                width: 14px;
+                height: 14px;
+                margin: 0;
+                appearance: none;
+                display: grid;
+                place-content: center;
+                flex-shrink: 0;
+                border: 1px solid var(--border-strong);
+                border-radius: 50%;
+                background: var(--bg-surface);
+                cursor: pointer;
+            }
+
+            .toggle-input::after {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--text-primary);
+                transform: scale(0);
+                transition: transform var(--transition);
+            }
+
+            .toggle-input:checked {
+                border-color: var(--text-primary);
+            }
+
+            .toggle-input:checked::after {
+                transform: scale(1);
+            }
+
+            .toggle-label {
+                color: var(--text-primary);
+                font-size: var(--font-size-sm);
+                cursor: pointer;
+                user-select: none;
             }
 
             .test-row {
@@ -113,9 +293,16 @@ export class ApiConfigView extends LocalizedLitElement {
         _chatBaseUrl: { state: true },
         _chatKey: { state: true },
         _chatModel: { state: true },
+        _asrPage: { state: true },
+        _asrProvider: { state: true },
         _bailianKey: { state: true },
         _bailianWsUrl: { state: true },
         _bailianModel: { state: true },
+        _bailianLanguage: { state: true },
+        _tencentAppId: { state: true },
+        _tencentSecretId: { state: true },
+        _tencentSecretKey: { state: true },
+        _tencentEngine: { state: true },
         _testSource: { state: true },
         _testMicDevices: { state: true },
         _testing: { state: true },
@@ -131,9 +318,18 @@ export class ApiConfigView extends LocalizedLitElement {
         this._chatBaseUrl = DEFAULT_CHAT_BASE_URL;
         this._chatKey = '';
         this._chatModel = DEFAULT_CHAT_MODEL;
+
+        // 翻页只是查看/编辑，不改变选择；会话用哪家由 _asrProvider 决定。默认先停在第一页（百炼）。
+        this._asrPage = ASR_PAGES[0];
+        this._asrProvider = 'bailian';
         this._bailianKey = '';
         this._bailianWsUrl = DEFAULT_BAILIAN_WS_URL;
         this._bailianModel = DEFAULT_BAILIAN_MODEL;
+        this._bailianLanguage = DEFAULT_CONFIG.bailianLanguage;
+        this._tencentAppId = '';
+        this._tencentSecretId = '';
+        this._tencentSecretKey = '';
+        this._tencentEngine = DEFAULT_TENCENT_ENGINE;
 
         this._testSource = 'default';
         this._testMicDevices = [];
@@ -184,16 +380,30 @@ export class ApiConfigView extends LocalizedLitElement {
         if (output) output.scrollLeft = output.scrollWidth;
     }
 
+    _isEnUi() {
+        return getUiLanguage().toLowerCase().startsWith('en');
+    }
+
     async _loadFromStorage() {
         try {
-            const [config, creds] = await Promise.all([offerHunter.storage.getConfig(), offerHunter.storage.getCredentials().catch(() => ({}))]);
+            const [config, creds, tencent] = await Promise.all([
+                offerHunter.storage.getConfig(),
+                offerHunter.storage.getCredentials().catch(() => ({})),
+                offerHunter.storage.getTencentCredentials().catch(() => ({})),
+            ]);
 
             this._chatBaseUrl = config.chatBaseUrl || DEFAULT_CHAT_BASE_URL;
             this._chatModel = config.deepseekModel || DEFAULT_CHAT_MODEL;
+            this._asrProvider = config.asrProvider || 'bailian';
             this._bailianWsUrl = config.bailianWsUrl || DEFAULT_BAILIAN_WS_URL;
             this._bailianModel = config.bailianModel || DEFAULT_BAILIAN_MODEL;
+            this._bailianLanguage = config.bailianLanguage || DEFAULT_CONFIG.bailianLanguage;
+            this._tencentEngine = config.tencentEngineModel || DEFAULT_TENCENT_ENGINE;
             this._chatKey = creds.deepseekApiKey || '';
             this._bailianKey = creds.bailianApiKey || '';
+            this._tencentAppId = tencent.appId || '';
+            this._tencentSecretId = tencent.secretId || '';
+            this._tencentSecretKey = tencent.secretKey || '';
 
             this.requestUpdate();
         } catch (error) {
@@ -248,12 +458,53 @@ export class ApiConfigView extends LocalizedLitElement {
         this.requestUpdate();
     }
 
+    async _saveBailianLanguage(val) {
+        this._bailianLanguage = val;
+        await offerHunter.storage.updateConfig('bailianLanguage', val);
+        this.requestUpdate();
+    }
+
+    async _saveTencentAppId(val) {
+        this._tencentAppId = val;
+        await offerHunter.storage.setTencentCredentials({ appId: val });
+        this.requestUpdate();
+    }
+
+    async _saveTencentSecretId(val) {
+        this._tencentSecretId = val;
+        await offerHunter.storage.setTencentCredentials({ secretId: val });
+        this.requestUpdate();
+    }
+
+    async _saveTencentSecretKey(val) {
+        this._tencentSecretKey = val;
+        await offerHunter.storage.setTencentCredentials({ secretKey: val });
+        this.requestUpdate();
+    }
+
+    async _saveTencentEngine(val) {
+        this._tencentEngine = val;
+        await offerHunter.storage.updateConfig('tencentEngineModel', val);
+        this.requestUpdate();
+    }
+
     _isChatConfigured() {
         return Boolean(this._chatBaseUrl.trim() && this._chatKey.trim() && this._chatModel.trim());
     }
 
+    _isBailianConfigured() {
+        return Boolean(this._bailianKey.trim() && this._bailianWsUrl.trim() && this._bailianModel.trim() && this._bailianLanguage.trim());
+    }
+
+    _isTencentConfigured() {
+        return Boolean(
+            this._tencentAppId.trim() && this._tencentSecretId.trim() && this._tencentSecretKey.trim() && this._tencentEngine.trim()
+        );
+    }
+
+    // 会话只认选中的那一家，所以这里按 _asrProvider 判，而不是「两家任一配好」。
     _isAsrConfigured() {
-        return Boolean(this._bailianKey.trim() && this._bailianWsUrl.trim() && this._bailianModel.trim());
+        return this._asrProvider === 'tencent' ? this._isTencentConfigured() : this._isBailianConfigured();
     }
 
     // 页面主标题直接充当配置状态的提示，四选一。
@@ -265,6 +516,25 @@ export class ApiConfigView extends LocalizedLitElement {
         if (chat) return 'Speech model not configured';
         if (asr) return 'Chat model not configured';
         return 'Chat and speech models not configured';
+    }
+
+    _pageAsr(delta) {
+        // 翻页时正在试听的是上一家的连接，先停掉，免得它继续往新页面的输出框里灌字。
+        this._stopTest();
+        const index = ASR_PAGES.indexOf(this._asrPage);
+        this._asrPage = ASR_PAGES[(index + delta + ASR_PAGES.length) % ASR_PAGES.length];
+        this.requestUpdate();
+    }
+
+    // 勾选即把会话切到这一家。取消勾选被忽略——总得有一家在用，另一页的勾才会随之落下。
+    async _setActiveProvider(provider, checked) {
+        if (!checked || provider === this._asrProvider) {
+            this.requestUpdate();
+            return;
+        }
+        this._asrProvider = provider;
+        await offerHunter.storage.updateConfig('asrProvider', provider);
+        this.requestUpdate();
     }
 
     _handleSentence(data) {
@@ -330,7 +600,8 @@ export class ApiConfigView extends LocalizedLitElement {
         this._testing = true;
         this.requestUpdate();
 
-        await ipcRenderer.invoke('asr-test:start');
+        // 试听的是当前这一页的那家，与 _asrProvider 无关——在腾讯页试听就该连腾讯。
+        await ipcRenderer.invoke('asr-test:start', this._asrPage);
         // 麦克风一旦拿到权限，设备label 才有值。
         this._loadMicDevices();
     }
@@ -464,88 +735,203 @@ export class ApiConfigView extends LocalizedLitElement {
     _renderTranscriptionSection() {
         return html`
             <section class="surface">
-                <div class="surface-title">Transcription</div>
+                <div class="asr-header">
+                    <button class="asr-nav" @click=${() => this._pageAsr(-1)} aria-label="Previous">&lt;</button>
+                    <div class="asr-title">
+                        <span class="asr-title-text">
+                            ${this._asrPage === 'tencent'
+                                ? t('Speech Recognition - Tencent Cloud', '语音识别 - 腾讯云')
+                                : t('Speech Recognition - Aliyun Bailian', '语音识别 - 阿里云百炼')}
+                        </span>
+                        <label class="toggle-row">
+                            <span class="toggle-label">${t('Use', '使用')}</span>
+                            <input
+                                class="toggle-input"
+                                type="checkbox"
+                                .checked=${this._asrProvider === this._asrPage}
+                                @change=${e => this._setActiveProvider(this._asrPage, e.target.checked)}
+                            />
+                        </label>
+                    </div>
+                    <button class="asr-nav" @click=${() => this._pageAsr(1)} aria-label="Next">&gt;</button>
+                </div>
+
                 <div class="form-grid">
-                    <div class="form-group vertical">
-                        <div class="label-row">
-                            <label class="form-label">Bailian API Key</label>
-                            <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get API Key</span>
-                        </div>
-                        <input
-                            class="control wide"
-                            type="password"
-                            placeholder="Required"
-                            .value=${this._bailianKey}
-                            @input=${e => this._saveBailianKey(e.target.value)}
-                        />
-                    </div>
-
-                    <div class="form-group vertical">
-                        <div class="label-row">
-                            <label class="form-label">WebSocket URL</label>
-                            <span
-                                class="link"
-                                @click=${() =>
-                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide')}
-                                >WebSocket Documentation</span
-                            >
-                        </div>
-                        <input
-                            class="control wide"
-                            type="text"
-                            placeholder=${DEFAULT_BAILIAN_WS_URL}
-                            .value=${this._bailianWsUrl}
-                            @input=${e => this._saveBailianWsUrl(e.target.value)}
-                        />
-                        <div class="form-help">
-                            <span>Use the wss:// API Host for the same region and workspace as the API Key and model.</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group vertical">
-                        <div class="label-row">
-                            <label class="form-label">Bailian Model</label>
-                            <span
-                                class="link"
-                                @click=${() =>
-                                    this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
-                                >Speech Model Marketplace</span
-                            >
-                        </div>
-                        <input
-                            class="control wide"
-                            type="text"
-                            placeholder=${DEFAULT_BAILIAN_MODEL}
-                            .value=${this._bailianModel}
-                            @input=${e => this._saveBailianModel(e.target.value)}
-                        />
-                        <div class="form-help">
-                            <span>Speech is streamed live to Aliyun and transcribed as you talk.</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group vertical">
-                        <label class="form-label">Test recognition</label>
-                        <div class="test-row">
-                            <div class="test-output ${this._testText ? '' : 'empty'}" data-no-localize>${this._testText ||
-                                t('Click "Test recognition" to start', '点击「测试识别」开始')}</div>
-                            <select class="control test-source" .value=${this._testSource} @change=${e => (this._testSource = e.target.value)}>
-                                <option value="default" .selected=${this._testSource === 'default'}>System default microphone</option>
-                                ${this._testMicDevices.map(
-                                    d => html`<option value=${d.deviceId} .selected=${this._testSource === d.deviceId} data-no-localize>
-                                        ${d.label || 'Microphone'}
-                                    </option>`
-                                )}
-                                <option value="system" .selected=${this._testSource === 'system'}>Speaker (interviewer)</option>
-                            </select>
-                            <button class="control btn-test" @click=${this._toggleTest}>
-                                ${this._testing ? 'Stop test' : 'Test recognition'}
-                            </button>
-                        </div>
-                        <div class="form-help ${this._testError ? 'danger' : ''}">${this._testHint()}</div>
-                    </div>
+                    ${this._asrPage === 'tencent' ? this._renderTencentFields() : this._renderBailianFields()} ${this._renderTestRow()}
                 </div>
             </section>
+        `;
+    }
+
+    _renderBailianFields() {
+        const zh = !this._isEnUi();
+        return html`
+            <div class="form-group vertical">
+                <div class="label-row">
+                    <label class="form-label">Bailian API Key</label>
+                    <span class="link" @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/')}>Get API Key</span>
+                </div>
+                <input
+                    class="control wide"
+                    type="password"
+                    placeholder="Required"
+                    .value=${this._bailianKey}
+                    @input=${e => this._saveBailianKey(e.target.value)}
+                />
+            </div>
+
+            <div class="form-group vertical">
+                <div class="label-row">
+                    <label class="form-label">WebSocket URL</label>
+                    <span
+                        class="link"
+                        @click=${() =>
+                            this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide')}
+                        >WebSocket Documentation</span
+                    >
+                </div>
+                <input
+                    class="control wide"
+                    type="text"
+                    placeholder=${DEFAULT_BAILIAN_WS_URL}
+                    .value=${this._bailianWsUrl}
+                    @input=${e => this._saveBailianWsUrl(e.target.value)}
+                />
+                <div class="form-help">
+                    <span>Use the wss:// API Host for the same region and workspace as the API Key and model.</span>
+                </div>
+            </div>
+
+            <div class="form-group vertical">
+                <div class="label-row">
+                    <label class="form-label">Bailian Model</label>
+                    <span
+                        class="link"
+                        @click=${() =>
+                            this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
+                        >Speech Model Marketplace</span
+                    >
+                </div>
+                <input
+                    class="control wide"
+                    type="text"
+                    placeholder=${DEFAULT_BAILIAN_MODEL}
+                    .value=${this._bailianModel}
+                    @input=${e => this._saveBailianModel(e.target.value)}
+                />
+                <div class="form-help">
+                    <span>Speech is streamed live to Aliyun and transcribed as you talk.</span>
+                </div>
+            </div>
+
+            <div class="form-group vertical">
+                <label class="form-label">${t('Speech Language', '语音语言')}</label>
+                <select class="control wide" .value=${this._bailianLanguage} @change=${e => this._saveBailianLanguage(e.target.value)}>
+                    ${BAILIAN_LANGUAGES.map(
+                        lang =>
+                            html`<option value=${lang.code} .selected=${this._bailianLanguage === lang.code}>
+                                ${zh ? lang.zh : lang.en} (${lang.code})
+                            </option>`
+                    )}
+                </select>
+                <div class="form-help">
+                    ${t(
+                        'Lists every supported language code; a model that does not support the chosen one reports an error.',
+                        '这里列出的是全部语言代码；模型不支持所选语言时由服务端报错。'
+                    )}
+                </div>
+            </div>
+        `;
+    }
+
+    _renderTencentFields() {
+        const zh = !this._isEnUi();
+        return html`
+            <div class="form-group vertical">
+                <div class="label-row">
+                    <label class="form-label">AppID</label>
+                    <span class="link" @click=${() => this.onExternalLink('https://console.cloud.tencent.com/cam/capi')}>Get Credentials</span>
+                </div>
+                <input
+                    class="control wide"
+                    type="text"
+                    placeholder="Required"
+                    .value=${this._tencentAppId}
+                    @input=${e => this._saveTencentAppId(e.target.value)}
+                />
+            </div>
+
+            <div class="form-group vertical">
+                <label class="form-label">SecretId</label>
+                <input
+                    class="control wide"
+                    type="password"
+                    placeholder="Required"
+                    .value=${this._tencentSecretId}
+                    @input=${e => this._saveTencentSecretId(e.target.value)}
+                />
+            </div>
+
+            <div class="form-group vertical">
+                <label class="form-label">SecretKey</label>
+                <input
+                    class="control wide"
+                    type="password"
+                    placeholder="Required"
+                    .value=${this._tencentSecretKey}
+                    @input=${e => this._saveTencentSecretKey(e.target.value)}
+                />
+            </div>
+
+            <div class="form-group vertical">
+                <div class="label-row">
+                    <label class="form-label">${t('Speech Language', '语音语言')}</label>
+                    <span class="link" @click=${() => this.onExternalLink('https://cloud.tencent.com/document/product/1093/48982')}
+                        >Engine Documentation</span
+                    >
+                </div>
+                <select class="control wide" .value=${this._tencentEngine} @change=${e => this._saveTencentEngine(e.target.value)}>
+                    ${TENCENT_ENGINE_GROUPS.map(
+                        group =>
+                            html`<optgroup label=${zh ? group.zh : group.en}>
+                                ${group.engines.map(
+                                    engine =>
+                                        html`<option value=${engine.value} .selected=${this._tencentEngine === engine.value}>
+                                            ${engine.value} · ${zh ? engine.zh : engine.en}
+                                        </option>`
+                                )}
+                            </optgroup>`
+                    )}
+                </select>
+                <div class="form-help">
+                    ${t('Tencent Cloud selects the language and dialects from the engine model.', '腾讯云用引擎型号同时决定语言与方言。')}
+                </div>
+            </div>
+        `;
+    }
+
+    _renderTestRow() {
+        return html`
+            <div class="form-group vertical">
+                <label class="form-label">Test recognition</label>
+                <div class="test-row">
+                    <div class="test-output ${this._testText ? '' : 'empty'}" data-no-localize>${this._testText ||
+                        t('Click "Test recognition" to start', '点击「测试识别」开始')}</div>
+                    <select class="control test-source" .value=${this._testSource} @change=${e => (this._testSource = e.target.value)}>
+                        <option value="default" .selected=${this._testSource === 'default'}>System default microphone</option>
+                        ${this._testMicDevices.map(
+                            d => html`<option value=${d.deviceId} .selected=${this._testSource === d.deviceId} data-no-localize>
+                                ${d.label || 'Microphone'}
+                            </option>`
+                        )}
+                        <option value="system" .selected=${this._testSource === 'system'}>Speaker (interviewer)</option>
+                    </select>
+                    <button class="control btn-test" @click=${this._toggleTest}>
+                        ${this._testing ? 'Stop test' : 'Test recognition'}
+                    </button>
+                </div>
+                <div class="form-help ${this._testError ? 'danger' : ''}">${this._testHint()}</div>
+            </div>
         `;
     }
 

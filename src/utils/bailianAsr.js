@@ -3,7 +3,9 @@ const { DEFAULT_CONFIG } = require('../defaults');
 // 变成一句一句的话。线路格式是用 scripts/asr-smoke.js 打过真端点的，这里的字段名就是那次探测打印出来的。
 //
 // `maxSentenceSilenceMs` 由调用方给，不在这里读配置：每路音频各一个 socket，两路想要的静音阈值不同，
-// 策略归 pipeline 管。
+// 策略归 pipeline 管。语言则反过来——它属于「这个服务怎么配」而不是「这一路怎么用」，所以在这里读。
+//
+// 与 tencentAsr 相同，由 asr.js 分发器按 asrProvider 选中。
 
 const { randomUUID } = require('crypto');
 const WebSocket = require('ws');
@@ -19,7 +21,7 @@ const PING_INTERVAL_MS = 30000;
 const PONG_TIMEOUT_MS = 10000;
 const FINISH_GRACE_MS = 1000;
 
-function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState, onError } = {}) {
+function createBailianAsr({ maxSentenceSilenceMs, onSentence, onState, onError } = {}) {
     let socket = null;
     let state = 'idle';
     let taskId = null;
@@ -82,6 +84,7 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
     }
 
     function runTaskMessage() {
+        const language = (getConfig().bailianLanguage || '').trim();
         const parameters = {
             format: 'pcm',
             sample_rate: 16000,
@@ -319,5 +322,5 @@ function createRealtimeAsr({ language, maxSentenceSilenceMs, onSentence, onState
 }
 
 module.exports = {
-    createRealtimeAsr,
+    createBailianAsr,
 };

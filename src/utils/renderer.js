@@ -61,6 +61,13 @@ const storage = {
     async setBailianApiKey(bailianApiKey) {
         return ipcRenderer.invoke('storage:set-bailian-api-key', bailianApiKey);
     },
+    async getTencentCredentials() {
+        const result = await ipcRenderer.invoke('storage:get-tencent-credentials');
+        return result.success ? result.data : { appId: '', secretId: '', secretKey: '' };
+    },
+    async setTencentCredentials(credentials) {
+        return ipcRenderer.invoke('storage:set-tencent-credentials', credentials);
+    },
 
     async getPreferences() {
         const result = await ipcRenderer.invoke('storage:get-preferences');
@@ -187,9 +194,8 @@ function arrayBufferToBase64(buffer) {
 async function initializeChat() {
     const prefs = await storage.getPreferences();
     const customPrompt = prefs.customPrompt ?? DEFAULT_PREFERENCES.customPrompt;
-    const selectedLanguage = prefs.selectedLanguage ?? DEFAULT_PREFERENCES.selectedLanguage;
 
-    const success = await ipcRenderer.invoke('initialize-chat', customPrompt, selectedLanguage);
+    const success = await ipcRenderer.invoke('initialize-chat', customPrompt);
     if (success) {
         offerHunter.setStatus('Live');
         return true;

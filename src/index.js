@@ -188,6 +188,25 @@ function setupStorageIpcHandlers() {
         }
     });
 
+    ipcMain.handle('storage:get-tencent-credentials', async () => {
+        try {
+            return { success: true, data: storage.getTencentCredentials() };
+        } catch (error) {
+            console.error('Error getting Tencent credentials:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('storage:set-tencent-credentials', async (event, credentials) => {
+        try {
+            storage.setTencentCredentials(credentials);
+            return { success: true };
+        } catch (error) {
+            console.error('Error setting Tencent credentials:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     // ============ PREFERENCES ============
     ipcMain.handle('storage:get-preferences', async () => {
         try {

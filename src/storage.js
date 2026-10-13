@@ -192,6 +192,25 @@ function setBailianApiKey(bailianApiKey) {
     return setCredentials({ bailianApiKey });
 }
 
+// 腾讯云三件套。整体读写而不是逐键：界面上它们是一组，一起改一起存，缺任何一个都连不上。
+function getTencentCredentials() {
+    const credentials = getCredentials();
+    return {
+        appId: credentials.tencentAppId || '',
+        secretId: credentials.tencentSecretId || '',
+        secretKey: credentials.tencentSecretKey || '',
+    };
+}
+
+function setTencentCredentials({ appId, secretId, secretKey } = {}) {
+    const patch = {};
+    // 只覆盖本次传进来的键，其余保持原值——单个输入框改动时不必把另外两个也读一遍再回写。
+    if (appId != null) patch.tencentAppId = appId;
+    if (secretId != null) patch.tencentSecretId = secretId;
+    if (secretKey != null) patch.tencentSecretKey = secretKey;
+    return setCredentials(patch);
+}
+
 // ============ PREFERENCES ============
 
 function getPreferences() {
@@ -452,6 +471,8 @@ module.exports = {
     setDeepseekApiKey,
     getBailianApiKey,
     setBailianApiKey,
+    getTencentCredentials,
+    setTencentCredentials,
 
     // Preferences
     getPreferences,

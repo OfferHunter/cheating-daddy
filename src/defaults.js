@@ -10,6 +10,13 @@ const DEFAULT_CONFIG = Object.freeze({
     deepseekModel: 'deepseek-flash',
     bailianWsUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
     bailianModel: 'fun-asr-realtime-2026-02-28',
+    // 语音识别服务二选一：'bailian'（阿里云百炼）或 'tencent'（腾讯云）。两个都可以各自配好，
+    // 会话只用选中的这一个——语言也各存各的，因为两家支持的语种不一样。
+    asrProvider: 'bailian',
+    // 百炼的语言提示（ISO-639-1）。下拉里给的是全集，模型不支持的语种由服务端报错。
+    bailianLanguage: 'zh',
+    // 腾讯云的识别引擎型号，它同时也决定语言/方言（16k_zh 中文通用、16k_en 英文…）。
+    tencentEngineModel: '16k_zh',
     // 手机提词的局域网服务端口。被别的程序占用时启动会退到系统分配的临时端口,并把实际端口写回这里,这样
     // 手机上的地址能稳定下来。teleprompterToken 是配对一次后换来的长效令牌,首次运行生成后落盘。
     teleprompterPort: 8765,
@@ -19,6 +26,10 @@ const DEFAULT_CONFIG = Object.freeze({
 const DEFAULT_CREDENTIALS = Object.freeze({
     deepseekApiKey: '',
     bailianApiKey: '',
+    // 腾讯云签名鉴权要三件套：AppID（放 URL 路径）、SecretId（放 query）、SecretKey（算签名）。
+    tencentAppId: '',
+    tencentSecretId: '',
+    tencentSecretKey: '',
 });
 
 // These are the maintainer's own tuned values, so a fresh install, a reset and a wiped config
@@ -47,8 +58,6 @@ const DEFAULT_PREFERENCES = Object.freeze({
     // 里唯一的痕迹（图本身不进上下文）。关闭后不再发这个请求，对话记录里只留「[屏幕截图]」，这一轮也不会被
     // 回放给模型；截图本身的作答（详细面板）不受影响。是开关而非内容，所以「恢复默认」会重置它。
     screenshotSummary: true,
-    // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
-    selectedLanguage: 'cmn-CN',
     selectedImageQuality: 'medium',
     // 'none' captures no microphone at all; any other value is a deviceId from enumerateDevices()
     // ('default' and 'communications' are Chromium's own pseudo-devices for the system defaults).

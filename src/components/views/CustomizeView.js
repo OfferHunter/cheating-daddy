@@ -13,7 +13,6 @@ const METER_BAR_COUNT = [0, 1, 2, 3];
 // 本页需要落地的偏好键。构造函数初值、从存储加载、恢复默认三处都要这份清单，列一次免得三份各漏一个键。
 // uiLanguage 不在其中：它要同时改全局语言（setUiLanguage），三处的来源也各不相同，单独处理。
 const SETTINGS_KEYS = [
-    'selectedLanguage',
     'selectedImageQuality',
     'backgroundTransparency',
     'textTransparency',
@@ -263,7 +262,6 @@ export class CustomizeView extends LocalizedLitElement {
 
     static properties = {
         uiLanguage: { type: String },
-        selectedLanguage: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
         keybinds: { type: Object },
@@ -271,7 +269,6 @@ export class CustomizeView extends LocalizedLitElement {
         textTransparency: { type: Number },
         fontSize: { type: Number },
         theme: { type: String },
-        onLanguageChange: { type: Function },
         onImageQualityChange: { type: Function },
         onLayoutModeChange: { type: Function },
         isClearing: { type: Boolean },
@@ -299,7 +296,6 @@ export class CustomizeView extends LocalizedLitElement {
         this.uiLanguage = getUiLanguage();
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.keybinds = offerHunter.getDefaultKeybinds();
-        this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
         this.isClearing = false;
@@ -387,41 +383,6 @@ export class CustomizeView extends LocalizedLitElement {
         }
     }
 
-    getLanguages() {
-        return [
-            { value: 'en-US', name: 'English (US)' },
-            { value: 'en-GB', name: 'English (UK)' },
-            { value: 'en-AU', name: 'English (Australia)' },
-            { value: 'en-IN', name: 'English (India)' },
-            { value: 'de-DE', name: 'German (Germany)' },
-            { value: 'es-US', name: 'Spanish (US)' },
-            { value: 'es-ES', name: 'Spanish (Spain)' },
-            { value: 'fr-FR', name: 'French (France)' },
-            { value: 'fr-CA', name: 'French (Canada)' },
-            { value: 'hi-IN', name: 'Hindi (India)' },
-            { value: 'pt-BR', name: 'Portuguese (Brazil)' },
-            { value: 'ar-XA', name: 'Arabic (Generic)' },
-            { value: 'id-ID', name: 'Indonesian (Indonesia)' },
-            { value: 'it-IT', name: 'Italian (Italy)' },
-            { value: 'ja-JP', name: 'Japanese (Japan)' },
-            { value: 'tr-TR', name: 'Turkish (Turkey)' },
-            { value: 'vi-VN', name: 'Vietnamese (Vietnam)' },
-            { value: 'bn-IN', name: 'Bengali (India)' },
-            { value: 'gu-IN', name: 'Gujarati (India)' },
-            { value: 'kn-IN', name: 'Kannada (India)' },
-            { value: 'ml-IN', name: 'Malayalam (India)' },
-            { value: 'mr-IN', name: 'Marathi (India)' },
-            { value: 'ta-IN', name: 'Tamil (India)' },
-            { value: 'te-IN', name: 'Telugu (India)' },
-            { value: 'nl-NL', name: 'Dutch (Netherlands)' },
-            { value: 'ko-KR', name: 'Korean (South Korea)' },
-            { value: 'cmn-CN', name: 'Mandarin Chinese (China)' },
-            { value: 'pl-PL', name: 'Polish (Poland)' },
-            { value: 'ru-RU', name: 'Russian (Russia)' },
-            { value: 'th-TH', name: 'Thai (Thailand)' },
-        ];
-    }
-
     // 动作清单来自 utils/keybinds.js 的权威表（注册处/设置页/帮助页共用），这里不再另抄一份。
     getKeybindActions() {
         return offerHunter.getKeybindActions();
@@ -430,11 +391,6 @@ export class CustomizeView extends LocalizedLitElement {
     async saveKeybinds() {
         await offerHunter.storage.setKeybinds(this.keybinds);
         ipcRenderer.send('update-keybinds', this.keybinds);
-    }
-
-    handleLanguageSelect(e) {
-        this.selectedLanguage = e.target.value;
-        this.onLanguageChange(this.selectedLanguage);
     }
 
     async handleUiLanguageSelect(e) {
@@ -656,7 +612,6 @@ export class CustomizeView extends LocalizedLitElement {
             this.uiLanguage = defaults.uiLanguage;
             setUiLanguage(defaults.uiLanguage);
 
-            this.onLanguageChange(defaults.selectedLanguage);
             this.onImageQualityChange(defaults.selectedImageQuality);
 
             this.updateFontSize();
@@ -822,17 +777,6 @@ export class CustomizeView extends LocalizedLitElement {
                         <select class="control" .value=${this.uiLanguage} @change=${this.handleUiLanguageSelect}>
                             <option value="zh-CN">中文</option>
                             <option value="en-US">English</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Speech Language</label>
-                        <select class="control" .value=${this.selectedLanguage} @change=${this.handleLanguageSelect}>
-                            ${this.getLanguages().map(
-                                language =>
-                                    html`<option value=${language.value} .selected=${this.selectedLanguage === language.value}>
-                                        ${language.name}
-                                    </option>`
-                            )}
                         </select>
                     </div>
                 </div>

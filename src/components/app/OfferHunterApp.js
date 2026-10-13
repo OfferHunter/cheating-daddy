@@ -360,7 +360,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         statusText: { type: String },
         startTime: { type: Number },
         sessionActive: { type: Boolean },
-        selectedLanguage: { type: String },
         messages: { type: Array },
         // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
@@ -377,7 +376,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.statusText = '';
         this.startTime = null;
         this.sessionActive = false;
-        this.selectedLanguage = DEFAULT_PREFERENCES.selectedLanguage;
         this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
@@ -421,7 +419,7 @@ export class OfferHunterApp extends LocalizedLitElement {
             // 未激活一律进引导页（那里才是激活门）。已引导但激活失效（换机、配置目录被清、license.json 被删）
             // 也回到引导页，等于每次启动都重新核验一次机器码。
             this.currentView = licenseStatus.activated ? (config.onboarded ? 'main' : 'onboarding') : 'onboarding';
-            applyPreferences(this, prefs, ['selectedLanguage', 'selectedImageQuality']);
+            applyPreferences(this, prefs, ['selectedImageQuality']);
             this.layoutMode = config.layout ?? DEFAULT_CONFIG.layout;
             setUiLanguage(prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage);
 
@@ -777,11 +775,26 @@ export class OfferHunterApp extends LocalizedLitElement {
     }
 
     async handleStart() {
-        // 只要求有所选识别器的那把 key；对话那把永远是 DeepSeek 的。
-        const [chatKey, asrKey] = await Promise.all([offerHunter.storage.getDeepseekApiKey(), offerHunter.storage.getBailianApiKey()]);
+        // 只要求有所选识别服务的那套凭据；对话那把永远是 DeepSeek 的。识别服务二选一，未配全就拦到配置页。
+        const [chatKey, config, creds] = await Promise.all([
+            offerHunter.storage.getDeepseekApiKey(),
+            offerHunter.storage.getConfig(),
+            offerHunter.storage.getCredentials(),
+        ]);
+
+        const provider = config.asrProvider || 'bailian';
+        const asrConfigured =
+            provider === 'tencent'
+                ? Boolean(
+                      (creds.tencentAppId || '').trim() &&
+                          (creds.tencentSecretId || '').trim() &&
+                          (creds.tencentSecretKey || '').trim() &&
+                          (config.tencentEngineModel || '').trim()
+                  )
+                : Boolean((creds.bailianApiKey || '').trim() && (config.bailianWsUrl || '').trim() && (config.bailianModel || '').trim());
 
         // 缺密钥或初始化失败都指向同一个地方——「API 配置」页，那里才是唯一能改密钥的入口。
-        if (!chatKey || chatKey.trim() === '' || !asrKey || asrKey.trim() === '') {
+        if (!chatKey || chatKey.trim() === '' || !asrConfigured) {
             this.navigate('api-config');
             return;
         }
@@ -807,11 +820,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.sessionActive = true;
         this.currentView = 'assistant';
         this._startTimer();
-    }
-
-    async handleLanguageChange(language) {
-        this.selectedLanguage = language;
-        await offerHunter.storage.updatePreference('selectedLanguage', language);
     }
 
     async handleImageQualityChange(quality) {
@@ -875,10 +883,8 @@ export class OfferHunterApp extends LocalizedLitElement {
             case 'customize':
                 return html`
                     <customize-view
-                        .selectedLanguage=${this.selectedLanguage}
                         .selectedImageQuality=${this.selectedImageQuality}
                         .layoutMode=${this.layoutMode}
-                        .onLanguageChange=${l => this.handleLanguageChange(l)}
                         .onImageQualityChange=${q => this.handleImageQualityChange(q)}
                         .onLayoutModeChange=${lm => this.handleLayoutModeChange(lm)}
                     ></customize-view>

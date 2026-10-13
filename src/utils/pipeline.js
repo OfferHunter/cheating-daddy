@@ -10,7 +10,7 @@ const {
     readKnowledgeById,
     executeKnowledgeTool,
 } = require('./knowledge');
-const { createRealtimeAsr } = require('./bailianAsr');
+const { createRealtimeAsr } = require('./asr');
 const { logTransportEvent } = require('./transportLogger');
 const {
     getPreferences,
@@ -38,7 +38,6 @@ let screenshotSummaryEnabled = DEFAULT_PREFERENCES.screenshotSummary;
 // 是现读目录的，所以这里过期最坏只是查不到，不会变成错误的事实。
 let detailKnowledgeEntries = [];
 let isLocalActive = false;
-let transcriptionLanguage = null;
 
 // 两路采集各有自己的识别器：扬声器那路转录面试官，并且只有它会产生要作答的轮次；麦克风那路转录候选人，
 // 说的话永远只是背景。两边算法相同，各一个 socket。
@@ -198,16 +197,6 @@ function resample24kTo16k(inputBuffer, state) {
     state.resampleRemainder = remainderStart < combined.length ? combined.slice(remainderStart) : Buffer.alloc(0);
 
     return outputBuffer;
-}
-
-// ASR 端点要的是裸 ISO-639-1 代码，而偏好里存的是 BCP-47 地区码。
-function toAsrLanguage(locale) {
-    if (!locale) {
-        return null;
-    }
-
-    const primary = String(locale).split('-')[0].toLowerCase();
-    return primary === 'cmn' ? 'zh' : primary;
 }
 
 function mergeTurnText(state) {
@@ -809,7 +798,6 @@ function startAsrClient(source) {
     const isInterviewer = source === INTERVIEWER;
 
     const client = createRealtimeAsr({
-        language: toAsrLanguage(transcriptionLanguage),
         maxSentenceSilenceMs: streams[source].sentenceSilenceMs,
         onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
         onState: state => {
@@ -872,7 +860,6 @@ function resetAudioState() {
     micLevelGated = false;
     micGateSideLoud = false;
     micGateSideSinceMs = 0;
-    transcriptionLanguage = null;
     turnLog = [];
     turnSeq = 0;
     contextFloorSeq = 0;
@@ -883,7 +870,7 @@ function resetAudioState() {
     sessionGeneration += 1;
 }
 
-function initializeChatSession(customPrompt, selectedLanguage) {
+function initializeChatSession(customPrompt) {
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
@@ -906,8 +893,6 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     screenshotSummaryEnabled = prefs.screenshotSummary;
     chatContextTurns = getChatContextTurns();
 
-    transcriptionLanguage = selectedLanguage;
-
     // 两个识别器各自等不同的静音时长才结束一句。麦克风那路等得更久，因为候选人会磕绊：等太短会把一个
     // 回答切成好几段。
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
@@ -918,7 +903,6 @@ function initializeChatSession(customPrompt, selectedLanguage) {
     micGateDb = getMicGateDb();
     micGateDwellMs = getMicGateDwellMs();
     console.log('[Pipeline] Initializing chat session:', {
-        selectedLanguage,
         maxSentenceSilenceMs,
         micMaxSentenceSilenceMs,
         micGateDb,

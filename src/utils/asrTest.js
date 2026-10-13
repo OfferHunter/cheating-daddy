@@ -1,9 +1,12 @@
 const { BrowserWindow, ipcMain } = require('electron');
-const { createRealtimeAsr } = require('./bailianAsr');
-const { getPreferences, getMaxSentenceSilenceMs } = require('../storage');
+const { createRealtimeAsr } = require('./asr');
+const { getMaxSentenceSilenceMs } = require('../storage');
 
-// 「API 配置」页的试听识别：一条独立于会话的 ASR 连接，只服务那个页面。它复用 bailianAsr 的客户端，于是重连
-// 退避、socket 关闭时补的那个空 error 监听器等异常抑制照旧生效——页面离开时只是把这条连接一起关掉。
+// 「API 配置」页的试听识别：一条独立于会话的 ASR 连接，只服务那个页面。它复用与正式会话同一个分发器和
+// 客户端，于是重连退避、socket 关闭时补的那个空 error 监听器等异常抑制照旧生效——页面离开时只是把这条
+// 连接一起关掉。
+//
+// provider 由页面给：翻到哪一页就试哪一家，与当前启用的是不是它无关。
 let client = null;
 
 function send(channel, data) {
@@ -11,19 +14,12 @@ function send(channel, data) {
     if (windows.length > 0) windows[0].webContents.send(channel, data);
 }
 
-// 与 pipeline.toAsrLanguage 同一口径：ASR 端点要裸 ISO-639-1，偏好里存的是 BCP-47 地区码。
-function toAsrLanguage(locale) {
-    if (!locale) return null;
-    const primary = String(locale).split('-')[0].toLowerCase();
-    return primary === 'cmn' ? 'zh' : primary;
-}
-
-function start() {
+function start(provider) {
     stop();
 
     try {
         client = createRealtimeAsr({
-            language: toAsrLanguage(getPreferences().selectedLanguage),
+            provider,
             maxSentenceSilenceMs: getMaxSentenceSilenceMs(),
             onSentence: (text, sentenceEnd) => send('asr-test:sentence', { text, sentenceEnd }),
             onState: state => send('asr-test:state', state),
@@ -57,7 +53,7 @@ function stop() {
 }
 
 function setupAsrTestIpcHandlers() {
-    ipcMain.handle('asr-test:start', () => start());
+    ipcMain.handle('asr-test:start', (event, provider) => start(provider));
     ipcMain.handle('asr-test:stop', () => {
         stop();
         return { success: true };

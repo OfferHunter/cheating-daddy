@@ -244,8 +244,8 @@ function stopMacOSAudioCapture() {
 }
 
 function setupIpcHandlers() {
-    ipcMain.handle('initialize-chat', async (event, customPrompt, selectedLanguage) => {
-        chatSessionActive = getPipeline().initializeChatSession(customPrompt, selectedLanguage);
+    ipcMain.handle('initialize-chat', async (event, customPrompt) => {
+        chatSessionActive = getPipeline().initializeChatSession(customPrompt);
         return chatSessionActive;
     });
 
