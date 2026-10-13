@@ -128,8 +128,8 @@ function saveDebugAudio(buffer, type, timestamp = Date.now()) {
     return { pcmPath, wavPath, metaPath };
 }
 
+// 只有 saveDebugAudio 被外部用到（session.js，DEBUG_AUDIO 下）；pcmToWav/analyzeAudioBuffer 只是它的内部步骤，
+// 不对外导出，免得再长出第二条使用路径。
 module.exports = {
-    pcmToWav,
-    analyzeAudioBuffer,
     saveDebugAudio,
 };

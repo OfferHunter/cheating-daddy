@@ -1,4 +1,4 @@
-const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, getResetPreferences } = window.require('./defaults');
+const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, getResetPreferences, applyPreferences } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, getUiLanguage, setUiLanguage, t } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
@@ -9,6 +9,30 @@ const { ipcRenderer } = window.require('electron');
 // 快得跟得上说话，又不至于让页面一直在重绘。
 const METER_POLL_MS = 80;
 const METER_BAR_COUNT = [0, 1, 2, 3];
+
+// 本页需要落地的偏好键。构造函数初值、从存储加载、恢复默认三处都要这份清单，列一次免得三份各漏一个键。
+// uiLanguage 不在其中：它要同时改全局语言（setUiLanguage），三处的来源也各不相同，单独处理。
+const SETTINGS_KEYS = [
+    'selectedLanguage',
+    'selectedImageQuality',
+    'backgroundTransparency',
+    'textTransparency',
+    'fontSize',
+    'audioInputDeviceId',
+    'theme',
+    'maxSentenceSilenceMs',
+    'micMaxSentenceSilenceMs',
+    'micGateDb',
+    'micGateDwellMs',
+    'detailMode',
+    'briefThinking',
+    'detailThinking',
+    'screenshotThinking',
+    'screenshotSummary',
+    'nonFocusableSession',
+    'chatContextTurns',
+    'chatMaxTokens',
+];
 
 export class CustomizeView extends LocalizedLitElement {
     static styles = [
@@ -273,8 +297,6 @@ export class CustomizeView extends LocalizedLitElement {
     constructor() {
         super();
         this.uiLanguage = getUiLanguage();
-        this.selectedLanguage = DEFAULT_PREFERENCES.selectedLanguage;
-        this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.keybinds = offerHunter.getDefaultKeybinds();
         this.onLanguageChange = () => {};
@@ -284,27 +306,11 @@ export class CustomizeView extends LocalizedLitElement {
         this.isRestoring = false;
         this.clearStatusMessage = '';
         this.clearStatusType = '';
-        this.backgroundTransparency = DEFAULT_PREFERENCES.backgroundTransparency;
-        this.textTransparency = DEFAULT_PREFERENCES.textTransparency;
-        this.fontSize = DEFAULT_PREFERENCES.fontSize;
+        applyPreferences(this, DEFAULT_PREFERENCES, SETTINGS_KEYS);
         // 读到存过的选择之前先填 'none'：电平表在 connectedCallback 里就启动，早于 _loadFromStorage 落地，
         // 这期间若填 'default' 会把系统麦克风打开——哪怕用户已经关掉了它。真实设备由 _refreshMicMeter 补上。
         this.audioInputDeviceId = 'none';
         this.audioInputDevices = [];
-        this.customPrompt = DEFAULT_PREFERENCES.customPrompt;
-        this.theme = DEFAULT_PREFERENCES.theme;
-        this.maxSentenceSilenceMs = DEFAULT_PREFERENCES.maxSentenceSilenceMs;
-        this.micMaxSentenceSilenceMs = DEFAULT_PREFERENCES.micMaxSentenceSilenceMs;
-        this.micGateDb = DEFAULT_PREFERENCES.micGateDb;
-        this.micGateDwellMs = DEFAULT_PREFERENCES.micGateDwellMs;
-        this.detailMode = DEFAULT_PREFERENCES.detailMode;
-        this.briefThinking = DEFAULT_PREFERENCES.briefThinking;
-        this.detailThinking = DEFAULT_PREFERENCES.detailThinking;
-        this.screenshotThinking = DEFAULT_PREFERENCES.screenshotThinking;
-        this.screenshotSummary = DEFAULT_PREFERENCES.screenshotSummary;
-        this.nonFocusableSession = DEFAULT_PREFERENCES.nonFocusableSession;
-        this.chatContextTurns = DEFAULT_PREFERENCES.chatContextTurns;
-        this.chatMaxTokens = DEFAULT_PREFERENCES.chatMaxTokens;
         this._loadFromStorage();
     }
 
@@ -333,6 +339,9 @@ export class CustomizeView extends LocalizedLitElement {
         this._meterTimer = setInterval(() => this._paintAudioMeters(), METER_POLL_MS);
 
         await offerHunter.audioMeter.start(this.audioInputDeviceId);
+        // start() 是异步的（要等设备就绪），这期间用户可能已经离开本页：那时 disconnectedCallback 里的
+        // stop() 早已跑过，必须在这里补一次 stop，否则麦克风预览会在离开设置页后继续活着。
+        if (!this._isConnected) offerHunter.audioMeter.stop();
     }
 
     // 设备列表加载完还要再调一次——它通常晚于页面挂载。
@@ -362,24 +371,7 @@ export class CustomizeView extends LocalizedLitElement {
     async _loadFromStorage() {
         try {
             const [prefs, keybinds] = await Promise.all([offerHunter.storage.getPreferences(), offerHunter.storage.getKeybinds()]);
-            this.backgroundTransparency = prefs.backgroundTransparency ?? DEFAULT_PREFERENCES.backgroundTransparency;
-            this.textTransparency = prefs.textTransparency ?? DEFAULT_PREFERENCES.textTransparency;
-            this.fontSize = prefs.fontSize ?? DEFAULT_PREFERENCES.fontSize;
-            this.audioInputDeviceId = prefs.audioInputDeviceId ?? DEFAULT_PREFERENCES.audioInputDeviceId;
-            this.customPrompt = prefs.customPrompt ?? DEFAULT_PREFERENCES.customPrompt;
-            this.theme = prefs.theme ?? DEFAULT_PREFERENCES.theme;
-            this.maxSentenceSilenceMs = prefs.maxSentenceSilenceMs ?? DEFAULT_PREFERENCES.maxSentenceSilenceMs;
-            this.micMaxSentenceSilenceMs = prefs.micMaxSentenceSilenceMs ?? DEFAULT_PREFERENCES.micMaxSentenceSilenceMs;
-            this.micGateDb = prefs.micGateDb ?? DEFAULT_PREFERENCES.micGateDb;
-            this.micGateDwellMs = prefs.micGateDwellMs ?? DEFAULT_PREFERENCES.micGateDwellMs;
-            this.detailMode = prefs.detailMode ?? DEFAULT_PREFERENCES.detailMode;
-            this.briefThinking = prefs.briefThinking ?? DEFAULT_PREFERENCES.briefThinking;
-            this.detailThinking = prefs.detailThinking ?? DEFAULT_PREFERENCES.detailThinking;
-            this.screenshotThinking = prefs.screenshotThinking ?? DEFAULT_PREFERENCES.screenshotThinking;
-            this.screenshotSummary = prefs.screenshotSummary ?? DEFAULT_PREFERENCES.screenshotSummary;
-            this.nonFocusableSession = prefs.nonFocusableSession ?? DEFAULT_PREFERENCES.nonFocusableSession;
-            this.chatContextTurns = prefs.chatContextTurns ?? DEFAULT_PREFERENCES.chatContextTurns;
-            this.chatMaxTokens = prefs.chatMaxTokens ?? DEFAULT_PREFERENCES.chatMaxTokens;
+            applyPreferences(this, prefs, SETTINGS_KEYS);
             this.uiLanguage = prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage;
             setUiLanguage(this.uiLanguage);
             if (keybinds) {
@@ -430,35 +422,9 @@ export class CustomizeView extends LocalizedLitElement {
         ];
     }
 
+    // 动作清单来自 utils/keybinds.js 的权威表（注册处/设置页/帮助页共用），这里不再另抄一份。
     getKeybindActions() {
-        return [
-            { key: 'moveUp', name: 'Move Window Up', description: 'Move the app window up' },
-            { key: 'moveDown', name: 'Move Window Down', description: 'Move the app window down' },
-            { key: 'moveLeft', name: 'Move Window Left', description: 'Move the app window left' },
-            { key: 'moveRight', name: 'Move Window Right', description: 'Move the app window right' },
-            { key: 'toggleVisibility', name: 'Toggle Visibility', description: 'Show or hide the app window' },
-            { key: 'toggleClickThrough', name: 'Toggle Click-through', description: 'Enable or disable click-through mode' },
-            { key: 'screenShot', name: 'Take ScreenShot', description: 'Take screenshot and ask for solution' },
-            { key: 'scrollUp', name: 'Scroll Response Up', description: 'Scroll response content upward' },
-            { key: 'scrollDown', name: 'Scroll Response Down', description: 'Scroll response content downward' },
-            {
-                key: 'detailPrev',
-                name: 'Previous Detailed Answer',
-                description: 'Show the previous detailed answer in the side pane',
-            },
-            {
-                key: 'detailNext',
-                name: 'Next Detailed Answer',
-                description: 'Show the next detailed answer in the side pane',
-            },
-            {
-                key: 'toggleTheme',
-                name: 'Toggle Light/Dark Theme',
-                description: 'Switch between the light and dark colour schemes',
-            },
-            { key: 'emergencyErase', name: 'Emergency Erase', description: 'Hide the window, clear all data and quit' },
-            { key: 'quit', name: 'Quit', description: 'Exit the app without clearing any data' },
-        ];
+        return offerHunter.getKeybindActions();
     }
 
     async saveKeybinds() {
@@ -485,11 +451,6 @@ export class CustomizeView extends LocalizedLitElement {
     handleLayoutModeSelect(e) {
         this.layoutMode = e.target.value;
         this.onLayoutModeChange(this.layoutMode);
-    }
-
-    async handleCustomPromptInput(e) {
-        this.customPrompt = e.target.value;
-        await offerHunter.storage.updatePreference('customPrompt', this.customPrompt);
     }
 
     async handleDetailModeChange(checked) {
@@ -691,27 +652,9 @@ export class CustomizeView extends LocalizedLitElement {
             await offerHunter.storage.setKeybinds(null);
             ipcRenderer.send('update-keybinds', this.keybinds);
 
-            this.selectedLanguage = defaults.selectedLanguage;
+            applyPreferences(this, defaults, SETTINGS_KEYS);
             this.uiLanguage = defaults.uiLanguage;
             setUiLanguage(defaults.uiLanguage);
-            this.selectedImageQuality = defaults.selectedImageQuality;
-            this.audioInputDeviceId = defaults.audioInputDeviceId;
-            this.fontSize = defaults.fontSize;
-            this.backgroundTransparency = defaults.backgroundTransparency;
-            this.textTransparency = defaults.textTransparency;
-            this.theme = defaults.theme;
-            this.maxSentenceSilenceMs = defaults.maxSentenceSilenceMs;
-            this.micMaxSentenceSilenceMs = defaults.micMaxSentenceSilenceMs;
-            this.micGateDb = defaults.micGateDb;
-            this.micGateDwellMs = defaults.micGateDwellMs;
-            this.detailMode = defaults.detailMode;
-            this.briefThinking = defaults.briefThinking;
-            this.detailThinking = defaults.detailThinking;
-            this.screenshotThinking = defaults.screenshotThinking;
-            this.screenshotSummary = defaults.screenshotSummary;
-            this.nonFocusableSession = defaults.nonFocusableSession;
-            this.chatContextTurns = defaults.chatContextTurns;
-            this.chatMaxTokens = defaults.chatMaxTokens;
 
             this.onLanguageChange(defaults.selectedLanguage);
             this.onImageQualityChange(defaults.selectedImageQuality);

@@ -1,4 +1,4 @@
-const { DEFAULT_PREFERENCES, DEFAULT_CONFIG } = window.require('./defaults');
+const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, applyPreferences } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
 import { LocalizedLitElement, setUiLanguage, isChinese } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
@@ -365,7 +365,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
         detailCurrent: { type: Number },
-        selectedScreenshotInterval: { type: String },
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
         _isClickThrough: { state: true },
@@ -379,7 +378,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.startTime = null;
         this.sessionActive = false;
         this.selectedLanguage = DEFAULT_PREFERENCES.selectedLanguage;
-        this.selectedScreenshotInterval = DEFAULT_PREFERENCES.selectedScreenshotInterval;
         this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
@@ -423,9 +421,7 @@ export class OfferHunterApp extends LocalizedLitElement {
             // 未激活一律进引导页（那里才是激活门）。已引导但激活失效（换机、配置目录被清、license.json 被删）
             // 也回到引导页，等于每次启动都重新核验一次机器码。
             this.currentView = licenseStatus.activated ? (config.onboarded ? 'main' : 'onboarding') : 'onboarding';
-            this.selectedLanguage = prefs.selectedLanguage ?? DEFAULT_PREFERENCES.selectedLanguage;
-            this.selectedScreenshotInterval = prefs.selectedScreenshotInterval ?? DEFAULT_PREFERENCES.selectedScreenshotInterval;
-            this.selectedImageQuality = prefs.selectedImageQuality ?? DEFAULT_PREFERENCES.selectedImageQuality;
+            applyPreferences(this, prefs, ['selectedLanguage', 'selectedImageQuality']);
             this.layoutMode = config.layout ?? DEFAULT_CONFIG.layout;
             setUiLanguage(prefs.uiLanguage ?? DEFAULT_PREFERENCES.uiLanguage);
 
@@ -796,7 +792,7 @@ export class OfferHunterApp extends LocalizedLitElement {
             return;
         }
 
-        offerHunter.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
+        offerHunter.startCapture(this.selectedImageQuality);
         this.messages = [];
         this._paused = false;
         // floor 跟随的是主进程自己的计数器，而 resetAudioState 会把它们归零，所以沿用旧值会让新会话的每个
@@ -816,11 +812,6 @@ export class OfferHunterApp extends LocalizedLitElement {
     async handleLanguageChange(language) {
         this.selectedLanguage = language;
         await offerHunter.storage.updatePreference('selectedLanguage', language);
-    }
-
-    async handleScreenshotIntervalChange(interval) {
-        this.selectedScreenshotInterval = interval;
-        await offerHunter.storage.updatePreference('selectedScreenshotInterval', interval);
     }
 
     async handleImageQualityChange(quality) {
@@ -885,11 +876,9 @@ export class OfferHunterApp extends LocalizedLitElement {
                 return html`
                     <customize-view
                         .selectedLanguage=${this.selectedLanguage}
-                        .selectedScreenshotInterval=${this.selectedScreenshotInterval}
                         .selectedImageQuality=${this.selectedImageQuality}
                         .layoutMode=${this.layoutMode}
                         .onLanguageChange=${l => this.handleLanguageChange(l)}
-                        .onScreenshotIntervalChange=${i => this.handleScreenshotIntervalChange(i)}
                         .onImageQualityChange=${q => this.handleImageQualityChange(q)}
                         .onLayoutModeChange=${lm => this.handleLayoutModeChange(lm)}
                     ></customize-view>

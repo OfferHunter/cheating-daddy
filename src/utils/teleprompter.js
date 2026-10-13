@@ -218,8 +218,14 @@ function handleSocket(ws) {
             clearTimeout(authTimer);
             // 回放最近事件:手机锁屏或切后台后重连,画面直接补齐到当前状态,而不是等下一个问题才有内容。
             ws.send(JSON.stringify({ type: 'auth-ok' }));
-            for (const event of replay) {
-                ws.send(JSON.stringify(event));
+            // 回放区间用标记包起来:手机端据此知道这一段是补历史,不据此重建问题占位块——块早就存在,
+            // 重建会让同一个轮次出现两份、导航条数也对不上。
+            if (replay.length) {
+                ws.send(JSON.stringify({ type: 'replay-start' }));
+                for (const event of replay) {
+                    ws.send(JSON.stringify(event));
+                }
+                ws.send(JSON.stringify({ type: 'replay-end' }));
             }
             return;
         }

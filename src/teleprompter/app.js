@@ -78,6 +78,8 @@ const state = {
     pendingQuestion: '',
     // 当前这个问题是否已经收到 transcription-final。定稿之后再来新文本,就说明是下一轮提问了。
     pendingQuestionFinal: false,
+    // 是否正在重放最近事件(auth-ok 之后的一组)。重放不重建占位块,只补已有块。
+    replaying: false,
 };
 
 const dom = {
@@ -260,6 +262,14 @@ function connect() {
             setConn('online');
             return;
         }
+        if (message.type === 'replay-start') {
+            state.replaying = true;
+            return;
+        }
+        if (message.type === 'replay-end') {
+            state.replaying = false;
+            return;
+        }
         if (message.channel) applyEvent(message);
     };
 
@@ -340,6 +350,20 @@ function claimEntry(mode, id, text, question) {
 function handleQuestion(text, final, turnId) {
     state.pendingQuestion = text;
 
+    // 重连重放:这些块在这一段之前就已经存在了,只就地补问题/定稿,绝不再立占位块——同一个 id 出现两条
+    // 会让导航条数多出来。详细块由按 detailId 寻址的答案事件建立,这里不用管。
+    if (state.replaying) {
+        const briefId = final && turnId != null ? String(turnId) : null;
+        const existing = briefId ? findEntry('brief', briefId) : null;
+        if (existing) {
+            existing.question = text;
+            existing.questionFinal = Boolean(final);
+            updateBlock('brief', existing);
+        }
+        if (final) state.pendingQuestionFinal = true;
+        return;
+    }
+
     // 上一个问题已定稿却还没被任何回答收养(那一轮没派发出回答),又来新文本 → 这是下一轮提问了:把旧占位
     // 封口,让它留在原地当「只有问题」的一块,别把新问题叠进去。
     if (state.pendingQuestionFinal) {
@@ -394,7 +418,9 @@ function applyEvent({ channel, data }) {
 
         case 'transcription-update':
         case 'transcription-final':
-            if (!data || data.speaker === 'user') return;
+            // 候选人的话('user')是背景,屏幕截图('screen')是一道被作答的题而不是面试官的提问:两者都
+            // 不该在手机上当成待读的提问。手动输入的消息不带 speaker,要照常显示。
+            if (!data || data.speaker === 'user' || data.speaker === 'screen') return;
             handleQuestion(data.text || '', channel === 'transcription-final', data.turnId);
             return;
 

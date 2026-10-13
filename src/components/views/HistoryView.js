@@ -694,7 +694,7 @@ export class HistoryView extends LocalizedLitElement {
         super.updated();
         if (!this.selectedSession) return;
 
-        for (const group of this.collectTimeline(this.selectedSession)) {
+        for (const group of this._timeline || []) {
             for (const part of group.parts) {
                 if (part.role === 'question' || part.role === 'candidate') continue;
 
@@ -758,7 +758,7 @@ export class HistoryView extends LocalizedLitElement {
     }
 
     renderTimeline() {
-        const rows = this.collectTimeline(this.selectedSession);
+        const rows = this._timeline || [];
         if (!rows.length) return html`<div class="empty">No conversation data.</div>`;
         // 这样轮与轮之间的间距属于时间线本身，而不是 meta 行和它所属气泡之间多出来的那道缝。
         return rows.map(group => html`<div class="turn">${group.parts.map(part => this.renderPart(part))}</div>`);
@@ -949,6 +949,9 @@ export class HistoryView extends LocalizedLitElement {
     }
 
     render() {
+        // 时间线合并每帧只算一次：renderTimeline 出结构、updated 事后填 markdown 正文，两处都用这一份。
+        // 以前两处各调一次 collectTimeline，每帧把整个会话重新分组两遍。
+        this._timeline = this.selectedSession ? this.collectTimeline(this.selectedSession) : [];
         return html`
             <div class="unified-page">
                 ${this.statusMessage ? html`<div class="page-toast ${this.statusType}" role="status">${this.statusMessage}</div>` : ''}

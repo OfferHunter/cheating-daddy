@@ -49,7 +49,6 @@ const DEFAULT_PREFERENCES = Object.freeze({
     screenshotSummary: true,
     // Mandarin's value in the language dropdown is 'cmn-CN', not 'zh-CN'.
     selectedLanguage: 'cmn-CN',
-    selectedScreenshotInterval: '5',
     selectedImageQuality: 'medium',
     // 'none' captures no microphone at all; any other value is a deviceId from enumerateDevices()
     // ('default' and 'communications' are Chromium's own pseudo-devices for the system defaults).
@@ -107,4 +106,24 @@ function getResetPreferences() {
     return settings;
 }
 
-module.exports = { CONFIG_VERSION, DEFAULT_CONFIG, DEFAULT_CREDENTIALS, DEFAULT_PREFERENCES, mergeDefaults, getResetPreferences };
+// 把偏好落到某个对象上，`target[field] = prefs[key] ?? DEFAULT_PREFERENCES[key]`。这一行以前在四个视图里各抄了
+// 一遍（构造函数初值、从存储加载、恢复默认），抄漏一个键就会在某个视图里静默用错默认值——#9/#10 就是这么来的。
+// `keys` 显式列出要落地的键，不强加全部默认值，免得把 customPrompt、knowledgeDir 这些不属于该视图的字段也塞进来。
+// 条目是 'field'（字段名与偏好键同名）或 ['prefKey', 'field']（两者不同名）。
+function applyPreferences(target, prefs, keys) {
+    for (const entry of keys) {
+        const [prefKey, field] = typeof entry === 'string' ? [entry, entry] : entry;
+        target[field] = prefs?.[prefKey] ?? DEFAULT_PREFERENCES[prefKey];
+    }
+    return target;
+}
+
+module.exports = {
+    CONFIG_VERSION,
+    DEFAULT_CONFIG,
+    DEFAULT_CREDENTIALS,
+    DEFAULT_PREFERENCES,
+    mergeDefaults,
+    getResetPreferences,
+    applyPreferences,
+};

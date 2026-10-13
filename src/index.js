@@ -498,12 +498,16 @@ function setupTeleprompterIpcHandlers() {
         const win = BrowserWindow.getAllWindows()[0];
         if (!win) return;
         if (action === 'screenshot') {
-            win.webContents.executeJavaScript('window.captureManualScreenshot && window.captureManualScreenshot()', true);
+            win.webContents
+                .executeJavaScript('window.captureManualScreenshot && window.captureManualScreenshot()', true)
+                .catch(error => console.error('Teleprompter screenshot command failed:', error.message));
         } else if (action === 'clear-context') {
-            win.webContents.executeJavaScript(
-                'window.offerHunter && window.offerHunter.element && window.offerHunter.element().handleClearContext()',
-                true
-            );
+            win.webContents
+                .executeJavaScript(
+                    'window.offerHunter && window.offerHunter.element && window.offerHunter.element().handleClearContext()',
+                    true
+                )
+                .catch(error => console.error('Teleprompter clear-context command failed:', error.message));
         }
     });
 }

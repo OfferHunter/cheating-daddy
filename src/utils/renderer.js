@@ -1,7 +1,7 @@
 const { DEFAULT_PREFERENCES } = require('./defaults');
 const { ipcRenderer } = require('electron');
 // 渲染端的相对路径以 index.html 所在目录 (src/) 为基准，而不是本文件所在目录。
-const { getDefaultKeybinds } = require('./utils/keybinds');
+const { getDefaultKeybinds, getKeybindActions } = require('./utils/keybinds');
 
 let mediaStream = null;
 let screenshotInterval = null;
@@ -238,7 +238,7 @@ function buildMicConstraints(micDeviceId) {
     return { audio, video: false };
 }
 
-async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'medium') {
+async function startCapture(imageQuality = 'medium') {
     currentImageQuality = imageQuality;
 
     await loadPreferencesCache();
@@ -1230,6 +1230,7 @@ const offerHunter = {
     isMacOS: isMacOS,
 
     getDefaultKeybinds,
+    getKeybindActions,
 };
 
 window.offerHunter = offerHunter;

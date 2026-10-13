@@ -3,7 +3,7 @@ import { LocalizedLitElement, t } from '../../utils/i18n.js';
 import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 const { DEFAULT_CONFIG, DEFAULT_PREFERENCES } = window.require('./defaults');
-const { getDefaultKeybinds } = window.require('./utils/keybinds');
+const { getDefaultKeybinds, getKeybindActions } = window.require('./utils/keybinds');
 const copy = (zh, en) => t(en, zh);
 
 // Keep both interface languages together; technical defaults come from the shared configuration.
@@ -84,17 +84,23 @@ export class HelpView extends LocalizedLitElement {
         const sections = guideSections();
         const filtered = sections.map(section => ({ ...section, items: section.items.filter(item => `${section.title} ${item.join(' ')}`.toLocaleLowerCase().includes(query)) })).filter(section => section.items.length);
         const keys = getDefaultKeybinds();
-        const shortcuts = [
-            ['screenShot', copy('开始会话 / 截图分析', 'Start session / analyze screen')],
-            ['toggleVisibility', copy('显示 / 隐藏窗口', 'Show / hide window')],
-            ['toggleClickThrough', copy('切换鼠标穿透', 'Toggle click-through')],
-            ['moveUp', copy('向上移动窗口（其他方向同理）', 'Move window up (other arrows move in their directions)')],
-            ['scrollUp', copy('向上滚动（向下使用 ↓）', 'Scroll up (use Down to scroll down)')],
-            ['detailPrev', copy('上一条详细回答（下一条使用 ]）', 'Previous detailed answer (use ] for next)')],
-            ['toggleTheme', copy('切换明暗主题', 'Toggle dark / light theme')],
-            ['quit', copy('退出应用，保留数据', 'Quit and keep data')],
-            ['emergencyErase', copy('紧急清除：隐藏、删除全部本地数据并退出', 'Emergency erase: hide, delete all local app data and quit')],
-        ];
+        // 帮助页只列一部分动作，措辞是帮助页专属文案（设置页用的是另一套英文名）。所以这里只放「按 key 取用的
+        // 本地化短语」，键的集合与顺序取自权威表 utils/keybinds.js：某个键被改名时，这一行会静默消失，而不是
+        // 把 `keys[key]` 渲染成 undefined。
+        const helpLabels = {
+            screenShot: copy('开始会话 / 截图分析', 'Start session / analyze screen'),
+            toggleVisibility: copy('显示 / 隐藏窗口', 'Show / hide window'),
+            toggleClickThrough: copy('切换鼠标穿透', 'Toggle click-through'),
+            moveUp: copy('向上移动窗口（其他方向同理）', 'Move window up (other arrows move in their directions)'),
+            scrollUp: copy('向上滚动（向下使用 ↓）', 'Scroll up (use Down to scroll down)'),
+            detailPrev: copy('上一条详细回答（下一条使用 ]）', 'Previous detailed answer (use ] for next)'),
+            toggleTheme: copy('切换明暗主题', 'Toggle dark / light theme'),
+            quit: copy('退出应用，保留数据', 'Quit and keep data'),
+            emergencyErase: copy('紧急清除：隐藏、删除全部本地数据并退出', 'Emergency erase: hide, delete all local app data and quit'),
+        };
+        const shortcuts = getKeybindActions()
+            .filter(action => helpLabels[action.key])
+            .map(action => [action.key, helpLabels[action.key]]);
         return html`
             <div class="unified-page"><div class="unified-wrap">
                 <header>

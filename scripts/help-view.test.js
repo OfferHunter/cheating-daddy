@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const defaults = require('../src/defaults');
-const { getDefaultKeybinds } = require('../src/utils/keybinds');
+// 用真实的 keybinds 模块而非手搭的桩：帮助页现在从这份共享表取动作清单，桩里少一个导出就会渲染失败。
+const keybinds = require('../src/utils/keybinds');
+const { getDefaultKeybinds } = keybinds;
 
 function loadHelp(language = 'zh') {
     const template = (strings, ...values) => strings.reduce((text, part, index) => text + part + flatten(values[index]), '');
@@ -16,7 +18,7 @@ function loadHelp(language = 'zh') {
         scrollbarStyles: '',
         unifiedPageStyles: '',
         customElements: { define() {} },
-        window: { require: name => name === './defaults' ? defaults : { getDefaultKeybinds } },
+        window: { require: name => (name === './defaults' ? defaults : keybinds) },
     };
     const source = fs.readFileSync(require.resolve('../src/components/views/HelpView.js'), 'utf8')
         .replace(/^import .*;\r?\n/gm, '')

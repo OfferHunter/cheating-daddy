@@ -36,7 +36,7 @@ const PAGE = `<!doctype html>
     const DEFAULTS = {
         uiLanguage: 'zh-CN', customPrompt: '', promptOverrides: {}, knowledgeDir: '',
         detailMode: true, briefThinking: false, detailThinking: false, screenshotThinking: true, screenshotSummary: true,
-        selectedLanguage: 'cmn-CN', selectedScreenshotInterval: '5', selectedImageQuality: 'medium',
+        selectedLanguage: 'cmn-CN', selectedImageQuality: 'medium',
         audioInputDeviceId: 'default', fontSize: 16,
         backgroundTransparency: 0.48, textTransparency: 0.83,
         maxSentenceSilenceMs: 1500, micMaxSentenceSilenceMs: 2000, micGateDb: -45, micGateDwellMs: 300,

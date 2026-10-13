@@ -4,6 +4,7 @@ import { scrollbarStyles, unifiedPageStyles } from './sharedPageStyles.js';
 
 // 与主进程同一份默认分段文案：面板按它预填各文本框，某段没有覆盖就显示默认值。
 const { DEFAULT_PROMPT_SEGMENTS } = window.require('./utils/prompts');
+const { applyPreferences } = window.require('./defaults');
 
 // 系统提示词编辑面板的分组。[段键, 英文标签, 中文标签]；段键对应 prompts.js 的 DEFAULT_PROMPT_SEGMENTS。
 const PROMPT_GROUPS = [
@@ -255,8 +256,12 @@ export class AICustomizeView extends LocalizedLitElement {
     async _loadFromStorage() {
         try {
             const prefs = await offerHunter.storage.getPreferences();
-            this._context = prefs.customPrompt || '';
-            this._promptOverrides = { ...(prefs.promptOverrides || {}) };
+            // 字段名与偏好键不同名，所以用 [prefKey, field] 形式。prefs 是 IPC 回来的一次性副本，直接引用它
+            // 不会被别处改动；写入侧 _setSegment 也是整体替换而非就地改，所以共享引用无副作用。
+            applyPreferences(this, prefs, [
+                ['customPrompt', '_context'],
+                ['promptOverrides', '_promptOverrides'],
+            ]);
             this.requestUpdate();
         } catch (error) {
             console.error('Error loading AI customize storage:', error);

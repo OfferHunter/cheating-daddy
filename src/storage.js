@@ -18,6 +18,13 @@ const CHAT_MAX_TOKENS_FLOOR = 1024;
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
 
+// 进程内解析缓存，filePath -> 解析后的原始 JSON（未 merge）。config/preferences/credentials/keybinds 在每个回合、
+// 每个视图里被反复读，每次都 readFileSync + JSON.parse 是纯浪费。缓存只省掉重复读：写入一律使其失效，磁盘始终
+// 是唯一真相。这些文件只有本进程写（license.json 走 writeJsonFile 但由 license 自己读），不会出现外部改动。
+const jsonCache = new Map();
+// history 目录的摘要列表（getAllSessions）。任何会话写入/删除都作废它，下一次调用重建。
+let sessionsSummaryCache = null;
+
 // Get the config directory path based on OS
 function getConfigDir() {
     const platform = os.platform();
@@ -55,17 +62,23 @@ function getHistoryDir() {
     return path.join(getConfigDir(), 'history');
 }
 
-// Helper to read JSON file safely
+// Helper to read JSON file safely. Parsed results are memoized in jsonCache (see declaration above); a
+// parse error returns the fallback without caching, so a file fixed on disk is picked up next call.
 function readJsonFile(filePath, defaultValue) {
+    if (jsonCache.has(filePath)) {
+        return jsonCache.get(filePath);
+    }
+    let value = defaultValue;
     try {
         if (fs.existsSync(filePath)) {
-            const data = fs.readFileSync(filePath, 'utf8');
-            return JSON.parse(data);
+            value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         }
     } catch (error) {
         console.warn(`Error reading ${filePath}:`, error.message);
+        return defaultValue;
     }
-    return defaultValue;
+    jsonCache.set(filePath, value);
+    return value;
 }
 
 // Helper to write JSON file safely. Writes to a sibling temp file and renames it into place: a crash
@@ -80,6 +93,9 @@ function writeJsonFile(filePath, data) {
         const tempPath = `${filePath}.tmp`;
         fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
         fs.renameSync(tempPath, filePath);
+        // 写成功后直接以写入值为准刷新缓存，省掉下次读回来的一次 disk 读。getX() 拿到的仍是 merge 出的新对象，
+        // 这里缓存的原始值不会被调用方就地改动。
+        jsonCache.set(filePath, data);
         return true;
     } catch (error) {
         console.error(`Error writing ${filePath}:`, error.message);
@@ -272,7 +288,10 @@ function saveSession(sessionId, data) {
         // History page has to tolerate the key missing rather than expect an empty list.
         candidateHistory: data.candidateHistory || existingSession?.candidateHistory || [],
     };
-    return writeJsonFile(sessionPath, sessionData);
+    const written = writeJsonFile(sessionPath, sessionData);
+    // 会话内容变了，history 摘要列表作废，下一次 getAllSessions 重建。
+    if (written) sessionsSummaryCache = null;
+    return written;
 }
 
 function getSession(sessionId) {
@@ -280,11 +299,18 @@ function getSession(sessionId) {
 }
 
 function getAllSessions() {
+    // History 列表要读遍每个会话再拼 searchText，是最重的读路径。缓存整份摘要列表，任何会话写入/删除都作废它
+    // （见 saveSession/deleteSession/deleteAllSessions/clearAllData）。返回的数组经 IPC 序列化给渲染端，内部无人就地改。
+    if (sessionsSummaryCache) {
+        return sessionsSummaryCache;
+    }
+
     const historyDir = getHistoryDir();
 
     try {
         if (!fs.existsSync(historyDir)) {
-            return [];
+            sessionsSummaryCache = [];
+            return sessionsSummaryCache;
         }
 
         const files = fs
@@ -297,7 +323,7 @@ function getAllSessions() {
                 return tsB - tsA;
             });
 
-        return files
+        sessionsSummaryCache = files
             .map(file => {
                 const sessionId = file.replace('.json', '');
                 const data = readJsonFile(path.join(historyDir, file), null);
@@ -335,6 +361,7 @@ function getAllSessions() {
                 return null;
             })
             .filter(Boolean);
+        return sessionsSummaryCache;
     } catch (error) {
         console.error('Error reading sessions:', error.message);
         return [];
@@ -346,6 +373,8 @@ function deleteSession(sessionId) {
     try {
         if (fs.existsSync(sessionPath)) {
             fs.unlinkSync(sessionPath);
+            jsonCache.delete(sessionPath);
+            sessionsSummaryCache = null;
             return true;
         }
     } catch (error) {
@@ -360,9 +389,12 @@ function deleteAllSessions() {
         if (fs.existsSync(historyDir)) {
             const files = fs.readdirSync(historyDir).filter(f => f.endsWith('.json'));
             files.forEach(file => {
-                fs.unlinkSync(path.join(historyDir, file));
+                const fullPath = path.join(historyDir, file);
+                fs.unlinkSync(fullPath);
+                jsonCache.delete(fullPath);
             });
         }
+        sessionsSummaryCache = null;
         return true;
     } catch (error) {
         console.error('Error deleting all sessions:', error.message);
@@ -380,12 +412,15 @@ function clearAllData() {
     try {
         if (fs.existsSync(historyDir)) {
             for (const file of fs.readdirSync(historyDir).filter(name => name.endsWith('.json'))) {
-                fs.unlinkSync(path.join(historyDir, file));
+                const fullPath = path.join(historyDir, file);
+                fs.unlinkSync(fullPath);
+                jsonCache.delete(fullPath);
             }
         }
     } catch (error) {
         console.error('Error clearing history:', error.message);
     }
+    sessionsSummaryCache = null;
 
     writeJsonFile(getConfigPath(), DEFAULT_CONFIG);
     writeJsonFile(getCredentialsPath(), DEFAULT_CREDENTIALS);
@@ -393,6 +428,8 @@ function clearAllData() {
     if (fs.existsSync(getKeybindsPath())) {
         fs.unlinkSync(getKeybindsPath());
     }
+    // keybinds.json 是直接删的（不经过 writeJsonFile），缓存里可能还留着旧值，单独摘掉。
+    jsonCache.delete(getKeybindsPath());
 
     return true;
 }

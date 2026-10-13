@@ -284,11 +284,26 @@ const zh = {
     'Invalid activation code format.': '激活码格式不正确。',
     'This activation code is for a different computer.': '该激活码属于另一台电脑。',
     'Invalid activation code. Please check it and try again.': '激活码无效，请检查后重试。',
+    'This activation code has expired. Please ask the seller for a new one.': '该激活码已过期，请向商家索取新的激活码。',
     'Activation failed. Please try again.': '激活失败，请重试。',
     'Activation is unavailable on this system.': '当前系统无法完成激活。',
 };
 
-const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
+// 反向表（中文→英文）供 localizeTree 把「没走 t() 的中文字面量」翻回英文。多个英文键会共用同一句中文
+// （Continue / Resume 都是「继续」，上一/下一条详细回答在状态栏和快捷键表里各有一份），而 Object.fromEntries
+// 让后写的静默覆盖先写的：结果是哪个赢取决于定义顺序，既不稳定也难排查。这里显式保留先定义的那条作规范
+// 译名，并把冲突打成警告，让新加的重复项当场暴露，而不是悄悄丢一个。
+const en = (() => {
+    const map = {};
+    for (const [english, chinese] of Object.entries(zh)) {
+        if (map[chinese] !== undefined && map[chinese] !== english) {
+            console.warn(`[i18n] duplicate Chinese value "${chinese}": keeping "${map[chinese]}", ignoring "${english}"`);
+            continue;
+        }
+        map[chinese] = english;
+    }
+    return map;
+})();
 const normalize = value => value.replace(/\s+/g, ' ').trim();
 const normalizedZh = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [normalize(english), chinese]));
 const normalizedEn = Object.fromEntries(Object.entries(en).map(([chinese, english]) => [normalize(chinese), english]));

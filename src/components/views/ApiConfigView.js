@@ -138,6 +138,10 @@ export class ApiConfigView extends LocalizedLitElement {
         this._testSource = 'default';
         this._testMicDevices = [];
         this._testing = false;
+        // 打开采集（权限弹窗、设备启动）是异步的，这期间 _testing 还是 false：没有这个忙标志，第二次点击会再
+        // 走进 _startTest，把第一条 MediaStream 覆盖丢失。_connected 则用来发现「打开期间页面已被切走」。
+        this._opening = false;
+        this._connected = false;
         this._testText = '';
         this._testState = '';
         this._testError = '';
@@ -156,6 +160,7 @@ export class ApiConfigView extends LocalizedLitElement {
 
     connectedCallback() {
         super.connectedCallback();
+        this._connected = true;
         ipcRenderer.on('asr-test:sentence', this._onSentence);
         ipcRenderer.on('asr-test:state', this._onState);
         ipcRenderer.on('asr-test:error', this._onError);
@@ -165,6 +170,7 @@ export class ApiConfigView extends LocalizedLitElement {
     // 离开页面 = 关掉连接、释放麦克风。事件监听也在这里摘掉，否则回到别的页面还会被识别结果打扰。
     disconnectedCallback() {
         super.disconnectedCallback();
+        this._connected = false;
         this._stopTest();
         ipcRenderer.removeListener('asr-test:sentence', this._onSentence);
         ipcRenderer.removeListener('asr-test:state', this._onState);
@@ -285,11 +291,17 @@ export class ApiConfigView extends LocalizedLitElement {
     }
 
     async _toggleTest() {
+        if (this._opening) return;
         if (this._testing) {
             this._stopTest();
             return;
         }
-        await this._startTest();
+        this._opening = true;
+        try {
+            await this._startTest();
+        } finally {
+            this._opening = false;
+        }
     }
 
     async _startTest() {
@@ -306,6 +318,12 @@ export class ApiConfigView extends LocalizedLitElement {
             console.error('Error opening test capture:', error);
             this._testError = error.message || String(error);
             this.requestUpdate();
+            return;
+        }
+
+        // 打开期间页面已被切走：_stopTest 早已跑过，这条刚拿到的采集必须自己放掉，否则它会一直活着。
+        if (!this._connected) {
+            this._releaseCapture();
             return;
         }
 

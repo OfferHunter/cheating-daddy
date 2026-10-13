@@ -230,7 +230,9 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                     const isMac = process.platform === 'darwin';
                     const shortcutKey = isMac ? 'cmd+enter' : 'ctrl+enter';
 
-                    mainWindow.webContents.executeJavaScript(`
+                    // 必须 await：executeJavaScript 返回 promise，不接住它时下面这个 try/catch 根本拦不到
+                    // 渲染端抛出的错误，它会变成一个没人处理的 rejection。
+                    await mainWindow.webContents.executeJavaScript(`
                         offerHunter.handleShortcut('${shortcutKey}');
                     `);
                 } catch (error) {
