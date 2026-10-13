@@ -68,14 +68,18 @@ function readJsonFile(filePath, defaultValue) {
     return defaultValue;
 }
 
-// Helper to write JSON file safely
+// Helper to write JSON file safely. Writes to a sibling temp file and renames it into place: a crash
+// or power loss mid-write then leaves the old file intact instead of a truncated one, and every file
+// here (config, credentials, preferences, sessions, license) is read back on the next launch.
 function writeJsonFile(filePath, data) {
     try {
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+        const tempPath = `${filePath}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
+        fs.renameSync(tempPath, filePath);
         return true;
     } catch (error) {
         console.error(`Error writing ${filePath}:`, error.message);
@@ -98,33 +102,24 @@ function needsReset() {
     }
 }
 
-// Wipe and reinitialize the config directory
-function resetConfigDir() {
-    const configDir = getConfigDir();
+// Reinitialize the config files with defaults. Deliberately does not remove the directory: history/
+// and license.json live beside these files, and a corrupt config.json used to trigger a full wipe that
+// took both of them with it.
+function resetConfigFiles() {
+    console.log('Initializing config with defaults...');
 
-    console.log('Resetting config directory...');
-
-    // Remove existing directory if it exists
-    if (fs.existsSync(configDir)) {
-        fs.rmSync(configDir, { recursive: true, force: true });
-    }
-
-    // Create fresh directory structure
-    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(getConfigDir(), { recursive: true });
     fs.mkdirSync(getHistoryDir(), { recursive: true });
 
-    // Initialize with defaults
     writeJsonFile(getConfigPath(), DEFAULT_CONFIG);
     writeJsonFile(getCredentialsPath(), DEFAULT_CREDENTIALS);
     writeJsonFile(getPreferencesPath(), DEFAULT_PREFERENCES);
-
-    console.log('Config directory initialized with defaults');
 }
 
 // Initialize storage - call this on app startup
 function initializeStorage() {
     if (needsReset()) {
-        resetConfigDir();
+        resetConfigFiles();
     } else {
         // Ensure history directory exists
         const historyDir = getHistoryDir();
@@ -377,8 +372,28 @@ function deleteAllSessions() {
 
 // ============ CLEAR ALL DATA ============
 
+// Wipe the user's own data: history, credentials, preferences and keybinds, with the config reset to
+// defaults. license.json is deliberately left in place — the activation is a purchased, machine-bound
+// license rather than user data, and removing it would force a needless re-activation.
 function clearAllData() {
-    resetConfigDir();
+    const historyDir = getHistoryDir();
+    try {
+        if (fs.existsSync(historyDir)) {
+            for (const file of fs.readdirSync(historyDir).filter(name => name.endsWith('.json'))) {
+                fs.unlinkSync(path.join(historyDir, file));
+            }
+        }
+    } catch (error) {
+        console.error('Error clearing history:', error.message);
+    }
+
+    writeJsonFile(getConfigPath(), DEFAULT_CONFIG);
+    writeJsonFile(getCredentialsPath(), DEFAULT_CREDENTIALS);
+    writeJsonFile(getPreferencesPath(), DEFAULT_PREFERENCES);
+    if (fs.existsSync(getKeybindsPath())) {
+        fs.unlinkSync(getKeybindsPath());
+    }
+
     return true;
 }
 
@@ -386,6 +401,7 @@ module.exports = {
     // Initialization
     initializeStorage,
     getConfigDir,
+    writeJsonFile,
 
     // Config
     getConfig,

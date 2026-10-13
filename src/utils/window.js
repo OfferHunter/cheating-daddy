@@ -7,6 +7,12 @@ let mouseEventsIgnored = false;
 // 最近一次生效的键位表。设置页录制键位时会临时摘掉所有全局快捷键，失焦后要按这份表原样恢复。
 let currentKeybinds = null;
 
+// IPC 处理器只允许注册一次，而窗口可以重建（macOS 的 activate 会再建一个），所以处理器不留窗口引用，
+// 统一读这里的「当前窗口」。重建窗口时由 createWindow 覆盖它们。
+let currentWindow = null;
+let sendToRendererRef = null;
+let windowIpcWired = false;
+
 const DEFAULT_MAIN_WINDOW_SIZE = { width: 1100, height: 800 };
 const MIN_WINDOW_SIZE = { width: 700, height: 320 };
 
@@ -61,7 +67,14 @@ function createWindow(sendToRenderer) {
 
     session.defaultSession.setDisplayMediaRequestHandler(
         (request, callback) => {
-            getScreenSource().then(source => callback({ video: source, audio: 'loopback' }));
+            // 每次请求都必须回一次 callback：拿到源就授予，枚举失败或没拿到屏就回空对象把请求拒掉。
+            // 少了这条错误分支，getSources 一旦 reject，渲染端的 getDisplayMedia 会永远挂着。
+            getScreenSource()
+                .then(source => callback(source ? { video: source, audio: 'loopback' } : {}))
+                .catch(error => {
+                    console.error('Failed to resolve screen source for display media:', error);
+                    callback({});
+                });
         },
         { useSystemPicker: true }
     );
@@ -114,7 +127,14 @@ function createWindow(sendToRenderer) {
         }, 150);
     });
 
-    setupWindowIpcHandlers(mainWindow, sendToRenderer);
+    // 这个窗口成为「当前窗口」，IPC 处理器读它。处理器只挂一次（见 wireWindowIpc），重建窗口时这里
+    // 更新引用即可，不会再重复注册。
+    currentWindow = mainWindow;
+    sendToRendererRef = sendToRenderer;
+    mainWindow.on('closed', () => {
+        if (currentWindow === mainWindow) currentWindow = null;
+    });
+    wireWindowIpc();
 
     return mainWindow;
 }
@@ -325,44 +345,54 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
     }
 }
 
-function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
+// 只挂一次：这些是 ipcMain 级别的处理器，第二次注册同名 handler 会抛错，而窗口可以重建。处理器因此不
+// 闭包某个窗口，一律读 currentWindow。
+function wireWindowIpc() {
+    if (windowIpcWired) return;
+    windowIpcWired = true;
+
     ipcMain.on('view-changed', (event, view) => {
-        if (!mainWindow.isDestroyed()) {
-            const isLiveMode = view === 'assistant';
+        const win = currentWindow;
+        if (!win || win.isDestroyed()) return;
 
-            if (process.platform !== 'win32') {
-                mainWindow.setAlwaysOnTop(isLiveMode);
-                mainWindow.setVisibleOnAllWorkspaces(isLiveMode, { visibleOnFullScreen: isLiveMode });
-            }
+        const isLiveMode = view === 'assistant';
 
-            if (!isLiveMode) {
-                mainWindow.setIgnoreMouseEvents(false);
-            }
+        if (process.platform !== 'win32') {
+            win.setAlwaysOnTop(isLiveMode);
+            win.setVisibleOnAllWorkspaces(isLiveMode, { visibleOnFullScreen: isLiveMode });
+        }
 
-            // 实时视图叠在视频/会议窗上：点面板上的按钮不该把焦点从背后窗口夺走。Win 下 setFocusable(false)
-            // 即 WS_EX_NOACTIVATE——窗口不再被激活，但鼠标点击照旧可达（按钮、拖拽、滚轮都正常），于是背后
-            // 窗口保持焦点。代价是实时视图收不到键盘输入：Type a message 输入框打不了字（快捷键全是
-            // globalShortcut，不受影响）。默认开启，但部分网站/会议软件会检测窗口聚焦率，所以留了
-            // nonFocusableSession 偏好可关（关掉后实时视图恢复可聚焦）。其它视图必须保持可聚焦，否则激活页
-            // 的激活码、设置页的 API Key 等输入框都打不了字。setFocusable 只支持 Win/macOS。
-            if (process.platform !== 'linux') {
-                const nonFocusable = storage.getPreferences().nonFocusableSession !== false;
-                mainWindow.setFocusable(!(isLiveMode && nonFocusable));
+        // 离开实时视图时点击穿透要关掉，标志位必须跟着复位：只关窗口不改标志，下一次按切换键会读到过期的
+        // true 而把状态翻反，得多按一次才生效。顺带把复位告诉渲染端，免得它的镜像状态也过期。
+        if (!isLiveMode) {
+            win.setIgnoreMouseEvents(false);
+            if (mouseEventsIgnored) {
+                mouseEventsIgnored = false;
+                win.webContents.send('click-through-toggled', false);
             }
+        }
+
+        // 实时视图叠在视频/会议窗上：点面板上的按钮不该把焦点从背后窗口夺走。Win 下 setFocusable(false)
+        // 即 WS_EX_NOACTIVATE——窗口不再被激活，但鼠标点击照旧可达（按钮、拖拽、滚轮都正常），于是背后
+        // 窗口保持焦点。代价是实时视图收不到键盘输入：Type a message 输入框打不了字（快捷键全是
+        // globalShortcut，不受影响）。默认开启，但部分网站/会议软件会检测窗口聚焦率，所以留了
+        // nonFocusableSession 偏好可关（关掉后实时视图恢复可聚焦）。其它视图必须保持可聚焦，否则激活页
+        // 的激活码、设置页的 API Key 等输入框都打不了字。setFocusable 只支持 Win/macOS。
+        if (process.platform !== 'linux') {
+            const nonFocusable = storage.getPreferences().nonFocusableSession !== false;
+            win.setFocusable(!(isLiveMode && nonFocusable));
         }
     });
 
     ipcMain.handle('window-minimize', () => {
-        if (!mainWindow.isDestroyed()) {
-            mainWindow.minimize();
+        const win = currentWindow;
+        if (win && !win.isDestroyed()) {
+            win.minimize();
         }
     });
 
-    ipcMain.on('update-keybinds', (event, newKeybinds) => {
-        if (!mainWindow.isDestroyed()) {
-            updateGlobalShortcuts(newKeybinds, mainWindow, sendToRenderer);
-        }
-    });
+    // update-keybinds 不在这里挂：index.js 已经处理它（存盘 + 更新快捷键），这里再挂一份会让每次改键位
+    // 都跑两遍 unregisterAll + 全量重注册。
 
     // 设置页录制键位期间必须把全局快捷键全部摘掉：走 RegisterHotKey 的键在系统层就被吃掉，渲染进程收不到
     // keydown，于是任何"当前已注册"的组合（默认的 Ctrl+Up/Ctrl+Down 等）都无法录进输入框。失焦时再恢复。
@@ -371,21 +401,23 @@ function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
     });
 
     ipcMain.on('resume-global-shortcuts', () => {
-        if (!mainWindow.isDestroyed() && currentKeybinds) {
-            updateGlobalShortcuts(currentKeybinds, mainWindow, sendToRenderer);
+        const win = currentWindow;
+        if (win && !win.isDestroyed() && currentKeybinds) {
+            updateGlobalShortcuts(currentKeybinds, win, sendToRendererRef);
         }
     });
 
     ipcMain.handle('toggle-window-visibility', async event => {
         try {
-            if (mainWindow.isDestroyed()) {
+            const win = currentWindow;
+            if (!win || win.isDestroyed()) {
                 return { success: false, error: 'Window has been destroyed' };
             }
 
-            if (mainWindow.isVisible()) {
-                mainWindow.hide();
+            if (win.isVisible()) {
+                win.hide();
             } else {
-                mainWindow.showInactive();
+                win.showInactive();
             }
             return { success: true };
         } catch (error) {
@@ -398,5 +430,4 @@ function setupWindowIpcHandlers(mainWindow, sendToRenderer) {
 module.exports = {
     createWindow,
     updateGlobalShortcuts,
-    setupWindowIpcHandlers,
 };

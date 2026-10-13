@@ -585,6 +585,8 @@ export class OnboardingView extends LocalizedLitElement {
                 return 'This activation code is for a different computer.';
             case 'signature':
                 return 'Invalid activation code. Please check it and try again.';
+            case 'expired':
+                return 'This activation code has expired. Please ask the seller for a new one.';
             default:
                 return 'Activation failed. Please try again.';
         }

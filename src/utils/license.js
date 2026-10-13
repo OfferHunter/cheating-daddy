@@ -56,9 +56,11 @@ function readLicense() {
 }
 
 function writeLicense(data) {
-    const filePath = getLicensePath();
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    // Reuse storage's atomic writer so a crash mid-write cannot truncate license.json and silently
+    // de-activate the machine.
+    if (!storage.writeJsonFile(getLicensePath(), data)) {
+        throw new Error('Failed to write license file');
+    }
 }
 
 // 关键：永远拿"当前机器实时算出的机器码"去验签，而不是信 license.json 里存的那个。否则用户把整个配置目录
@@ -70,15 +72,17 @@ function verifyCode(code, machineCode = getMachineCode()) {
 function isActivated() {
     const license = readLicense();
     if (!license || typeof license.code !== 'string') return false;
-    return verifyCode(license.code).ok;
+    const result = verifyCode(license.code);
+    return result.ok && !format.isExpired(result.expiresAt);
 }
 
 function activate(code) {
     const machineCode = getMachineCode();
     const result = verifyCode(code, machineCode);
     if (!result.ok) return { success: false, error: result.reason };
+    if (format.isExpired(result.expiresAt)) return { success: false, error: 'expired' };
 
-    writeLicense({ machineCode, code: String(code).trim(), activatedAt: Date.now() });
+    writeLicense({ machineCode, code: String(code).trim(), activatedAt: Date.now(), expiresAt: result.expiresAt });
     return { success: true };
 }
 

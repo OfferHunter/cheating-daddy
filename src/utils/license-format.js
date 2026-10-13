@@ -1,11 +1,16 @@
 // 激活码的纯格式与签名逻辑。客户端 (license.js) 与签发脚本 (scripts/license-generate.js) 共用一份，
 // 避免两处实现校验位或 payload 时慢慢走样。这里不读注册表、不读文件、不含任何私钥，只有 crypto 与字符串处理。
+// 这里也不读时钟：到期与否由调用方拿 isExpired 判断，方便测试。
 const crypto = require('crypto');
 
 // Crockford Base32：去掉了 I、L、O、U，手抄或截图不容易混淆。
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-// 激活码前缀兼版本号。payload 恒为 `<PREFIX>.<机器码>`，格式将来要变时改这里即可。
-const PREFIX = 'OH1';
+// 旧前缀：payload 恒为 `OH1.<机器码>`，没有过期字段，一律当作终身。只为兼容已发出的码而保留，不再新签。
+const PREFIX_LEGACY = 'OH1';
+// 当前前缀：payload 为 `OH2.<机器码>.<到期秒>`，到期秒为 0 表示终身。
+const PREFIX = 'OH2';
+// 到期字段的"终身"取值。
+const LIFETIME = 0;
 // 机器码 = 26 位数据 + 1 位校验位。
 const DATA_CHARS = 26;
 
@@ -68,40 +73,69 @@ function isValidMachineCode(value) {
     return checksumChar(raw.slice(0, DATA_CHARS)) === raw[DATA_CHARS];
 }
 
-function payloadFor(machineCode) {
-    return `${PREFIX}.${machineCode}`;
+// 到期时间以整秒写进被签名的 payload；null（终身）记作 0。放这里而不是放 license.json，用户才改不动它。
+function expiryField(expiresAt) {
+    if (expiresAt == null) return String(LIFETIME);
+    return String(Math.floor(expiresAt / 1000));
 }
 
-// 用私钥（仅签发侧有）对机器码签名，产出交给用户的激活码。
-function signCode(machineCode, privateKey) {
-    const payload = payloadFor(machineCode);
+function payloadFor(machineCode, expiresAt = null) {
+    return `${PREFIX}.${machineCode}.${expiryField(expiresAt)}`;
+}
+
+// 用私钥（仅签发侧有）对机器码签名，产出交给用户的激活码。expiresAt 为毫秒时间戳，null 表示终身。
+function signCode(machineCode, privateKey, expiresAt = null) {
+    const payload = payloadFor(machineCode, expiresAt);
     const signature = crypto.sign(null, Buffer.from(payload, 'utf8'), privateKey);
     return `${payload}.${signature.toString('base64url')}`;
 }
 
 // 用公钥核验激活码是否为本机签发。reason 供 UI 区分：format（格式坏）、machine（机器不符）、signature（签名不对）。
+// 成功时 expiresAt 为毫秒时间戳，终身则为 null；是否已过期交给调用方用 isExpired + 本机时钟判断。
+// 同时认 OH1（无过期字段 = 终身）与 OH2，已发出的旧码因此不会因这次改版失效。
 function verifyCodeWithKey(code, machineCode, publicKey) {
     if (typeof code !== 'string') return { ok: false, reason: 'format' };
 
     const parts = code.trim().split('.');
-    if (parts.length !== 3 || parts[0] !== PREFIX) return { ok: false, reason: 'format' };
+    const prefix = parts[0];
+    if (prefix !== PREFIX && prefix !== PREFIX_LEGACY) return { ok: false, reason: 'format' };
+
+    let payload;
+    let expiresAt = null;
+    if (prefix === PREFIX_LEGACY) {
+        if (parts.length !== 3) return { ok: false, reason: 'format' };
+        payload = `${PREFIX_LEGACY}.${parts[1]}`;
+    } else {
+        if (parts.length !== 4) return { ok: false, reason: 'format' };
+        if (!/^\d+$/.test(parts[2])) return { ok: false, reason: 'format' };
+        expiresAt = Number(parts[2]) === LIFETIME ? null : Number(parts[2]) * 1000;
+        payload = `${PREFIX}.${parts[1]}.${parts[2]}`;
+    }
+
     if (parts[1] !== machineCode) return { ok: false, reason: 'machine' };
 
-    const signature = Buffer.from(parts[2], 'base64url');
+    const signature = Buffer.from(parts[parts.length - 1], 'base64url');
     if (signature.length !== 64) return { ok: false, reason: 'format' };
 
     try {
-        return crypto.verify(null, Buffer.from(payloadFor(parts[1]), 'utf8'), publicKey, signature)
-            ? { ok: true }
+        return crypto.verify(null, Buffer.from(payload, 'utf8'), publicKey, signature)
+            ? { ok: true, expiresAt }
             : { ok: false, reason: 'signature' };
     } catch {
         return { ok: false, reason: 'signature' };
     }
 }
 
+// expiresAt 为 null（终身）永不过期；否则本机时钟到了就失效。离线场景挡不住用户把系统时间往回拨。
+function isExpired(expiresAt, now = Date.now()) {
+    return expiresAt != null && now >= expiresAt;
+}
+
 module.exports = {
     ALPHABET,
     PREFIX,
+    PREFIX_LEGACY,
+    LIFETIME,
     DATA_CHARS,
     base32Encode,
     checksumChar,
@@ -111,4 +145,5 @@ module.exports = {
     payloadFor,
     signCode,
     verifyCodeWithKey,
+    isExpired,
 };
