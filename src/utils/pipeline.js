@@ -559,12 +559,15 @@ async function runTurn(entry) {
 //
 // 故意不是 async 函数：提示词必须在调用方返回前建好，与 runTurn 一样，这样背靠背派发的两个轮次看到的都是
 // 还不包含对方回答的字幕。写成 async 也一样，但这里没有任何东西可以 await。
-function startDetailStream(turnEntry, { question, thinking }) {
+// screenshot 不是给面板看的（面板本就在答截图），而是给手机提词页看的：它拿这个标记把截图作答也并进「精要」，
+// 而桌面端一直只让截图作答进详情面板。标记只搭在这条流的事件上，桌面渲染端多收到一个字段、忽略即可。
+function startDetailStream(turnEntry, { question, thinking, screenshot = false }) {
     const entry = {
         detailId: ++detailSeq,
         turnSeq: turnEntry.seq,
         generation: turnEntry.generation,
         question,
+        screenshot,
         partial: '',
         assistant: null,
         status: 'pending',
@@ -598,6 +601,7 @@ function startDetailStream(turnEntry, { question, thinking }) {
                             turnSeq: entry.turnSeq,
                             question: entry.question,
                             text: partial,
+                            screenshot: entry.screenshot,
                         });
                         isFirst = false;
                         return;
@@ -607,7 +611,12 @@ function startDetailStream(turnEntry, { question, thinking }) {
                     if (now - entry.lastSentAt < STREAM_SEND_INTERVAL_MS) return;
                     entry.lastSentText = partial;
                     entry.lastSentAt = now;
-                    sendToRenderer('update-detail-response', { detailId: entry.detailId, text: partial });
+                    sendToRenderer('update-detail-response', {
+                        detailId: entry.detailId,
+                        turnSeq: entry.turnSeq,
+                        text: partial,
+                        screenshot: entry.screenshot,
+                    });
                 },
                 {
                     // 没有目录就完全不声明工具，这个请求与从前那个普通请求一模一样——不支持工具的服务端
@@ -653,7 +662,12 @@ function startDetailStream(turnEntry, { question, thinking }) {
 
             // 最后几个 token 可能被限流窗口吞掉了。
             if (text !== entry.lastSentText) {
-                sendToRenderer('update-detail-response', { detailId: entry.detailId, text });
+                sendToRenderer('update-detail-response', {
+                    detailId: entry.detailId,
+                    turnSeq: entry.turnSeq,
+                    text,
+                    screenshot: entry.screenshot,
+                });
             }
 
             sendToRenderer('detail-response-complete', {
@@ -666,6 +680,7 @@ function startDetailStream(turnEntry, { question, thinking }) {
                 // 长回答比短回答更容易撞上 token 上限，而面板必须说得出来：悄悄被截断的文本比承认自己
                 // 被截断的文本更糟。
                 truncated: finishReason === 'length',
+                screenshot: entry.screenshot,
             });
 
             // 落库用 entry.question 而不是 turnEntry.contextText：截图那一轮的 contextText 稍后会被摘要
@@ -686,6 +701,7 @@ function startDetailStream(turnEntry, { question, thinking }) {
                 error: error.message,
                 usedKnowledge: [],
                 truncated: false,
+                screenshot: entry.screenshot,
             });
         }
     })();
@@ -710,6 +726,7 @@ function startScreenshotAnswer(turnEntry) {
     const detailId = startDetailStream(turnEntry, {
         question: SCREENSHOT_ANSWER_QUESTION,
         thinking: screenshotThinkingEnabled,
+        screenshot: true,
     });
 
     sendToRenderer('new-detail-response', {
@@ -717,6 +734,7 @@ function startScreenshotAnswer(turnEntry) {
         turnSeq: turnEntry.seq,
         question: SCREENSHOT_ANSWER_QUESTION,
         text: '',
+        screenshot: true,
     });
 }
 

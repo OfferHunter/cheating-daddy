@@ -276,6 +276,24 @@ body {
     height: 20px;
 }
 
+/* 暂停/继续共用一颗按钮:默认露出暂停图标,加上 .paused 换成播放图标。 */
+#pauseBtn svg {
+    width: 16px;
+    height: 16px;
+}
+
+#pauseBtn .icon-play {
+    display: none;
+}
+
+#pauseBtn.paused .icon-pause {
+    display: none;
+}
+
+#pauseBtn.paused .icon-play {
+    display: block;
+}
+
 
 /* ---------- settings ---------- */
 
@@ -340,6 +358,61 @@ body {
     /* 左边留出悬浮导航的地界,正文不会跑到横线底下。 */
     padding: 18px 16px calc(env(safe-area-inset-bottom) + 40px) 28px;
     scrollbar-width: thin;
+}
+
+/* ---------- 双栏(平板) ---------- */
+
+/* 开了「精要和详细同时显示」时,单栏 #feed 让位给这里:左精要、右详细,中间是可拖的抓手。 */
+.live-split {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+/* 左栏吃掉剩余宽度,右栏定宽(比例由 JS 写内联 width 进来);两栏都能压到 0 以下不溢出。 */
+.live-split #feedBrief {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.live-split #feedDetail {
+    flex: none;
+    box-sizing: border-box;
+    width: 38%;
+    min-width: 0;
+    /* 右栏不摆导航,左边不留那 28px 的地界。 */
+    padding-left: 16px;
+}
+
+/* 抓手:6px 命中区,可见的线画在正中那条 2px 里;按下捕获指针,拖出这 6px 也还在拖。 */
+.split-handle {
+    flex: none;
+    width: 6px;
+    cursor: col-resize;
+    position: relative;
+    touch-action: none;
+}
+
+.split-handle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--border);
+    transition: background 0.15s;
+}
+
+.split-handle:hover::before,
+.split-handle.dragging::before {
+    background: var(--accent);
+}
+
+/* 双栏时顶上不再需要精要/详细切换键。 */
+.stage.split .modes {
+    display: none;
 }
 
 .turn {
@@ -443,19 +516,22 @@ body {
     margin-top: 30vh;
 }
 
-/* 底部控制栏:一栏按钮,不再折叠。按钮下沿贴着屏幕底边,所以整条不留下方内边距。 */
+/* 底部控制栏:一栏按钮,不再折叠。整条透明(无底色、无分割线),按钮直接浮在正文底色上,所以贴底也不显得
+   多出一条面板。按钮靠右对齐,拇指顺手够到。 */
 .controlbar {
     flex: none;
-    border-top: 1px solid var(--border);
-    background: var(--bg-elevated);
+    background: transparent;
 }
 
+/* 下边距与右边距取同一个值,截图按钮因此离底边和离右边一样远,浮在右下角而不是贴着角。 */
 .control-items {
     display: flex;
+    justify-content: flex-end;
     gap: 8px;
-    padding: 6px 12px 0;
+    padding: 6px 16px 16px;
 }
 
+/* 底栏透明后,按钮若还用 --bg-app 就和页面底色糊在一起,改用 --bg-elevated 让它留出可见的浅色块。 */
 .control-btn {
     display: inline-flex;
     align-items: center;
@@ -463,7 +539,7 @@ body {
     padding: 8px 14px;
     font-size: 13px;
     color: var(--text-primary);
-    background: var(--bg-app);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     cursor: pointer;
@@ -491,4 +567,12 @@ body {
     width: 20px;
     height: 20px;
     accent-color: var(--accent);
+}
+
+/* 开关下的一行小字说明,和选项左对齐,缩进到文字那一列(checkbox 宽 20 + gap 10)。 */
+.setting-hint {
+    margin: 6px 0 0 30px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
 }

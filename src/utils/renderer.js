@@ -155,7 +155,7 @@ const license = {
     },
     async getStatus() {
         const result = await ipcRenderer.invoke('license:get-status');
-        return result.success ? result.data : { activated: false };
+        return result.success ? result.data : { activated: false, expiresAt: null };
     },
     async activate(code) {
         return ipcRenderer.invoke('license:activate', code);

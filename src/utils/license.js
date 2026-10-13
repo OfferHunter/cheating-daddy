@@ -69,11 +69,18 @@ function verifyCode(code, machineCode = getMachineCode()) {
     return format.verifyCodeWithKey(code, machineCode, publicKey);
 }
 
-function isActivated() {
+// 帮助页要显示"剩余时间"，所以除了布尔值还把到期时间带出来：expiresAt 为毫秒时间戳，终身激活为 null。
+// 校验逻辑与 isActivated 只此一处，门禁仍只看 activated，不会因多带一个字段而放松。
+function getActivationInfo() {
     const license = readLicense();
-    if (!license || typeof license.code !== 'string') return false;
+    if (!license || typeof license.code !== 'string') return { activated: false, expiresAt: null };
     const result = verifyCode(license.code);
-    return result.ok && !format.isExpired(result.expiresAt);
+    if (!result.ok || format.isExpired(result.expiresAt)) return { activated: false, expiresAt: null };
+    return { activated: true, expiresAt: result.expiresAt };
+}
+
+function isActivated() {
+    return getActivationInfo().activated;
 }
 
 function activate(code) {
@@ -90,6 +97,7 @@ module.exports = {
     getMachineCode,
     verifyCode,
     isActivated,
+    getActivationInfo,
     activate,
     getLicensePath,
 };

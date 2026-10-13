@@ -143,12 +143,30 @@ export class ApiConfigView extends LocalizedLitElement {
                 text-decoration: underline;
             }
 
+            /* 标签行右侧并排的多个外链（百炼模型：模型列表 + 模型广场）。 */
+            .link-group {
+                display: flex;
+                align-items: baseline;
+                gap: var(--space-md);
+            }
+
             /* 小标题与外链同一行：标题靠左，外链贴右，基线对齐好容忍两边字号不同。 */
             .label-row {
                 display: flex;
                 align-items: baseline;
                 justify-content: space-between;
                 gap: var(--space-sm);
+            }
+
+            /* 两个竖向字段并排、各占一半：SecretId / SecretKey 用。min-width:0 让输入框能跟着列收缩。 */
+            .field-pair {
+                display: flex;
+                gap: var(--space-sm);
+            }
+
+            .field-pair > .form-group {
+                flex: 1;
+                min-width: 0;
             }
 
             /* 服务翻页头：两侧箭头、中间标题与「使用」开关。标题组吃掉剩余宽度并居中，箭头固定尺寸不被挤扁。
@@ -173,6 +191,15 @@ export class ApiConfigView extends LocalizedLitElement {
                 font-size: var(--font-size-md);
                 font-weight: var(--font-weight-semibold);
                 color: var(--text-primary);
+            }
+
+            /* 服务标题下的一句话说明：整行居中，弱化成小字。 */
+            .asr-subtitle {
+                margin: 0 0 var(--space-sm);
+                color: var(--text-muted);
+                font-size: var(--font-size-xs);
+                line-height: 1.5;
+                text-align: center;
             }
 
             .asr-nav {
@@ -306,6 +333,7 @@ export class ApiConfigView extends LocalizedLitElement {
         _testSource: { state: true },
         _testMicDevices: { state: true },
         _testing: { state: true },
+        _opening: { state: true },
         _testText: { state: true },
         _testState: { state: true },
         _testError: { state: true },
@@ -337,6 +365,10 @@ export class ApiConfigView extends LocalizedLitElement {
         // 打开采集（权限弹窗、设备启动）是异步的，这期间 _testing 还是 false：没有这个忙标志，第二次点击会再
         // 走进 _startTest，把第一条 MediaStream 覆盖丢失。_connected 则用来发现「打开期间页面已被切走」。
         this._opening = false;
+        // 每次开始/停止都自增，给在途的 _startTest 打上代次；采集打开后若代次已被后来的动作改掉，就说明这次
+        // 启动已被取消（切源、翻页、离开页面），自己放掉刚拿到的采集即可，别再改状态。仅仅靠 _opening 判断
+        // 不够：切源会紧接着再启动一次，两个启动会互相覆盖标志与采集。
+        this._testGen = 0;
         this._connected = false;
         this._testText = '';
         this._testState = '';
@@ -560,43 +592,65 @@ export class ApiConfigView extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    async _toggleTest() {
-        if (this._opening) return;
-        if (this._testing) {
+    // 正在试听，或采集仍在打开中（权限弹窗、设备启动）。两者都算「占用中」，UI 与切换都要据此判断。
+    _testActive() {
+        return this._testing || this._opening;
+    }
+
+    _toggleTest() {
+        if (this._testActive()) {
             this._stopTest();
             return;
         }
-        this._opening = true;
-        try {
-            await this._startTest();
-        } finally {
-            this._opening = false;
+        this._startTest();
+    }
+
+    // 切换音源：测试进行中就用新源重新开始（旧采集停掉，不让它继续跑），否则只记下选择，下次测试生效。
+    _onTestSourceChange(value) {
+        if (value === this._testSource) return;
+        const wasActive = this._testActive();
+        this._testSource = value;
+        if (!wasActive) {
+            this.requestUpdate();
+            return;
         }
+        this._stopTest();
+        this._startTest();
     }
 
     async _startTest() {
+        const gen = ++this._testGen;
+        this._opening = true;
+
         this._committed = '';
         this._interim = '';
         this._testText = '';
         this._testState = '';
         this._testError = '';
+        this.requestUpdate();
 
         // 先开采集：拿不到麦克风/扬声器就直接放弃，不必白开一条识别连接。
+        let capture;
         try {
-            this._capture = this._testSource === 'system' ? await this._openSpeaker() : await this._openMic(this._testSource);
+            capture = this._testSource === 'system' ? await this._openSpeaker() : await this._openMic(this._testSource);
         } catch (error) {
+            // 已被后来的动作作废时不再改状态，否则会把新流程的提示/标志踩掉。
+            if (gen !== this._testGen) return;
             console.error('Error opening test capture:', error);
+            this._opening = false;
             this._testError = error.message || String(error);
             this.requestUpdate();
             return;
         }
 
-        // 打开期间页面已被切走：_stopTest 早已跑过，这条刚拿到的采集必须自己放掉，否则它会一直活着。
-        if (!this._connected) {
-            this._releaseCapture();
+        // 打开期间已被停掉（切源、翻页）或页面被切走：这条刚拿到的采集自己放掉，状态交给仍在跑的流程。
+        if (gen !== this._testGen || !this._connected) {
+            this._releaseCapture(capture);
             return;
         }
 
+        this._capture = capture;
+        this._opening = false;
         this._testing = true;
         this.requestUpdate();
 
@@ -607,6 +661,9 @@ export class ApiConfigView extends LocalizedLitElement {
     }
 
     _stopTest() {
+        // 代次自增，作废仍在打开中的那一次启动（它会自己放掉刚拿到的采集）。
+        this._testGen++;
+        this._opening = false;
         const hadCapture = Boolean(this._capture);
         this._releaseCapture();
         if (hadCapture || this._testing) ipcRenderer.invoke('asr-test:stop');
@@ -616,9 +673,9 @@ export class ApiConfigView extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    _releaseCapture() {
-        const capture = this._capture;
-        this._capture = null;
+    _releaseCapture(capture = this._capture) {
+        // 传入的是「在途、尚未登记」的采集时不要动 this._capture：那个字段此刻属于别的流程。
+        if (capture === this._capture) this._capture = null;
         if (!capture) return;
 
         if (capture.processor) capture.processor.disconnect();
@@ -755,6 +812,17 @@ export class ApiConfigView extends LocalizedLitElement {
                     </div>
                     <button class="asr-nav" @click=${() => this._pageAsr(1)} aria-label="Next">&gt;</button>
                 </div>
+                <p class="asr-subtitle">
+                    ${this._asrPage === 'tencent'
+                        ? t(
+                              'Tencent Cloud serves both China and overseas and includes a monthly free tier, but gets relatively expensive once the free quota runs out.',
+                              '腾讯云支持国内外服务，每个月有免费额度，但用完后价格较昂贵'
+                          )
+                        : t(
+                              'Aliyun Bailian bills by usage and is very cheap, but its available regions are limited.',
+                              '阿里云百炼按量计费，价格非常便宜，但适用地区有限'
+                          )}
+                </p>
 
                 <div class="form-grid">
                     ${this._asrPage === 'tencent' ? this._renderTencentFields() : this._renderBailianFields()} ${this._renderTestRow()}
@@ -798,19 +866,31 @@ export class ApiConfigView extends LocalizedLitElement {
                     @input=${e => this._saveBailianWsUrl(e.target.value)}
                 />
                 <div class="form-help">
-                    <span>Use the wss:// API Host for the same region and workspace as the API Key and model.</span>
+                    <span
+                        >${t(
+                            'Aliyun speech recognition is available only in China North (covers most of mainland China) and Singapore. If you are in mainland China, keep the default; if you are in Singapore, open the WebSocket documentation and enter the matching URL.',
+                            '阿里云语音识别仅支持中国华北（覆盖中国大陆大部分地区）和新加坡，如果您在中国大陆就不用修改默认值，如果您在新加坡请访问WebSocket文档填入相应链接。'
+                        )}</span
+                    >
                 </div>
             </div>
 
             <div class="form-group vertical">
                 <div class="label-row">
                     <label class="form-label">Bailian Model</label>
-                    <span
-                        class="link"
-                        @click=${() =>
-                            this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
-                        >Speech Model Marketplace</span
-                    >
+                    <span class="link-group">
+                        <span
+                            class="link"
+                            @click=${() =>
+                                this.onExternalLink('https://docs.bailian.console.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide#%E6%94%AF%E6%8C%81%E7%9A%84%E6%A8%A1%E5%9E%8B%E4%B8%8E%E5%9C%B0%E5%9F%9F')}
+                            >${t('Real-time Speech Model List', '实时语音模型列表')}</span
+                        >
+                        <span
+                            class="link"
+                            @click=${() => this.onExternalLink('https://bailian.console.aliyun.com/cn-beijing/model/market?search=ASR')}
+                            >${t('Model Marketplace', '模型广场')}</span
+                        >
+                    </span>
                 </div>
                 <input
                     class="control wide"
@@ -820,7 +900,12 @@ export class ApiConfigView extends LocalizedLitElement {
                     @input=${e => this._saveBailianModel(e.target.value)}
                 />
                 <div class="form-help">
-                    <span>Speech is streamed live to Aliyun and transcribed as you talk.</span>
+                    <span
+                        >${t(
+                            'Some available models: qwen-audio-3.1-asr-flash-streaming, fun-asr-realtime-2026-02-28, paraformer-realtime-v2. Click the model list and model marketplace on the right to see all available models.',
+                            '部分可用模型有：qwen-audio-3.1-asr-flash-streaming，fun-asr-realtime-2026-02-28，paraformer-realtime-v2，请点击右侧模型列表和模型广场查看可用模型。'
+                        )}</span
+                    >
                 </div>
             </div>
 
@@ -850,7 +935,9 @@ export class ApiConfigView extends LocalizedLitElement {
             <div class="form-group vertical">
                 <div class="label-row">
                     <label class="form-label">AppID</label>
-                    <span class="link" @click=${() => this.onExternalLink('https://console.cloud.tencent.com/cam/capi')}>Get Credentials</span>
+                    <span class="link" @click=${() => this.onExternalLink('https://console.cloud.tencent.com/developer')}
+                        >${t('Get AppID', '获取AppID')}</span
+                    >
                 </div>
                 <input
                     class="control wide"
@@ -859,35 +946,45 @@ export class ApiConfigView extends LocalizedLitElement {
                     .value=${this._tencentAppId}
                     @input=${e => this._saveTencentAppId(e.target.value)}
                 />
+                <div class="form-help">
+                    <span>${t('Find your AppID on your account information page.', 'AppID在您的账号信息页面查看')}</span>
+                </div>
             </div>
 
-            <div class="form-group vertical">
-                <label class="form-label">SecretId</label>
-                <input
-                    class="control wide"
-                    type="password"
-                    placeholder="Required"
-                    .value=${this._tencentSecretId}
-                    @input=${e => this._saveTencentSecretId(e.target.value)}
-                />
-            </div>
+            <div class="field-pair">
+                <div class="form-group vertical">
+                    <label class="form-label">SecretId</label>
+                    <input
+                        class="control wide"
+                        type="password"
+                        placeholder="Required"
+                        .value=${this._tencentSecretId}
+                        @input=${e => this._saveTencentSecretId(e.target.value)}
+                    />
+                </div>
 
-            <div class="form-group vertical">
-                <label class="form-label">SecretKey</label>
-                <input
-                    class="control wide"
-                    type="password"
-                    placeholder="Required"
-                    .value=${this._tencentSecretKey}
-                    @input=${e => this._saveTencentSecretKey(e.target.value)}
-                />
+                <div class="form-group vertical">
+                    <div class="label-row">
+                        <label class="form-label">SecretKey</label>
+                        <span class="link" @click=${() => this.onExternalLink('https://console.cloud.tencent.com/cam/capi')}
+                            >${t('Get SecretId & SecretKey', '获取密钥ID与密钥')}</span
+                        >
+                    </div>
+                    <input
+                        class="control wide"
+                        type="password"
+                        placeholder="Required"
+                        .value=${this._tencentSecretKey}
+                        @input=${e => this._saveTencentSecretKey(e.target.value)}
+                    />
+                </div>
             </div>
 
             <div class="form-group vertical">
                 <div class="label-row">
                     <label class="form-label">${t('Speech Language', '语音语言')}</label>
-                    <span class="link" @click=${() => this.onExternalLink('https://cloud.tencent.com/document/product/1093/48982')}
-                        >Engine Documentation</span
+                    <span class="link" @click=${() => this.onExternalLink('https://cloud.tencent.com/document/api/1093/48982')}
+                        >${t('WebSocket & Supported Languages', 'WebSocket 与支持语言文档')}</span
                     >
                 </div>
                 <select class="control wide" .value=${this._tencentEngine} @change=${e => this._saveTencentEngine(e.target.value)}>
@@ -917,7 +1014,7 @@ export class ApiConfigView extends LocalizedLitElement {
                 <div class="test-row">
                     <div class="test-output ${this._testText ? '' : 'empty'}" data-no-localize>${this._testText ||
                         t('Click "Test recognition" to start', '点击「测试识别」开始')}</div>
-                    <select class="control test-source" .value=${this._testSource} @change=${e => (this._testSource = e.target.value)}>
+                    <select class="control test-source" .value=${this._testSource} @change=${e => this._onTestSourceChange(e.target.value)}>
                         <option value="default" .selected=${this._testSource === 'default'}>System default microphone</option>
                         ${this._testMicDevices.map(
                             d => html`<option value=${d.deviceId} .selected=${this._testSource === d.deviceId} data-no-localize>
@@ -927,7 +1024,7 @@ export class ApiConfigView extends LocalizedLitElement {
                         <option value="system" .selected=${this._testSource === 'system'}>Speaker (interviewer)</option>
                     </select>
                     <button class="control btn-test" @click=${this._toggleTest}>
-                        ${this._testing ? 'Stop test' : 'Test recognition'}
+                        ${this._testActive() ? 'Stop test' : 'Test recognition'}
                     </button>
                 </div>
                 <div class="form-help ${this._testError ? 'danger' : ''}">${this._testHint()}</div>
@@ -937,6 +1034,8 @@ export class ApiConfigView extends LocalizedLitElement {
 
     _testHint() {
         if (this._testError) return this._testError;
+        // 采集还在打开（权限弹窗、设备启动）时主进程尚未回 connecting，这里先替它顶上。
+        if (this._opening) return t('Connecting...', '正在连接…');
 
         switch (this._testState) {
             case 'connecting':

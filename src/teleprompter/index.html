@@ -31,6 +31,16 @@
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                         </svg>
                     </button>
+                    <!-- 暂停/继续音源,和桌面端那颗按钮同一个动作。两个图标都在,由 .paused 决定显示哪一个。 -->
+                    <button id="pauseBtn" class="icon-btn" aria-label="Pause">
+                        <svg class="icon-pause" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="5" width="4" height="14" rx="1" />
+                            <rect x="14" y="5" width="4" height="14" rx="1" />
+                        </svg>
+                        <svg class="icon-play" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M7 5l12 7-12 7z" />
+                        </svg>
+                    </button>
                 </div>
                 <div class="modes">
                     <button id="modeBrief" class="mode active" data-i18n="modeBrief"></button>
@@ -42,7 +52,13 @@
             </header>
             <div class="stage-body">
                 <nav id="nav" class="nav" aria-label="Turns"></nav>
+                <!-- 单栏: #feed 直接铺满。双栏: #splitView 顶上,左精要、右详细,中间那 6px 是拖拽抓手。两者互斥显隐。 -->
                 <main id="feed" class="feed"></main>
+                <div id="splitView" class="live-split" hidden>
+                    <main id="feedBrief" class="feed"></main>
+                    <div id="splitHandle" class="split-handle" role="separator" aria-orientation="vertical"></div>
+                    <main id="feedDetail" class="feed"></main>
+                </div>
             </div>
             <div id="controlbar" class="controlbar">
                 <div id="controlItems" class="control-items">
@@ -85,6 +101,12 @@
                     <input id="bottomLockToggle" class="toggle-input" type="checkbox" />
                     <span class="toggle-label" data-i18n="lockBottom"></span>
                 </label>
+
+                <label class="toggle-row">
+                    <input id="splitToggle" class="toggle-input" type="checkbox" />
+                    <span class="toggle-label" data-i18n="splitLabel"></span>
+                </label>
+                <p class="setting-hint" data-i18n="splitHint"></p>
             </div>
         </section>
 

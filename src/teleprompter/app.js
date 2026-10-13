@@ -11,6 +11,9 @@ const LEGACY_FONT_KEY = 'offerHunterTeleprompterFontSize';
 const DEFAULT_FONT = 12;
 // 「有新消息时锁定到最底端」的开关状态。
 const BOTTOM_LOCK_KEY = 'offerHunterTeleprompterBottomLock';
+// 「精要和详细同时显示」的开关,以及右栏占整宽的比例(对齐电脑端 detailPaneWidth 的做法)。
+const SPLIT_KEY = 'offerHunterTeleprompterSplit';
+const SPLIT_FRACTION_KEY = 'offerHunterTeleprompterSplitFraction';
 // 只带问题、还没被回答收养的占位块用这个 id。收养那一刻它会被换成答案真正的 id。
 const OPEN_ID = '__open_question__';
 
@@ -36,6 +39,9 @@ const STRINGS = {
         fontSampleAnswer: '这是回答示例',
         lockBottom: '有新消息时锁定到最底端',
         shotBtn: '截图',
+        shotQuestion: '截图',
+        splitLabel: '精要和详细同时显示',
+        splitHint: '平板等大屏幕设备可使用',
     },
     en: {
         pairTitle: 'Connect to desktop',
@@ -58,6 +64,9 @@ const STRINGS = {
         fontSampleAnswer: 'This is an answer',
         lockBottom: 'Lock to bottom on new messages',
         shotBtn: 'Screenshot',
+        shotQuestion: 'Screenshot',
+        splitLabel: 'Show brief and detailed side by side',
+        splitHint: 'For tablets and other large screens',
     },
 };
 
@@ -71,6 +80,10 @@ const state = {
     following: true,
     // 有新内容时滚到最底端而不是最新一块的顶部。默认关,保持提词器「从这轮回答第一个字开始读」的本意。
     bottomLock: readBottomLock(),
+    // 桌面音源是否暂停。桌面每换一次状态都会用 update-status 播报,这里跟着它走,不自己当权威。
+    paused: false,
+    // 双栏显示开关(默认关,平板等大屏才开)。开着时左右两栏同时铺开,顶上不再有精要/详细的切换键。
+    split: readSplit(),
     authed: false,
     token: readToken(),
     briefs: [],
@@ -92,6 +105,11 @@ const dom = {
     feed: document.getElementById('feed'),
     conn: document.getElementById('conn'),
     refreshBtn: document.getElementById('refreshBtn'),
+    pauseBtn: document.getElementById('pauseBtn'),
+    splitView: document.getElementById('splitView'),
+    feedBrief: document.getElementById('feedBrief'),
+    feedDetail: document.getElementById('feedDetail'),
+    splitHandle: document.getElementById('splitHandle'),
     nav: document.getElementById('nav'),
     modeBrief: document.getElementById('modeBrief'),
     modeDetail: document.getElementById('modeDetail'),
@@ -103,6 +121,7 @@ const dom = {
     answerValue: document.getElementById('answerValue'),
     shotBtn: document.getElementById('shotBtn'),
     bottomLockToggle: document.getElementById('bottomLockToggle'),
+    splitToggle: document.getElementById('splitToggle'),
 };
 
 const esc = value =>
@@ -303,6 +322,22 @@ function findEntry(mode, id) {
     return list.find(entry => entry.id === id);
 }
 
+// 截图那一轮在手机的精要里单开一块:按轮次 id(turnSeq)寻址,和普通轮次同一套 id 空间。问题行用固定标签
+// (图里问的是什么由摘要负责,那块不进这里);直接建立而不是走 claimEntry 收养,免得顶替掉旁边还开着的提问占位块。
+function upsertScreenshotBrief(turnSeq, text, final, error) {
+    if (turnSeq == null) return;
+    const id = String(turnSeq);
+    let entry = findEntry('brief', id);
+    if (!entry) {
+        entry = { id, question: S.shotQuestion, text: '', final: false, error: false, open: false, questionFinal: true };
+        state.briefs.push(entry);
+    }
+    if (text != null) entry.text = text;
+    if (final) entry.final = true;
+    if (error) entry.error = true;
+    updateBlock('brief', entry);
+}
+
 function upsertEntry(mode, id, text, question) {
     const list = mode === 'brief' ? state.briefs : state.details;
     let entry = list.find(candidate => candidate.id === id);
@@ -414,8 +449,16 @@ function applyEvent({ channel, data }) {
                 state.pendingQuestion = '';
                 state.pendingQuestionFinal = false;
                 state.following = true;
+                state.paused = false;
+                renderPause();
                 rebuild();
             }
+            return;
+
+        // 桌面把音源状态念出来,这里跟着点亮/熄灭暂停键。认的是原始英文串,不受手机语言影响。
+        case 'update-status':
+            state.paused = data === 'Paused';
+            renderPause();
             return;
 
         case 'transcription-update':
@@ -448,16 +491,20 @@ function applyEvent({ channel, data }) {
             if (!data) return;
             const entry = claimEntry('detail', String(data.detailId), data.text || '', data.question || state.pendingQuestion);
             updateBlock('detail', entry);
+            // 截图作答带 screenshot 标记:手机端也把它并进精要(桌面端一直只让它进详情面板)。
+            if (data.screenshot) upsertScreenshotBrief(data.turnSeq, data.text || '', false, false);
             return;
         }
 
         case 'detail-response-complete': {
             if (!data) return;
             const entry = findEntry('detail', String(data.detailId));
-            if (!entry) return;
-            entry.final = true;
-            if (data.ok === false) entry.error = true;
-            updateBlock('detail', entry);
+            if (entry) {
+                entry.final = true;
+                if (data.ok === false) entry.error = true;
+                updateBlock('detail', entry);
+            }
+            if (data.screenshot) upsertScreenshotBrief(data.turnSeq, null, true, data.ok === false);
             return;
         }
 
@@ -469,33 +516,62 @@ function applyEvent({ channel, data }) {
 // ---------- 渲染 ----------
 
 const blockEls = new Map();
-// 左侧导航的一条条短横线,与 activeList() 一一对应(占位块也算一条)。
+// 左侧导航的一条条短横线,与 navList() 一一对应(占位块也算一条)。
 let navEls = [];
 let anchor = 0;
 let suppressScroll = false;
+// 双栏联动滚动时置上,免得程序化滚动另一栏又反过来触发它的 scroll 处理器,滚成一个环。
+let syncGuard = false;
 
 function activeList() {
     return state.answerMode === 'brief' ? state.briefs : state.details;
 }
 
+// 单栏时,精要/详细共用一个 #feed,由 answerMode 决定装哪一份;双栏时各有各的容器,两份同时在场。
+function feedFor(mode) {
+    if (state.split) return mode === 'brief' ? dom.feedBrief : dom.feedDetail;
+    return mode === state.answerMode ? dom.feed : null;
+}
+
+// 导航跟着精要走:单栏看当前模式那一份,双栏固定在左栏(精要)。
+function navList() {
+    return state.split ? state.briefs : activeList();
+}
+
+function navMode() {
+    return state.split ? 'brief' : state.answerMode;
+}
+
+function navFeed() {
+    return state.split ? dom.feedBrief : dom.feed;
+}
+
 function rebuild() {
     if (state.screen !== 'stage') return;
-    dom.feed.innerHTML = '';
+    for (const el of [dom.feed, dom.feedBrief, dom.feedDetail]) el.innerHTML = '';
     blockEls.clear();
     navEls = [];
     dom.nav.innerHTML = '';
 
-    const list = activeList();
-    if (!list.length) {
-        dom.feed.innerHTML = `<p class="empty">${esc(S.waiting)}</p>`;
-        return;
+    if (state.split) {
+        for (const entry of state.briefs) upsertNode('brief', entry);
+        for (const entry of state.details) upsertNode('detail', entry);
+        if (!state.briefs.length) dom.feedBrief.innerHTML = `<p class="empty">${esc(S.waiting)}</p>`;
+    } else {
+        const list = activeList();
+        if (list.length) {
+            for (const entry of list) upsertNode(state.answerMode, entry);
+        } else {
+            dom.feed.innerHTML = `<p class="empty">${esc(S.waiting)}</p>`;
+        }
     }
-    for (const entry of list) upsertNode(state.answerMode, entry);
     syncNav();
     if (state.following) anchorToLast();
 }
 
 function upsertNode(mode, entry) {
+    const parent = feedFor(mode);
+    if (!parent) return null;
     const key = `${mode}:${entry.id}`;
     let node = blockEls.get(key);
 
@@ -507,7 +583,7 @@ function upsertNode(mode, entry) {
         const answerEl = document.createElement('div');
         answerEl.className = 'answer';
         el.append(questionEl, answerEl);
-        dom.feed.appendChild(el);
+        parent.appendChild(el);
         node = { el, questionEl, answerEl };
         blockEls.set(key, node);
     }
@@ -544,10 +620,13 @@ function upsertNode(mode, entry) {
 }
 
 function updateBlock(mode, entry) {
-    if (state.screen !== 'stage' || state.answerMode !== mode) return;
+    if (state.screen !== 'stage') return;
+    // 单栏时只画当前模式那一份,双栏时两份都画;feedFor 在这两种情形下各自给出该进的容器或 null。
+    const parent = feedFor(mode);
+    if (!parent) return;
 
-    const placeholder = dom.feed.firstElementChild;
-    if (placeholder && placeholder.classList.contains('empty')) dom.feed.innerHTML = '';
+    const placeholder = parent.firstElementChild;
+    if (placeholder && placeholder.classList.contains('empty')) parent.innerHTML = '';
 
     upsertNode(mode, entry);
     syncNav();
@@ -555,25 +634,38 @@ function updateBlock(mode, entry) {
 }
 
 // 跟随的是「最新一块的顶部」而不是底部:提词器要让人从这一轮回答的第一个字开始读,而不是读它的结尾。
-// 开了「锁定到最底端」则改跟底部,像普通聊天那样始终停在最新内容。
+// 开了「锁定到最底端」则改跟底部,像普通聊天那样始终停在最新内容。双栏时两栏各自贴到自己最后一块——详细
+// 回答常比精要晚到,硬把右栏对齐到左栏那一轮只会把它拉到它还没有的那块上空着。
 function anchorToLast() {
-    const last = dom.feed.lastElementChild;
-    if (!last || last.classList.contains('empty')) return;
+    const feed = navFeed();
+    const last = feed.lastElementChild;
+    if (!last || last.classList.contains('empty')) {
+        // 左栏可能还空着而右栏已有内容:这时仍把右栏贴到底,别整段不动。
+        if (state.split) anchorFeed(dom.feedDetail);
+        return;
+    }
 
     suppressScroll = true;
-    dom.feed.scrollTop = state.bottomLock ? dom.feed.scrollHeight - dom.feed.clientHeight : last.offsetTop;
+    anchorFeed(feed);
+    if (state.split) anchorFeed(dom.feedDetail);
     // 以实际落点为准:滚到底部附近时 scrollTop 会被夹住,记成目标值会让后续的「是否仍在跟随」判断失准。
-    anchor = dom.feed.scrollTop;
+    anchor = feed.scrollTop;
     requestAnimationFrame(() => {
         suppressScroll = false;
     });
     updateNavActive();
 }
 
-// 导航条与 activeList() 同源。条数变了才重建(重建会重挂点击,条目对象在同一列表里是稳定的,收养只改
+function anchorFeed(feed) {
+    const last = feed.lastElementChild;
+    if (!last || last.classList.contains('empty')) return;
+    feed.scrollTop = state.bottomLock ? feed.scrollHeight - feed.clientHeight : last.offsetTop;
+}
+
+// 导航条与 navList() 同源。条数变了才重建(重建会重挂点击,条目对象在同一列表里是稳定的,收养只改
 // 字段不换对象);条数没变只把条目指针挪一挪,免得每次流式更新都重造一遍 DOM。
 function syncNav() {
-    const list = activeList();
+    const list = navList();
     if (navEls.length !== list.length) {
         dom.nav.innerHTML = '';
         navEls = list.map(entry => {
@@ -606,27 +698,68 @@ function layoutNav() {
     dom.nav.style.height = `${Math.min(natural, span)}px`;
 }
 
-// 点某条横线就把它那块滚到顶部。跳转即停止跟随,否则下一次流式更新会把视线又拽回末尾。
+// 点某条横线就把它那块滚到顶部。跳转即停止跟随,否则下一次流式更新会把视线又拽回末尾。双栏时另一栏也跟
+// 到同一轮——两栏是同一个问题的两种回答,分头滚会让人对不上号。
 function jumpTo(entry) {
-    const node = blockEls.get(`${state.answerMode}:${entry.id}`);
+    const feed = navFeed();
+    const node = blockEls.get(`${navMode()}:${entry.id}`);
     if (!node) return;
     state.following = false;
-    dom.feed.scrollTop = node.el.offsetTop;
+    feed.scrollTop = node.el.offsetTop;
+    if (state.split) syncPeerToIndex(feed, indexOfTurn(feed, node.el));
     updateNavActive();
+}
+
+// 一轮在某栏 DOM 里的序号。两栏装着同样顺序的轮次,序号就是跨栏对齐的钥匙。
+function indexOfTurn(feed, el) {
+    return [...feed.querySelectorAll('.turn')].indexOf(el);
+}
+
+// 两栏联动:source 滚到哪一轮,peer 就贴到同序号的轮次顶部;peer 还没有那一轮(详细回答晚到)就贴到底。
+function syncPeerToIndex(source, index) {
+    const peer = source === dom.feedBrief ? dom.feedDetail : dom.feedBrief;
+    const turns = peer.querySelectorAll('.turn');
+    syncGuard = true;
+    peer.scrollTop = turns[index] ? turns[index].offsetTop : peer.scrollHeight;
+    requestAnimationFrame(() => {
+        syncGuard = false;
+    });
+}
+
+// 用户滚某一栏时算出它压在顶上的那一轮,再让另一栏跟过去。滚到底时对面也贴到底,别因序号对齐而停在半空。
+function syncPeerFromScroll(source) {
+    const turns = source.querySelectorAll('.turn');
+    if (!turns.length) return;
+    const top = source.scrollTop;
+    let index = 0;
+    turns.forEach((el, i) => {
+        if (el.offsetTop <= top + 8) index = i;
+    });
+    if (top >= source.scrollHeight - source.clientHeight - 2) {
+        const peer = source === dom.feedBrief ? dom.feedDetail : dom.feedBrief;
+        syncGuard = true;
+        peer.scrollTop = peer.scrollHeight;
+        requestAnimationFrame(() => {
+            syncGuard = false;
+        });
+        return;
+    }
+    syncPeerToIndex(source, index);
 }
 
 // 高亮「当前压在顶部的那一块」:滚动位置落在谁的地界里就点亮谁;都没越过时点亮第一条。滚到底部时最后
 // 一块往往顶不到最上沿(下面没内容了),这时按「到底了」处理,点亮最后一条而不是上面那条。
 function updateNavActive() {
     if (!navEls.length) return;
-    const top = dom.feed.scrollTop;
-    const maxTop = dom.feed.scrollHeight - dom.feed.clientHeight;
+    const feed = navFeed();
+    const top = feed.scrollTop;
+    const maxTop = feed.scrollHeight - feed.clientHeight;
     let activeIndex = 0;
     if (maxTop > 0 && top >= maxTop - 2) {
         activeIndex = navEls.length - 1;
     } else {
         navEls.forEach((item, index) => {
-            const node = blockEls.get(`${state.answerMode}:${item.entry.id}`);
+            const node = blockEls.get(`${navMode()}:${item.entry.id}`);
             if (node && node.el.offsetTop <= top + 8) activeIndex = index;
         });
     }
@@ -740,12 +873,128 @@ function applyBottomLock(value) {
     dom.bottomLockToggle.checked = value;
 }
 
+// ---------- 双栏(平板) ----------
+
+// 右栏占整宽的比例,与电脑端 detailPaneWidth 同一套做法:比例而不是像素,窗口变了份量不变。上下限靠 CSS 与
+// 这里一起卡,往左拖到底也不至于剩一条读不了的窄栏。
+const PANE_DEFAULT_FRACTION = 0.38;
+const PANE_MIN_FRACTION = 0.18;
+const PANE_MAX_FRACTION = 0.72;
+const clampFraction = f => Math.min(PANE_MAX_FRACTION, Math.max(PANE_MIN_FRACTION, f));
+let paneFraction = PANE_DEFAULT_FRACTION;
+
+function readSplit() {
+    try {
+        return localStorage.getItem(SPLIT_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function saveSplit(value) {
+    try {
+        localStorage.setItem(SPLIT_KEY, value ? '1' : '0');
+    } catch {
+        // 隐私模式下写不进去:本次仍生效,刷新后回默认。
+    }
+}
+
+function readFraction() {
+    try {
+        const value = Number(localStorage.getItem(SPLIT_FRACTION_KEY));
+        return Number.isFinite(value) && value > 0 ? clampFraction(value) : PANE_DEFAULT_FRACTION;
+    } catch {
+        return PANE_DEFAULT_FRACTION;
+    }
+}
+
+function saveFraction(f) {
+    try {
+        localStorage.setItem(SPLIT_FRACTION_KEY, String(Math.round(f * 1000) / 1000));
+    } catch {
+        // 同上。
+    }
+}
+
+// 右栏宽度直接写到元素上。拖拽的每一帧都走这里,不重跑整套 rebuild。
+function applyPaneFraction(f) {
+    paneFraction = clampFraction(f);
+    dom.feedDetail.style.width = `${(paneFraction * 100).toFixed(1)}%`;
+}
+
+function applySplit(value) {
+    state.split = Boolean(value);
+    dom.splitToggle.checked = state.split;
+    // split 类挂在 stage 上,用来藏掉顶上的精要/详细切换键;两栏一个显一个隐,靠 hidden 属性互斥。
+    dom.stage.classList.toggle('split', state.split);
+    dom.feed.hidden = state.split;
+    dom.splitView.hidden = !state.split;
+    state.following = true;
+    applyPaneFraction(paneFraction);
+    rebuild();
+}
+
+// 分隔条拖拽:按下捕获指针(拖出这 6px 也还在拖),每帧把右栏宽度写到元素上,松手才落盘。
+let splitDrag = null;
+
+dom.splitHandle.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    const width = dom.splitView.getBoundingClientRect().width;
+    if (!width) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.classList.add('dragging');
+    event.preventDefault();
+    splitDrag = {
+        startX: event.clientX,
+        startFraction: dom.feedDetail.getBoundingClientRect().width / width,
+        moved: false,
+    };
+});
+
+dom.splitHandle.addEventListener('pointermove', event => {
+    if (!splitDrag) return;
+    const width = dom.splitView.getBoundingClientRect().width;
+    if (!width) return;
+    splitDrag.moved = true;
+    // 右栏在右侧:往左拖是加宽,所以是减号。
+    applyPaneFraction(splitDrag.startFraction - (event.clientX - splitDrag.startX) / width);
+});
+
+function endSplitDrag(event) {
+    if (!splitDrag) return;
+    const moved = splitDrag.moved;
+    splitDrag = null;
+    dom.splitHandle.classList.remove('dragging');
+    if (dom.splitHandle.hasPointerCapture(event.pointerId)) dom.splitHandle.releasePointerCapture(event.pointerId);
+    // 没真的拖动就不落盘,也不留一个内联宽度逼着以后每次渲染都跟它走。
+    if (moved) saveFraction(paneFraction);
+}
+
+dom.splitHandle.addEventListener('pointerup', endSplitDrag);
+dom.splitHandle.addEventListener('pointercancel', endSplitDrag);
+
+// ---------- 暂停键 ----------
+
+// 桌面每换一次音源状态都会用 update-status 播报,这里跟着点亮/熄灭:标 .paused 换成播放图标。
+function renderPause() {
+    dom.pauseBtn.classList.toggle('paused', state.paused);
+    dom.pauseBtn.setAttribute('aria-label', state.paused ? 'Resume' : 'Pause');
+}
+
 // ---------- 启动 ----------
 
-dom.feed.addEventListener('scroll', () => {
-    if (!suppressScroll) state.following = Math.abs(dom.feed.scrollTop - anchor) <= 32;
+// 跟随基准锚在「导航那一栏」(单栏就是唯一那栏,双栏是左栏):滚右栏不改判「是否仍在跟随」,只把左栏带过去。
+function onFeedScroll(source) {
+    if (!suppressScroll && source === navFeed()) {
+        state.following = Math.abs(source.scrollTop - anchor) <= 32;
+    }
     updateNavActive();
-});
+    if (state.split && !syncGuard) syncPeerFromScroll(source);
+}
+
+dom.feed.addEventListener('scroll', () => onFeedScroll(dom.feed));
+dom.feedBrief.addEventListener('scroll', () => onFeedScroll(dom.feedBrief));
+dom.feedDetail.addEventListener('scroll', () => onFeedScroll(dom.feedDetail));
 
 // 横竖屏切换、地址栏收放都会改窗口高,导航的 1/3 上限跟着重算。
 window.addEventListener('resize', layoutNav);
@@ -783,12 +1032,28 @@ dom.bottomLockToggle.addEventListener('change', () => {
     saveBottomLock(dom.bottomLockToggle.checked);
 });
 
+dom.splitToggle.addEventListener('change', () => {
+    applySplit(dom.splitToggle.checked);
+    saveSplit(state.split);
+});
+
+// 乐观翻转:真状态由桌面的 update-status 回播校正;没会话时桌面会拒绝,下一次播报就把它拨回来。
+dom.pauseBtn.addEventListener('click', () => {
+    state.paused = !state.paused;
+    renderPause();
+    sendCommand('toggle-pause');
+});
+
 const initialFonts = readInitialFonts();
 dom.questionRange.value = String(initialFonts.question);
 dom.answerRange.value = String(initialFonts.answer);
 applyQuestionFont(initialFonts.question);
 applyAnswerFont(initialFonts.answer);
 applyBottomLock(state.bottomLock);
+
+paneFraction = readFraction();
+applySplit(state.split);
+renderPause();
 
 localize();
 if (state.token) {

@@ -137,6 +137,9 @@ app.whenReady().then(async () => {
         check('control buttons are visible', await exec(`getComputedStyle(document.getElementById('controlItems')).display !== 'none'`));
         check('control bar has no collapse toggle', await exec(`!document.getElementById('controlToggle')`));
         check('control bar sits flush with the bottom edge', await exec(`Math.abs(document.getElementById('controlbar').getBoundingClientRect().bottom - window.innerHeight) <= 1`));
+        check('control bar is transparent', await exec(`getComputedStyle(document.getElementById('controlbar')).backgroundColor === 'rgba(0, 0, 0, 0)'`));
+        check('control bar has no divider line', await exec(`getComputedStyle(document.getElementById('controlbar')).borderTopWidth === '0px'`));
+        check('screenshot button sits at the right edge', await exec(`(() => { const c = document.getElementById('controlItems'); const b = document.getElementById('shotBtn').getBoundingClientRect(); const inner = c.getBoundingClientRect().right - parseFloat(getComputedStyle(c).paddingRight); return Math.abs(b.right - inner) <= 1; })()`));
         await exec(`document.getElementById('shotBtn').click()`);
         await wait(120);
         check('screenshot button sends the screenshot command', commands.includes('screenshot'));
@@ -346,6 +349,77 @@ app.whenReady().then(async () => {
         await exec(`document.getElementById('refreshBtn').click()`);
         await wait(150);
         check('clearing keeps an answer that is still streaming', await exec(`document.querySelectorAll('#feed .turn').length === 1 && document.querySelector('#feed .answer').textContent.includes('半个回答')`));
+
+        // ---- 顶栏暂停键:刷新键右侧,点了发 toggle-pause,桌面回播状态时图标跟着换 ----
+        check('pause button sits right of the refresh button', await exec(`document.getElementById('refreshBtn').nextElementSibling.id === 'pauseBtn'`));
+        await exec(`document.getElementById('pauseBtn').click()`);
+        await wait(120);
+        check('pause button sends the toggle-pause command', commands.includes('toggle-pause'));
+        check('pause button flips to the resume icon optimistically', await exec(`document.getElementById('pauseBtn').classList.contains('paused')`));
+        teleprompter.broadcast('update-status', 'Paused');
+        await wait(100);
+        check('update-status keeps the pause button paused', await exec(`document.getElementById('pauseBtn').classList.contains('paused')`));
+        teleprompter.broadcast('update-status', 'Listening...');
+        await wait(100);
+        check('update-status clears paused on resume', await exec(`!document.getElementById('pauseBtn').classList.contains('paused')`));
+
+        // ---- 截图按钮离底与离右等距 ----
+        check('screenshot button is inset equally from the bottom and the right', await exec(`(() => {
+            const b = document.getElementById('shotBtn').getBoundingClientRect();
+            return Math.abs((window.innerWidth - b.right) - (window.innerHeight - b.bottom)) <= 1;
+        })()`));
+
+        // ---- 截图作答并入精要:桌面端原本只让它进详情面板,靠 screenshot 标记把它也带到手机上 ----
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        teleprompter.broadcast('new-detail-response', { detailId: 'shot1', turnSeq: 42, question: '对屏幕截图的作答', text: '', screenshot: true });
+        await wait(120);
+        check('screenshot answer opens a brief block labelled 截图', await exec(`(() => {
+            const turns = document.querySelectorAll('#feed .turn');
+            return turns.length === 1 && turns[0].querySelector('.question').textContent.includes('截图');
+        })()`));
+        teleprompter.broadcast('update-detail-response', { detailId: 'shot1', turnSeq: 42, text: '这是对截图的作答', screenshot: true });
+        teleprompter.broadcast('detail-response-complete', { detailId: 'shot1', turnSeq: 42, ok: true, screenshot: true });
+        await wait(150);
+        check('screenshot answer text lands in the brief block', await exec(`document.querySelector('#feed .answer').textContent.includes('这是对截图的作答')`));
+        check('screenshot brief block stops streaming after completion', await exec(`!document.querySelector('#feed .answer').classList.contains('cursor')`));
+        // 普通详细回答不带标记:不该在精要里凭空冒出块
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        teleprompter.broadcast('new-detail-response', { detailId: 'd9', turnSeq: 9, question: '普通问题', text: '详细内容' });
+        await wait(120);
+        check('a normal detail answer does not spawn a brief block', await exec(`document.querySelectorAll('#feed .turn').length === 0`));
+
+        // ---- 双栏(平板)开关:默认关,开启后隐藏精要/详细切换键、左右并排、两栏各装各的 ----
+        await exec(`document.getElementById('settingsBtn').click()`);
+        await wait(120);
+        check('settings has a split toggle', await exec(`!!document.getElementById('splitToggle')`));
+        check('split is off by default', await exec(`!document.getElementById('splitToggle').checked`));
+        check('split carries the large-screen hint', await exec(`document.querySelector('.setting-hint').textContent.includes('平板')`));
+        await exec(`document.getElementById('settingsBack').click()`);
+        await wait(120);
+
+        await exec(`(() => { const c = document.getElementById('splitToggle'); c.checked = true; c.dispatchEvent(new Event('change')); })()`);
+        await wait(150);
+        check('enabling split marks the stage', await exec(`document.getElementById('stage').classList.contains('split')`));
+        check('split hides the mode switch', await exec(`getComputedStyle(document.querySelector('.modes')).display === 'none'`));
+        check('split shows both panes and hides the single feed', await exec(`getComputedStyle(document.getElementById('splitView')).display !== 'none' && document.getElementById('feed').hidden`));
+        check('split pane divider is present', await exec(`!!document.getElementById('splitHandle')`));
+        check('split toggle persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterSplit')`)) === '1');
+
+        // 左右两栏各装各的:精要进左栏,详细进右栏
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        teleprompter.broadcast('transcription-final', { text: '左右并排的问题', speaker: 'interviewer', turnId: 5 });
+        teleprompter.broadcast('new-response', { turnId: 5, text: '精要回答' });
+        teleprompter.broadcast('new-detail-response', { detailId: 'p5', turnSeq: 5, question: '左右并排的问题', text: '详细回答' });
+        await wait(200);
+        check('brief pane renders the brief answer', await exec(`document.querySelector('#feedBrief .answer').textContent.includes('精要回答')`));
+        check('detail pane renders the detail answer', await exec(`document.querySelector('#feedDetail .answer').textContent.includes('详细回答')`));
+
+        await exec(`(() => { const c = document.getElementById('splitToggle'); c.checked = false; c.dispatchEvent(new Event('change')); })()`);
+        await wait(150);
+        check('disabling split restores the single feed and mode switch', await exec(`!document.getElementById('stage').classList.contains('split') && getComputedStyle(document.querySelector('.modes')).display !== 'none'`));
 
         win.destroy();
     } catch (error) {

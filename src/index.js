@@ -523,8 +523,8 @@ function setupTeleprompterIpcHandlers() {
         teleprompter.setTheme(tokens);
     });
 
-    // 手机下达的指令落到桌面:截图必须走渲染端(采集流在那里),清空上下文则复用桌面自己那套——同时清模型
-    // 记忆和已落定气泡,不另写一份逻辑。没会话时两者都会自行拒绝,所以这里不做额外校验。
+    // 手机下达的指令落到桌面:截图必须走渲染端(采集流在那里),清空上下文与暂停都复用桌面自己那套方法——
+    // 桌面按钮点的是同一个函数,两边的状态因此不会各走各的。没会话时它们都会自行拒绝,所以这里不做额外校验。
     teleprompter.setCommandHandler(action => {
         const win = BrowserWindow.getAllWindows()[0];
         if (!win) return;
@@ -539,6 +539,13 @@ function setupTeleprompterIpcHandlers() {
                     true
                 )
                 .catch(error => console.error('Teleprompter clear-context command failed:', error.message));
+        } else if (action === 'toggle-pause') {
+            win.webContents
+                .executeJavaScript(
+                    'window.offerHunter && window.offerHunter.element && window.offerHunter.element().togglePause()',
+                    true
+                )
+                .catch(error => console.error('Teleprompter toggle-pause command failed:', error.message));
         }
     });
 }
@@ -558,7 +565,8 @@ function setupLicenseIpcHandlers() {
 
     ipcMain.handle('license:get-status', async () => {
         try {
-            return { success: true, data: { activated: license.isActivated() } };
+            const info = license.getActivationInfo();
+            return { success: true, data: { activated: info.activated, expiresAt: info.expiresAt } };
         } catch (error) {
             console.error('Error reading license status:', error);
             return { success: false, error: error.message };

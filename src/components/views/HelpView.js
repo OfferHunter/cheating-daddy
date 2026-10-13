@@ -46,10 +46,12 @@ function guideSections() {
 }
 
 export class HelpView extends LocalizedLitElement {
-    static properties = { onExternalLinkClick: { type: Function }, query: { state: true } };
+    static properties = { onExternalLinkClick: { type: Function }, query: { state: true }, _activation: { state: true } };
     static styles = [unifiedPageStyles, scrollbarStyles, css`
         .intro, .answer, .note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.7; }
         .intro { margin: 4px 0 12px; }
+        /* 激活状态标题：绿色对「已激活」，与下方灰色说明形成层级，用中等字号加粗当小标题。 */
+        .activation { margin: 0 0 12px; color: var(--success); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); line-height: 1.5; }
         .search { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); font: inherit; cursor: text; user-select: text; }
         .links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
         button { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }
@@ -72,6 +74,32 @@ export class HelpView extends LocalizedLitElement {
         super();
         this.query = '';
         this.onExternalLinkClick = () => {};
+        this._activation = null;
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        // 帮助页只展示，不参与门禁：拿不到状态就不显示这一行，读失败也不影响其它内容。
+        offerHunter.license
+            .getStatus()
+            .then(status => {
+                this._activation = status;
+            })
+            .catch(() => {
+                this._activation = null;
+            });
+    }
+
+    // 终身激活显示「永久激活」，限期激活按天+小时折算剩余时间，已到期或未激活返回空串（不渲染）。
+    _activationLabel() {
+        const status = this._activation;
+        if (!status || !status.activated) return '';
+        if (status.expiresAt == null) return copy('您的产品已永久激活', 'Your product is permanently activated');
+
+        const remaining = Math.max(0, status.expiresAt - Date.now());
+        const days = Math.floor(remaining / 86400000);
+        const hours = Math.floor((remaining % 86400000) / 3600000);
+        return copy(`您的产品已激活，剩余时间 ${days} 天 ${hours} 小时`, `Your product is activated — ${days}d ${hours}h remaining`);
     }
 
     jumpTo(id) {
@@ -106,6 +134,7 @@ export class HelpView extends LocalizedLitElement {
                 <header>
                     <h1 class="page-title">${copy('帮助和支持', 'Help & Support')}</h1>
                     <p class="intro">${copy('从首次配置到日常使用，在这里查找操作说明和常见问题。', 'Find setup instructions, everyday guidance and troubleshooting in one place.')}</p>
+                    ${this._activationLabel() ? html`<p class="activation" role="status">${this._activationLabel()}</p>` : ''}
                     <input class="search" type="search" aria-label=${copy('搜索帮助', 'Search help')} placeholder=${copy('搜索：麦克风、API Key、截图、历史记录…', 'Search: microphone, API key, screenshots, history…')} .value=${this.query} @input=${event => { this.query = event.target.value; }} />
                     <nav class="links" aria-label=${copy('帮助目录', 'Help topics')}>
                         ${sections.map(section => html`<button @click=${() => this.jumpTo(section.id)}>${section.title}</button>`)}
