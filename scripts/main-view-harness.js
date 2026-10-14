@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
         await wait(150);
 
         check('desktop+phone page title has a right-side description', (await exec(`window.__q('.page-title-desc').textContent`)).trim() === '在电脑上面试/笔试，在手机、平板网页看电脑提词');
-        check('desktop+phone note breaks into one line per sentence', (await exec(`window.__q('.page-note').querySelectorAll('br').length`)) === 2);
+        check('desktop+phone note breaks into one line per sentence', (await exec(`window.__q('.page-note').querySelectorAll('br').length`)) === 3);
 
         check('pairing box shows the address', (await exec(`window.__q('.pair-value').textContent`)).trim() === 'http://192.168.1.5:8765');
         check('pairing box shows the code', (await exec(`window.__q('.pair-code').textContent`)).trim() === '123456');
@@ -130,6 +130,8 @@ app.whenReady().then(async () => {
         // 未配对:按钮禁用,点了也不启动。
         await exec(`window.__started = 0; document.querySelector('main-view').onStart = () => { window.__started += 1; }; void 0`);
         check('start button disabled before pairing', await exec(disabled));
+        check('unpaired start button reads 手机未连接', (await exec(`window.__q('.start-button').textContent`)).includes('手机未连接'));
+        check('unpaired start button drops the shortcut hint', await exec(`!window.__q('.shortcut-hint')`));
         await exec(`window.__q('.start-button').click()`);
         await wait(100);
         check('clicking disabled button does not start', (await exec(`window.__started`)) === 0);
@@ -138,6 +140,8 @@ app.whenReady().then(async () => {
         await exec(`window.__tp.paired = true`);
         await wait(1800);
         check('start button enabled after phone pairs', await exec(`!${disabled}`));
+        check('paired start button reads 开始会话', (await exec(`window.__q('.start-button').textContent`)).includes('开始会话'));
+        check('paired start button shows the shortcut hint', await exec(`!!window.__q('.shortcut-hint')`));
         check('status reads connected after pairing', (await exec(`window.__q('.pair-status').textContent`)).includes('手机已连接'));
         await exec(`window.__q('.start-button').click()`);
         await wait(100);

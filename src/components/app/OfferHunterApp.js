@@ -712,14 +712,22 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.requestUpdate();
     }
 
+    // 结束实时会话并回到主页:停止采集、让主进程收尾(会话落盘)、清掉暂停与计时。手机上的「结束会话」直接落
+    // 到这里,所以它绝不退出应用——在没有实时会话时也安全地什么都不做。
+    async endSession() {
+        if (this.currentView !== 'assistant') return;
+        offerHunter.stopCapture();
+        await ipcRenderer.invoke('close-session');
+        this._paused = false;
+        this.sessionActive = false;
+        this._stopTimer();
+        this.currentView = 'main';
+        this.requestUpdate();
+    }
+
     async handleClose() {
         if (this.currentView === 'assistant') {
-            offerHunter.stopCapture();
-            await ipcRenderer.invoke('close-session');
-            this._paused = false;
-            this.sessionActive = false;
-            this._stopTimer();
-            this.currentView = 'main';
+            await this.endSession();
         } else {
             await ipcRenderer.invoke('quit-application');
         }
@@ -1073,17 +1081,11 @@ export class OfferHunterApp extends LocalizedLitElement {
                         </svg>
                     </button>
                     <button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <polyline points="23 4 23 10 17 10" />
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        <!-- 和手机提词页那颗「清空上下文」用同一个扫帚图标,两边一眼对得上。 -->
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="currentColor">
+                            <path
+                                d="M453.312 448H248a29.312 29.312 0 0 0-29.312 29.312v58.688c0 16.192 13.12 29.312 29.312 29.312h528a29.312 29.312 0 0 0 29.312-29.312v-58.688A29.312 29.312 0 0 0 776 448H570.688V184a29.312 29.312 0 0 0-29.376-29.312h-58.624a29.312 29.312 0 0 0-29.376 29.312V448z m-58.624-58.688V154.688c0-32.448 26.24-58.688 58.624-58.688h117.376c32.384 0 58.624 26.24 58.624 58.688v234.624h176c32.448 0 58.688 26.24 58.688 58.688v117.312c0 32.448-26.24 58.688-58.688 58.688v234.688c0 32.384-26.24 58.624-58.624 58.624H277.312a58.688 58.688 0 0 1-58.624-58.624V624a58.688 58.688 0 0 1-58.688-58.688V448c0-32.384 26.24-58.688 58.688-58.688h176z m352 234.688H277.312v205.312c0 16.192 13.184 29.376 29.376 29.376h410.624a29.312 29.312 0 0 0 29.376-29.376V624z m-88 58.688c16.192 0 29.312 13.12 29.312 29.312v146.688h-58.688v-146.688c0-16.192 13.184-29.312 29.376-29.312z m-117.376 58.624c16.192 0 29.376 13.184 29.376 29.376v88H512v-88c0-16.192 13.12-29.376 29.312-29.376z m-117.312 58.688c16.192 0 29.312 13.12 29.312 29.312v29.376h-58.624v-29.376c0-16.192 13.12-29.312 29.312-29.312z"
+                            />
                         </svg>
                     </button>
                 </div>

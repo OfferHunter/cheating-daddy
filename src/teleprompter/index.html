@@ -39,14 +39,31 @@
                             <path d="M7 5l12 7-12 7z" />
                         </svg>
                     </button>
+                    <!-- 结束会话:电源图标,危险色以示和普通图标的区别。按下只让桌面端收尾当前会话并回到主页,
+                         绝不退出桌面应用——手机误触不该杀掉电脑上的程序。 -->
+                    <button id="endBtn" class="icon-btn danger" aria-label="End session">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <!-- 电源字形上下几乎占满 24 格(墨迹 y 2→22),直接下移会让圆环底边被 viewBox 裁平,所以先按
+                                 中心缩到 0.9 让出余量,再整体下移 2 格(≈1.3px)。字形几何其实是居中的,偏上来自开口朝上
+                                 的形状在视觉上把整体“抬”了起来,这一步是视觉居中。 -->
+                            <g transform="translate(12 14) scale(0.9) translate(-12 -12)">
+                                <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                                <line x1="12" y1="2" x2="12" y2="12" />
+                            </g>
+                        </svg>
+                    </button>
                 </div>
-                <div class="modes">
-                    <button id="modeBrief" class="mode active" data-i18n="modeBrief"></button>
-                    <button id="modeDetail" class="mode" data-i18n="modeDetail"></button>
+                <!-- 右侧一组:精要/详细/兼有滑块 + 设置。滑块靠右,不再居中。 -->
+                <div class="topbar-right">
+                    <div class="modes">
+                        <button id="modeBrief" class="mode active" data-i18n="modeBrief"></button>
+                        <button id="modeDetail" class="mode" data-i18n="modeDetail"></button>
+                        <button id="modeBoth" class="mode" data-i18n="modeBoth"></button>
+                    </div>
+                    <button id="settingsBtn" class="icon-btn" aria-label="Settings">
+                        <span></span><span></span><span></span>
+                    </button>
                 </div>
-                <button id="settingsBtn" class="icon-btn" aria-label="Settings">
-                    <span></span><span></span><span></span>
-                </button>
             </header>
             <div class="stage-body">
                 <nav id="nav" class="nav" aria-label="Turns"></nav>
@@ -100,12 +117,6 @@
                 </div>
                 <input id="answerRange" class="range" type="range" min="12" max="32" step="1" />
                 <p class="sample answer-sample" data-i18n="fontSampleAnswer"></p>
-
-                <label class="toggle-row">
-                    <input id="splitToggle" class="toggle-input" type="checkbox" />
-                    <span class="toggle-label" data-i18n="splitLabel"></span>
-                </label>
-                <p class="setting-hint" data-i18n="splitHint"></p>
             </div>
         </section>
 

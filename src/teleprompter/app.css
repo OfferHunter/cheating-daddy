@@ -191,8 +191,14 @@ body {
     background: var(--bg-elevated);
 }
 
-/* 「已连接/重连中」和刷新按钮编成一组,靠左;模式切换居中;设置靠右。 */
+/* 「已连接/重连中」和刷新/暂停/结束编成一组,靠左;精要/详细/兼有滑块和设置编成一组,靠右。 */
 .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.topbar-right {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -231,7 +237,7 @@ body {
 }
 
 .mode {
-    padding: 4px 14px;
+    padding: 4px 10px;
     font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
@@ -274,6 +280,16 @@ body {
 .icon-btn.back svg {
     width: 20px;
     height: 20px;
+}
+
+/* 结束会话那颗图标键用危险色,和旁边同形的刷新/暂停区分开——它是整排里唯一会终止会话的动作。 */
+.icon-btn.danger {
+    color: var(--danger);
+}
+
+#endBtn svg {
+    width: 15px;
+    height: 15px;
 }
 
 /* 暂停/继续共用一颗按钮:默认露出暂停图标,加上 .paused 换成播放图标。 */
@@ -409,11 +425,6 @@ body {
 .split-handle:hover::before,
 .split-handle.dragging::before {
     background: var(--accent);
-}
-
-/* 双栏时顶上不再需要精要/详细切换键。 */
-.stage.split .modes {
-    display: none;
 }
 
 .turn {
@@ -570,31 +581,4 @@ body {
 /* 已经在最底端时箭头没什么可做,淡下去当提示;仍可点,点了也还是贴底。 */
 .control-btn.at-bottom {
     opacity: 0.35;
-}
-
-/* ---------- settings toggle ---------- */
-
-.toggle-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 6px;
-    font-size: 15px;
-    color: var(--text-primary);
-    cursor: pointer;
-}
-
-.toggle-input {
-    flex: none;
-    width: 20px;
-    height: 20px;
-    accent-color: var(--accent);
-}
-
-/* 开关下的一行小字说明,和选项左对齐,缩进到文字那一列(checkbox 宽 20 + gap 10)。 */
-.setting-hint {
-    margin: 6px 0 0 30px;
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-muted);
 }

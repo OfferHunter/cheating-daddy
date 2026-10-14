@@ -25,9 +25,9 @@ const AUTH_TIMEOUT_MS = 10 * 1000;
 // 断线重连(手机锁屏、切后台)后要能把画面补齐,所以留一小段最近事件做回放。小到不值得担心内存。
 const REPLAY_LIMIT = 80;
 
-// 手机能下达的指令白名单。手机是显示器,这三条是它唯一被允许反过来驱动桌面的动作,所以只认精确字符串,
+// 手机能下达的指令白名单。手机是显示器,这几条是它唯一被允许反过来驱动桌面的动作,所以只认精确字符串,
 // 且必须来自已鉴权的连接。
-const COMMANDS = new Set(['screenshot', 'clear-context', 'toggle-pause']);
+const COMMANDS = new Set(['screenshot', 'clear-context', 'toggle-pause', 'end-session']);
 
 // 只有这些频道会外发。这是安全边界而不是过滤优化:`save-session-context` 带 customPrompt、任何凭证都
 // 不在此列,一律不出主进程。

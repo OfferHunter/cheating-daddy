@@ -523,8 +523,8 @@ function setupTeleprompterIpcHandlers() {
         teleprompter.setTheme(tokens);
     });
 
-    // 手机下达的指令落到桌面:截图必须走渲染端(采集流在那里),清空上下文与暂停都复用桌面自己那套方法——
-    // 桌面按钮点的是同一个函数,两边的状态因此不会各走各的。没会话时它们都会自行拒绝,所以这里不做额外校验。
+    // 手机下达的指令落到桌面:截图必须走渲染端(采集流在那里),清空上下文、暂停、结束会话都复用桌面自己那套
+    // 方法——桌面按钮点的是同一个函数,两边的状态因此不会各走各的。没会话时它们都会自行拒绝,所以这里不做额外校验。
     teleprompter.setCommandHandler(action => {
         const win = BrowserWindow.getAllWindows()[0];
         if (!win) return;
@@ -546,6 +546,15 @@ function setupTeleprompterIpcHandlers() {
                     true
                 )
                 .catch(error => console.error('Teleprompter toggle-pause command failed:', error.message));
+        } else if (action === 'end-session') {
+            // 走 endSession 而不是关闭按钮那个 handleClose:后者在非实时页会转成退出应用,手机误触就把桌面
+            // 程序杀掉了。endSession 只认实时会话,收尾并回到主页,否则什么都不做。
+            win.webContents
+                .executeJavaScript(
+                    'window.offerHunter && window.offerHunter.element && window.offerHunter.element().endSession()',
+                    true
+                )
+                .catch(error => console.error('Teleprompter end-session command failed:', error.message));
         }
     });
 }

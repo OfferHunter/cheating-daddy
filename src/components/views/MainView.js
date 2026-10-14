@@ -432,9 +432,11 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    _renderStartButton(enabled = true) {
+    _renderStartButton(enabled = true, disabledLabel = null) {
         const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
         const disabled = this.isInitializing || !enabled;
+        // 手机没连上时按钮换成断开提示;初始化中的短暂禁用不算「没连上」,仍显示「开始会话」。
+        const disconnected = !this.isInitializing && !enabled && Boolean(disabledLabel);
 
         const cmdIcon = html`<svg
             xmlns="http://www.w3.org/2000/svg"
@@ -486,8 +488,12 @@ export class MainView extends LocalizedLitElement {
                 @click=${() => this._handleStart()}
             >
                 <span class="btn-label">
-                    Start Session
-                    <span class="shortcut-hint">${isMac ? cmdIcon : ctrlIcon}${enterIcon}</span>
+                    ${disconnected ? disabledLabel : t('Start Session', '开始会话')}
+                    ${
+                        disconnected
+                            ? ''
+                            : html`<span class="shortcut-hint">${isMac ? cmdIcon : ctrlIcon}${enterIcon}</span>`
+                    }
                 </span>
             </button>
         `;
@@ -578,13 +584,14 @@ export class MainView extends LocalizedLitElement {
             </div>
             <div class="page-note">
                 ${t(
-                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones.\nPhone or tablet both work — a tablet gives more room and can hold longer answers.\nIn this mode you control the screenshot from the phone, sidestepping shortcut-based detection.',
-                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的面试软件需要控制您的一部手机。\n手机和平板均可使用，平板的可展示界面比手机更大，可以容纳更长的回答。\n使用此模式可在手机控制截图，从而规避快捷键检测。'
+                    'Showing and operating everything on your phone lowers the risk of being caught: it fully avoids screen capture, shortcut logging, and blur-event or blur-rate detection. The only remaining risk is your own line of sight, plus the cases where the interview software needs to control one of your phones.\nPhone or tablet both work — a tablet gives more room and can hold longer answers.\nIn this mode you control the screenshot from the phone, sidestepping shortcut-based detection.\nOnce the meeting interface is up on the phone, minimize the desktop app to keep the risk of being caught as low as possible.',
+                    '通过手机显示和操作降低被捕获风险，能完美规避屏幕捕捉、快捷键记录、离屏事件检测、离屏率检测等手段。唯一的风险来自你的视线，以及有的面试软件需要控制您的一部手机。\n手机和平板均可使用，平板的可展示界面比手机更大，可以容纳更长的回答。\n使用此模式可在手机控制截图，从而规避快捷键检测。\n在手机端成功显示会议界面后，请最小化电脑端以最大程度避免被捕获风险。'
                 )
                     .split('\n')
                     .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
             </div>
-            ${this._renderPairingBox()} ${this._renderStartButton(this.teleprompterPaired)}
+            ${this._renderPairingBox()}
+            ${this._renderStartButton(this.teleprompterPaired, t('Phone not connected', '手机未连接'))}
             <div class="config-hint">
                 <span class="link" @click=${() => this.onOpenConfig()}
                     >${t('Configure chat and speech models', '配置对话与语音模型')}</span

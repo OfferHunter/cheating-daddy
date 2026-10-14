@@ -9,7 +9,7 @@ const ANSWER_FONT_KEY = 'offerHunterTeleprompterAnswerFont';
 const LEGACY_FONT_KEY = 'offerHunterTeleprompterFontSize';
 // 默认取滑块最小档:提词时字号小一点,一屏能多放几轮,需要更大再自己调。
 const DEFAULT_FONT = 12;
-// 「精要和详细同时显示」的开关,以及右栏占整宽的比例(对齐电脑端 detailPaneWidth 的做法)。
+// 「兼有」档(左右两栏同时铺开)的记忆,以及右栏占整宽的比例(对齐电脑端 detailPaneWidth 的做法)。
 const SPLIT_KEY = 'offerHunterTeleprompterSplit';
 const SPLIT_FRACTION_KEY = 'offerHunterTeleprompterSplitFraction';
 // 只带问题、还没被回答收养的占位块用这个 id。收养那一刻它会被换成答案真正的 id。
@@ -25,8 +25,9 @@ const STRINGS = {
         networkError: '连接失败，请确认手机与电脑在同一网络',
         modeBrief: '精要',
         modeDetail: '详细',
+        modeBoth: '兼有',
         online: '已连接',
-        offline: '重连中…',
+        offline: '重连中',
         waiting: '等待面试开始…',
         detailError: '（详细回答生成失败）',
         qLabel: '问',
@@ -37,8 +38,6 @@ const STRINGS = {
         fontSampleAnswer: '这是回答示例',
         shotBtn: '截图',
         shotQuestion: '截图',
-        splitLabel: '精要和详细同时显示',
-        splitHint: '平板等大屏幕设备可使用',
     },
     en: {
         pairTitle: 'Connect to desktop',
@@ -49,6 +48,7 @@ const STRINGS = {
         networkError: 'Could not reach the desktop. Make sure both devices share the same network.',
         modeBrief: 'Brief',
         modeDetail: 'Detailed',
+        modeBoth: 'Both',
         online: 'Connected',
         offline: 'Disconnected, reconnecting…',
         waiting: 'Waiting for the session to start…',
@@ -61,8 +61,6 @@ const STRINGS = {
         fontSampleAnswer: 'This is an answer',
         shotBtn: 'Screenshot',
         shotQuestion: 'Screenshot',
-        splitLabel: 'Show brief and detailed side by side',
-        splitHint: 'For tablets and other large screens',
     },
 };
 
@@ -77,7 +75,7 @@ const state = {
     following: true,
     // 桌面音源是否暂停。桌面每换一次状态都会用 update-status 播报,这里跟着它走,不自己当权威。
     paused: false,
-    // 双栏显示开关(默认关,平板等大屏才开)。开着时左右两栏同时铺开,顶上不再有精要/详细的切换键。
+    // 是否「兼有」:左右两栏同时铺开。由顶栏三档滑块的第三档控制;单栏时看精要还是详细由 answerMode 决定。
     split: readSplit(),
     authed: false,
     token: readToken(),
@@ -101,6 +99,7 @@ const dom = {
     conn: document.getElementById('conn'),
     refreshBtn: document.getElementById('refreshBtn'),
     pauseBtn: document.getElementById('pauseBtn'),
+    endBtn: document.getElementById('endBtn'),
     splitView: document.getElementById('splitView'),
     feedBrief: document.getElementById('feedBrief'),
     feedDetail: document.getElementById('feedDetail'),
@@ -108,6 +107,7 @@ const dom = {
     nav: document.getElementById('nav'),
     modeBrief: document.getElementById('modeBrief'),
     modeDetail: document.getElementById('modeDetail'),
+    modeBoth: document.getElementById('modeBoth'),
     settingsBtn: document.getElementById('settingsBtn'),
     settingsBack: document.getElementById('settingsBack'),
     questionRange: document.getElementById('questionRange'),
@@ -116,7 +116,6 @@ const dom = {
     answerValue: document.getElementById('answerValue'),
     shotBtn: document.getElementById('shotBtn'),
     scrollBtn: document.getElementById('scrollBtn'),
-    splitToggle: document.getElementById('splitToggle'),
 };
 
 const esc = value =>
@@ -780,13 +779,34 @@ function clearConversation() {
     rebuild();
 }
 
-function setMode(mode) {
-    if (state.answerMode === mode) return;
-    state.answerMode = mode;
+// 顶栏三档滑块:精要/详细走单栏,兼有走双栏。三档共用一个状态——split 表示「兼有」,answerMode 记单栏看哪一份。
+function currentViewMode() {
+    return state.split ? 'both' : state.answerMode;
+}
+
+function updateModeButtons() {
+    const mode = currentViewMode();
     dom.modeBrief.classList.toggle('active', mode === 'brief');
     dom.modeDetail.classList.toggle('active', mode === 'detail');
-    state.following = true;
-    rebuild();
+    dom.modeBoth.classList.toggle('active', mode === 'both');
+}
+
+function setViewMode(mode) {
+    if (mode === currentViewMode()) return;
+    if (mode === 'both') {
+        applySplit(true);
+        saveSplit(true);
+    } else {
+        state.answerMode = mode;
+        if (state.split) {
+            applySplit(false);
+            saveSplit(false);
+        } else {
+            state.following = true;
+            rebuild();
+        }
+    }
+    updateModeButtons();
 }
 
 // ---------- 屏幕常亮 ----------
@@ -904,9 +924,7 @@ function applyPaneFraction(f) {
 
 function applySplit(value) {
     state.split = Boolean(value);
-    dom.splitToggle.checked = state.split;
-    // split 类挂在 stage 上,用来藏掉顶上的精要/详细切换键;两栏一个显一个隐,靠 hidden 属性互斥。
-    dom.stage.classList.toggle('split', state.split);
+    // 单栏 #feed 与双栏 #splitView 互斥显隐,顶栏滑块在三档之间始终可见。
     dom.feed.hidden = state.split;
     dom.splitView.hidden = !state.split;
     state.following = true;
@@ -980,8 +998,9 @@ dom.feedDetail.addEventListener('scroll', () => onFeedScroll(dom.feedDetail));
 // 横竖屏切换、地址栏收放都会改窗口高,导航的 1/3 上限跟着重算。
 window.addEventListener('resize', layoutNav);
 
-dom.modeBrief.addEventListener('click', () => setMode('brief'));
-dom.modeDetail.addEventListener('click', () => setMode('detail'));
+dom.modeBrief.addEventListener('click', () => setViewMode('brief'));
+dom.modeDetail.addEventListener('click', () => setViewMode('detail'));
+dom.modeBoth.addEventListener('click', () => setViewMode('both'));
 dom.pairBtn.addEventListener('click', () => tryPair(dom.code.value.trim()));
 dom.code.addEventListener('input', () => {
     dom.code.value = dom.code.value.replace(/\D/g, '').slice(0, 6);
@@ -1010,17 +1029,16 @@ dom.answerRange.addEventListener('input', () => {
 });
 dom.scrollBtn.addEventListener('click', scrollToBottom);
 
-dom.splitToggle.addEventListener('change', () => {
-    applySplit(dom.splitToggle.checked);
-    saveSplit(state.split);
-});
-
 // 乐观翻转:真状态由桌面的 update-status 回播校正;没会话时桌面会拒绝,下一次播报就把它拨回来。
 dom.pauseBtn.addEventListener('click', () => {
     state.paused = !state.paused;
     renderPause();
     sendCommand('toggle-pause');
 });
+
+// 结束会话:让桌面端收尾当前会话并回到主页(不退出应用)。页面不做乐观清空——新一轮开启时桌面会推
+// session-initializing 把这里清干净;没会话时桌面端自行拒绝,这里什么都不用回滚。
+dom.endBtn.addEventListener('click', () => sendCommand('end-session'));
 
 const initialFonts = readInitialFonts();
 dom.questionRange.value = String(initialFonts.question);
@@ -1030,6 +1048,7 @@ applyAnswerFont(initialFonts.answer);
 
 paneFraction = readFraction();
 applySplit(state.split);
+updateModeButtons();
 renderPause();
 
 localize();

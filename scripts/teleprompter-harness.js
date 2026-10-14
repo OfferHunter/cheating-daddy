@@ -366,6 +366,13 @@ app.whenReady().then(async () => {
         await wait(100);
         check('update-status clears paused on resume', await exec(`!document.getElementById('pauseBtn').classList.contains('paused')`));
 
+        // ---- 结束会话键:暂停键右侧的电源图标,点了发 end-session(桌面据此收尾会话并回主页) ----
+        check('end-session button sits right of the pause button', await exec(`document.getElementById('pauseBtn').nextElementSibling.id === 'endBtn'`));
+        check('end-session button is drawn in the danger color', await exec(`document.getElementById('endBtn').classList.contains('danger')`));
+        await exec(`document.getElementById('endBtn').click()`);
+        await wait(120);
+        check('end-session button sends the end-session command', commands.includes('end-session'));
+
         // ---- 截图按钮离底与离右等距 ----
         check('screenshot button is inset equally from the bottom and the right', await exec(`(() => {
             const b = document.getElementById('shotBtn').getBoundingClientRect();
@@ -407,7 +414,9 @@ app.whenReady().then(async () => {
         check('new content keeps the feed pinned to the bottom while following', await atFeedBottom());
 
         // 翻到顶部 → 停止跟随;再来新内容不应把画面拽回去
-        await exec(`document.getElementById('feed').scrollTop = 0`);
+        // 注意:隐藏窗口(show:false)里程序化改 scrollTop 有时不派发 scroll 事件,页面就以为还贴着底、
+        // 继续跟随。真实用户滚动一定会发 scroll,所以这里补发一次,让模拟和真实滚动等价,免得整条用例随机翻车。
+        await exec(`(() => { const f = document.getElementById('feed'); f.scrollTop = 0; f.dispatchEvent(new Event('scroll')); })()`);
         await wait(200);
         teleprompter.broadcast('transcription-final', { text: '翻上去之后的新问题', speaker: 'interviewer', turnId: 2000 });
         teleprompter.broadcast('new-response', { turnId: 2000, text: '翻上去之后的新回答' });
@@ -425,22 +434,40 @@ app.whenReady().then(async () => {
         await wait(250);
         check('following resumes after using the jump-to-latest button', await atFeedBottom());
 
-        // ---- 双栏(平板)开关:默认关,开启后隐藏精要/详细切换键、左右并排、两栏各装各的 ----
+        // ---- 顶栏三档滑块:精要/详细单栏、兼有双栏。设置里已无独立开关 ----
         await exec(`document.getElementById('settingsBtn').click()`);
         await wait(120);
-        check('settings has a split toggle', await exec(`!!document.getElementById('splitToggle')`));
-        check('split is off by default', await exec(`!document.getElementById('splitToggle').checked`));
-        check('split carries the large-screen hint', await exec(`document.querySelector('.setting-hint').textContent.includes('平板')`));
+        check('settings no longer carries a split toggle', await exec(`!document.getElementById('splitToggle')`));
         await exec(`document.getElementById('settingsBack').click()`);
         await wait(120);
 
-        await exec(`(() => { const c = document.getElementById('splitToggle'); c.checked = true; c.dispatchEvent(new Event('change')); })()`);
+        check(
+            'top bar exposes the three slots',
+            await exec(
+                `!!document.getElementById('modeBrief') && !!document.getElementById('modeDetail') && !!document.getElementById('modeBoth')`
+            )
+        );
+        check('brief is the active slot by default', await exec(`document.getElementById('modeBrief').classList.contains('active')`));
+        check(
+            'the mode slider hugs the right edge, left of the settings button',
+            await exec(`(() => {
+                const m = document.querySelector('.modes').getBoundingClientRect();
+                const s = document.getElementById('settingsBtn').getBoundingClientRect();
+                return m.left > window.innerWidth / 2 && m.right <= s.left + 1;
+            })()`)
+        );
+        check(
+            'single feed shows and split view hides before choosing 兼有',
+            await exec(`!document.getElementById('feed').hidden && document.getElementById('splitView').hidden`)
+        );
+
+        await exec(`document.getElementById('modeBoth').click()`);
         await wait(150);
-        check('enabling split marks the stage', await exec(`document.getElementById('stage').classList.contains('split')`));
-        check('split hides the mode switch', await exec(`getComputedStyle(document.querySelector('.modes')).display === 'none'`));
-        check('split shows both panes and hides the single feed', await exec(`getComputedStyle(document.getElementById('splitView')).display !== 'none' && document.getElementById('feed').hidden`));
+        check('choosing 兼有 marks that slot active', await exec(`document.getElementById('modeBoth').classList.contains('active')`));
+        check('the slider stays visible in 兼有', await exec(`getComputedStyle(document.querySelector('.modes')).display !== 'none'`));
+        check('choosing 兼有 shows both panes and hides the single feed', await exec(`getComputedStyle(document.getElementById('splitView')).display !== 'none' && document.getElementById('feed').hidden`));
         check('split pane divider is present', await exec(`!!document.getElementById('splitHandle')`));
-        check('split toggle persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterSplit')`)) === '1');
+        check('兼有 choice persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterSplit')`)) === '1');
 
         // 左右两栏各装各的:精要进左栏,详细进右栏
         teleprompter.broadcast('session-initializing', true);
@@ -452,9 +479,10 @@ app.whenReady().then(async () => {
         check('brief pane renders the brief answer', await exec(`document.querySelector('#feedBrief .answer').textContent.includes('精要回答')`));
         check('detail pane renders the detail answer', await exec(`document.querySelector('#feedDetail .answer').textContent.includes('详细回答')`));
 
-        await exec(`(() => { const c = document.getElementById('splitToggle'); c.checked = false; c.dispatchEvent(new Event('change')); })()`);
+        await exec(`document.getElementById('modeBrief').click()`);
         await wait(150);
-        check('disabling split restores the single feed and mode switch', await exec(`!document.getElementById('stage').classList.contains('split') && getComputedStyle(document.querySelector('.modes')).display !== 'none'`));
+        check('returning to 精要 restores the single feed and hides the split', await exec(`document.getElementById('modeBrief').classList.contains('active') && !document.getElementById('feed').hidden && document.getElementById('splitView').hidden`));
+        check('leaving 兼有 clears the persisted flag', (await exec(`localStorage.getItem('offerHunterTeleprompterSplit')`)) === '0');
 
         win.destroy();
     } catch (error) {
