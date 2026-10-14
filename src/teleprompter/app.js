@@ -9,8 +9,6 @@ const ANSWER_FONT_KEY = 'offerHunterTeleprompterAnswerFont';
 const LEGACY_FONT_KEY = 'offerHunterTeleprompterFontSize';
 // 默认取滑块最小档:提词时字号小一点,一屏能多放几轮,需要更大再自己调。
 const DEFAULT_FONT = 12;
-// 「有新消息时锁定到最底端」的开关状态。
-const BOTTOM_LOCK_KEY = 'offerHunterTeleprompterBottomLock';
 // 「精要和详细同时显示」的开关,以及右栏占整宽的比例(对齐电脑端 detailPaneWidth 的做法)。
 const SPLIT_KEY = 'offerHunterTeleprompterSplit';
 const SPLIT_FRACTION_KEY = 'offerHunterTeleprompterSplitFraction';
@@ -37,7 +35,6 @@ const STRINGS = {
         answerFontLabel: '回答字体大小',
         fontSampleQuestion: '这是问题示例',
         fontSampleAnswer: '这是回答示例',
-        lockBottom: '有新消息时锁定到最底端',
         shotBtn: '截图',
         shotQuestion: '截图',
         splitLabel: '精要和详细同时显示',
@@ -62,7 +59,6 @@ const STRINGS = {
         answerFontLabel: 'Answer font size',
         fontSampleQuestion: 'This is a question',
         fontSampleAnswer: 'This is an answer',
-        lockBottom: 'Lock to bottom on new messages',
         shotBtn: 'Screenshot',
         shotQuestion: 'Screenshot',
         splitLabel: 'Show brief and detailed side by side',
@@ -77,9 +73,8 @@ let S = STRINGS[lang];
 const state = {
     screen: 'pair',
     answerMode: 'brief',
+    // 是否贴在最新底端。用户滚上去就翻成 false,新内容便不再把他拽回去;滚回/点箭头到底端又翻回 true。
     following: true,
-    // 有新内容时滚到最底端而不是最新一块的顶部。默认关,保持提词器「从这轮回答第一个字开始读」的本意。
-    bottomLock: readBottomLock(),
     // 桌面音源是否暂停。桌面每换一次状态都会用 update-status 播报,这里跟着它走,不自己当权威。
     paused: false,
     // 双栏显示开关(默认关,平板等大屏才开)。开着时左右两栏同时铺开,顶上不再有精要/详细的切换键。
@@ -120,7 +115,7 @@ const dom = {
     answerRange: document.getElementById('answerRange'),
     answerValue: document.getElementById('answerValue'),
     shotBtn: document.getElementById('shotBtn'),
-    bottomLockToggle: document.getElementById('bottomLockToggle'),
+    scrollBtn: document.getElementById('scrollBtn'),
     splitToggle: document.getElementById('splitToggle'),
 };
 
@@ -518,8 +513,9 @@ function applyEvent({ channel, data }) {
 const blockEls = new Map();
 // 左侧导航的一条条短横线,与 navList() 一一对应(占位块也算一条)。
 let navEls = [];
-let anchor = 0;
 let suppressScroll = false;
+// 判定「已贴底」的容差(px):滚到最底常差几个像素,不留余量会让跟随状态在真/假之间抖。
+const BOTTOM_THRESHOLD = 24;
 // 双栏联动滚动时置上,免得程序化滚动另一栏又反过来触发它的 scroll 处理器,滚成一个环。
 let syncGuard = false;
 
@@ -567,6 +563,7 @@ function rebuild() {
     }
     syncNav();
     if (state.following) anchorToLast();
+    updateFollowBtn();
 }
 
 function upsertNode(mode, entry) {
@@ -633,33 +630,38 @@ function updateBlock(mode, entry) {
     if (state.following) anchorToLast();
 }
 
-// 跟随的是「最新一块的顶部」而不是底部:提词器要让人从这一轮回答的第一个字开始读,而不是读它的结尾。
-// 开了「锁定到最底端」则改跟底部,像普通聊天那样始终停在最新内容。双栏时两栏各自贴到自己最后一块——详细
-// 回答常比精要晚到,硬把右栏对齐到左栏那一轮只会把它拉到它还没有的那块上空着。
+// 只在用户本来就贴着底端时才跟随:新内容到来就把画面顶到最新底端。用户往上翻(翻成不跟随)后,新内容只
+// 安静地加在下面,不再把他拽回去——要不要回到最新,交给那颗向下箭头。双栏时两栏一起贴底:详细回答常比精要
+// 晚到,硬把它们对齐到同一轮反而会让右栏停在空中。
 function anchorToLast() {
-    const feed = navFeed();
-    const last = feed.lastElementChild;
-    if (!last || last.classList.contains('empty')) {
-        // 左栏可能还空着而右栏已有内容:这时仍把右栏贴到底,别整段不动。
-        if (state.split) anchorFeed(dom.feedDetail);
-        return;
-    }
-
     suppressScroll = true;
-    anchorFeed(feed);
-    if (state.split) anchorFeed(dom.feedDetail);
-    // 以实际落点为准:滚到底部附近时 scrollTop 会被夹住,记成目标值会让后续的「是否仍在跟随」判断失准。
-    anchor = feed.scrollTop;
+    scrollFeedToBottom(navFeed());
+    if (state.split) scrollFeedToBottom(dom.feedDetail);
     requestAnimationFrame(() => {
         suppressScroll = false;
     });
     updateNavActive();
+    updateFollowBtn();
 }
 
-function anchorFeed(feed) {
-    const last = feed.lastElementChild;
-    if (!last || last.classList.contains('empty')) return;
-    feed.scrollTop = state.bottomLock ? feed.scrollHeight - feed.clientHeight : last.offsetTop;
+function scrollFeedToBottom(feed) {
+    feed.scrollTop = feed.scrollHeight - feed.clientHeight;
+}
+
+// 「在不在最底端」以导航那一栏为准(单栏就是唯一那栏,双栏是左栏)。
+function isAtBottom(feed) {
+    return feed.scrollHeight - feed.clientHeight - feed.scrollTop <= BOTTOM_THRESHOLD;
+}
+
+// 向下箭头:不在最底端时点它,滚到最新底端并恢复跟随。已在底端时点了也无妨(仍旧贴底)。
+function scrollToBottom() {
+    state.following = true;
+    anchorToLast();
+}
+
+// 贴底时把箭头淡下去——没有可追的新内容,留着当提示即可。
+function updateFollowBtn() {
+    dom.scrollBtn.classList.toggle('at-bottom', isAtBottom(navFeed()));
 }
 
 // 导航条与 navList() 同源。条数变了才重建(重建会重挂点击,条目对象在同一列表里是稳定的,收养只改
@@ -851,28 +853,6 @@ function closeSettings() {
     dom.settings.hidden = true;
 }
 
-// 有新消息时是否滚到最底端。默认关:提词器要人从这轮回答第一个字读起,滚到底反而看不到开头。
-function readBottomLock() {
-    try {
-        return localStorage.getItem(BOTTOM_LOCK_KEY) === '1';
-    } catch {
-        return false;
-    }
-}
-
-function saveBottomLock(value) {
-    try {
-        localStorage.setItem(BOTTOM_LOCK_KEY, value ? '1' : '0');
-    } catch {
-        // 隐私模式下写不进去:本次仍生效,刷新后回默认。
-    }
-}
-
-function applyBottomLock(value) {
-    state.bottomLock = value;
-    dom.bottomLockToggle.checked = value;
-}
-
 // ---------- 双栏(平板) ----------
 
 // 右栏占整宽的比例,与电脑端 detailPaneWidth 同一套做法:比例而不是像素,窗口变了份量不变。上下限靠 CSS 与
@@ -986,9 +966,10 @@ function renderPause() {
 // 跟随基准锚在「导航那一栏」(单栏就是唯一那栏,双栏是左栏):滚右栏不改判「是否仍在跟随」,只把左栏带过去。
 function onFeedScroll(source) {
     if (!suppressScroll && source === navFeed()) {
-        state.following = Math.abs(source.scrollTop - anchor) <= 32;
+        state.following = isAtBottom(source);
     }
     updateNavActive();
+    updateFollowBtn();
     if (state.split && !syncGuard) syncPeerFromScroll(source);
 }
 
@@ -1027,10 +1008,7 @@ dom.answerRange.addEventListener('input', () => {
     applyAnswerFont(px);
     saveFont(ANSWER_FONT_KEY, px);
 });
-dom.bottomLockToggle.addEventListener('change', () => {
-    applyBottomLock(dom.bottomLockToggle.checked);
-    saveBottomLock(dom.bottomLockToggle.checked);
-});
+dom.scrollBtn.addEventListener('click', scrollToBottom);
 
 dom.splitToggle.addEventListener('change', () => {
     applySplit(dom.splitToggle.checked);
@@ -1049,7 +1027,6 @@ dom.questionRange.value = String(initialFonts.question);
 dom.answerRange.value = String(initialFonts.answer);
 applyQuestionFont(initialFonts.question);
 applyAnswerFont(initialFonts.answer);
-applyBottomLock(state.bottomLock);
 
 paneFraction = readFraction();
 applySplit(state.split);

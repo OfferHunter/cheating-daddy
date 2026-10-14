@@ -139,6 +139,22 @@ function createWindow(sendToRenderer) {
     return mainWindow;
 }
 
+// 把窗口重新显示出来。Win 上这块透明无边框窗口被 hide() 拆掉 DWM 合成表面后,再 show() 出来会出现
+// 「画得出来、控件却点不动」(语音作答走全局快捷键+音频,不经窗口,症状就是「能说话、点不动」)。
+// 实测有效的修法只有这一步:show 之后把窗口位置抖 1px 再抖回。关键不在于挪了多少,而在于它真真正正派了一次
+// SetWindowPos 出去——只有 SetWindowPos 才会让 Windows 重算这块窗口的命中区域(hit-test region)。
+// 下面这些单独都试过、都无效,别再往回加:showInactive→show、单补 setAlwaysOnTop、单 invalidate、
+// 翻 setIgnoreMouseEvents。它们不保证下发 SetWindowPos,所以救不了。
+// 用 show() 而非 showInactive():实时视图被设成不可聚焦(WS_EX_NOACTIVATE,见 view-changed),不可聚焦的
+// 窗口无法被激活,所以 show() 不会把焦点从背后的会议窗口抢走。
+function showWindow(win) {
+    win.showInactive();
+    if (process.platform !== 'win32') return;
+    const [x, y] = win.getPosition();
+    // 逼系统把命中区域重算一遍。
+    win.setPosition(x, y);
+}
+
 function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
     // 必须与默认表合并，不能直接信传入的：设置页存的是用户改过的那几项，缺键不是中性的——下面每处注册都被
     // `if (keybinds.X)` 守着，缺的那个会静默地永不注册。
@@ -194,7 +210,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
                 if (mainWindow.isVisible()) {
                     mainWindow.hide();
                 } else {
-                    mainWindow.showInactive();
+                    showWindow(mainWindow);
                 }
             });
             console.log(`Registered toggleVisibility: ${keybinds.toggleVisibility}`);
@@ -419,7 +435,7 @@ function wireWindowIpc() {
             if (win.isVisible()) {
                 win.hide();
             } else {
-                win.showInactive();
+                showWindow(win);
             }
             return { success: true };
         } catch (error) {

@@ -355,8 +355,9 @@ body {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     position: relative;
-    /* 左边留出悬浮导航的地界,正文不会跑到横线底下。 */
-    padding: 18px 16px calc(env(safe-area-inset-bottom) + 40px) 28px;
+    /* 左边留出悬浮导航的地界,正文不会跑到横线底下;底边留出一整条底栏的高度,滚到底时最后一行正好停在
+       悬浮按钮上方,不会被它们压住。 */
+    padding: 18px 16px calc(env(safe-area-inset-bottom) + 64px) 28px;
     scrollbar-width: thin;
 }
 
@@ -516,23 +517,29 @@ body {
     margin-top: 30vh;
 }
 
-/* 底部控制栏:一栏按钮,不再折叠。整条透明(无底色、无分割线),按钮直接浮在正文底色上,所以贴底也不显得
-   多出一条面板。按钮靠右对齐,拇指顺手够到。 */
+/* 底栏改成浮在正文上的透明层:整条 absolute 脱离文档流,不再占掉一行,正文得以铺到屏幕最底。空处让指针
+   穿过去(仍能滚动、点正文),只有按钮本身接收点击——所以它不会「挡住后面的字」。 */
 .controlbar {
-    flex: none;
-    background: transparent;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    pointer-events: none;
 }
 
-/* 下边距与右边距取同一个值,截图按钮因此离底边和离右边一样远,浮在右下角而不是贴着角。 */
+/* 向下箭头靠左、截图靠右,space-between 把两者撑到两端;下边距与右边距同为 16px,截图键因此离底离右一样远。 */
 .control-items {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: flex-end;
     gap: 8px;
-    padding: 6px 16px 16px;
+    padding: 6px 16px calc(env(safe-area-inset-bottom) + 16px);
 }
 
 /* 底栏透明后,按钮若还用 --bg-app 就和页面底色糊在一起,改用 --bg-elevated 让它留出可见的浅色块。 */
 .control-btn {
+    pointer-events: auto;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -548,6 +555,21 @@ body {
 .control-btn:active {
     border-color: var(--accent);
     color: var(--accent);
+}
+
+/* 只放一个图标的按钮(向下箭头):不留文字位,做成小方块。 */
+.control-btn.icon-only {
+    padding: 8px;
+}
+
+.control-btn.icon-only svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 已经在最底端时箭头没什么可做,淡下去当提示;仍可点,点了也还是贴底。 */
+.control-btn.at-bottom {
+    opacity: 0.35;
 }
 
 /* ---------- settings toggle ---------- */

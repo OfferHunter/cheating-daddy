@@ -13,7 +13,7 @@ const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./u
 const teleprompter = require('./utils/teleprompter');
 const storage = require('./storage');
 
-// 透明窗在 Windows 上 hide()/showInactive() 时，DWM 会先把上一次的透明合成表面贴一帧再收起重画，
+// 透明窗在 Windows 上 hide()/show() 时，DWM 会先把上一次的透明合成表面贴一帧再收起重画，
 // 表现为「先闪一下」（electron#10069，窗口不透明时不复现）。这里关掉窗口管理器动画，让这次显隐不带过渡帧。
 // 必须在 app ready 之前 append；仅 Windows 相关。
 if (process.platform === 'win32') {

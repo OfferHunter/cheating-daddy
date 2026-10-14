@@ -104,7 +104,9 @@ app.whenReady().then(async () => {
         check('theme.css carries the pushed tokens', themeCss.includes('--accent:#123456'));
         check('a light background flips color-scheme to light', themeCss.includes('color-scheme:light'));
 
-        const win = new BrowserWindow({ show: false, width: 420, height: 900 });
+        // backgroundThrottling:false 与真实主窗口一致:隐藏窗口默认会把 rAF/定时器降频,而页面里的
+        // suppressScroll/syncGuard 都靠 rAF 复位,降频会让它们一直挂着,滚动相关的断言就假失败。
+        const win = new BrowserWindow({ show: false, width: 420, height: 900, webPreferences: { backgroundThrottling: false } });
         await win.loadURL(url);
         await wait(400);
 
@@ -139,7 +141,12 @@ app.whenReady().then(async () => {
         check('control bar sits flush with the bottom edge', await exec(`Math.abs(document.getElementById('controlbar').getBoundingClientRect().bottom - window.innerHeight) <= 1`));
         check('control bar is transparent', await exec(`getComputedStyle(document.getElementById('controlbar')).backgroundColor === 'rgba(0, 0, 0, 0)'`));
         check('control bar has no divider line', await exec(`getComputedStyle(document.getElementById('controlbar')).borderTopWidth === '0px'`));
+        // 底栏脱离文档流浮在正文上,空处让指针穿过去——这样它既不占一行、也不「挡住后面的字」。
+        check('control bar floats over the feed instead of occupying a layout row', await exec(`getComputedStyle(document.getElementById('controlbar')).position === 'absolute'`));
+        check('the empty control-bar strip lets clicks pass through', await exec(`getComputedStyle(document.getElementById('controlbar')).pointerEvents === 'none'`));
+        check('control bar has a jump-to-latest arrow', await exec(`!!document.getElementById('scrollBtn')`));
         check('screenshot button sits at the right edge', await exec(`(() => { const c = document.getElementById('controlItems'); const b = document.getElementById('shotBtn').getBoundingClientRect(); const inner = c.getBoundingClientRect().right - parseFloat(getComputedStyle(c).paddingRight); return Math.abs(b.right - inner) <= 1; })()`));
+        check('jump-to-latest arrow sits at the left edge', await exec(`(() => { const c = document.getElementById('controlItems'); const b = document.getElementById('scrollBtn').getBoundingClientRect(); const inner = c.getBoundingClientRect().left + parseFloat(getComputedStyle(c).paddingLeft); return Math.abs(b.left - inner) <= 1; })()`));
         await exec(`document.getElementById('shotBtn').click()`);
         await wait(120);
         check('screenshot button sends the screenshot command', commands.includes('screenshot'));
@@ -291,12 +298,8 @@ app.whenReady().then(async () => {
         check('answer knob leaves question untouched', (await exec(`getComputedStyle(document.querySelector('#feed .question')).fontSize`)) === '24px');
         check('answer size persisted', (await exec(`localStorage.getItem('offerHunterTeleprompterAnswerFont')`)) === '30');
 
-        // ---- 有新消息时锁定到最底端:默认关,开了要持久化 ----
-        check('settings has a bottom-lock toggle', await exec(`!!document.getElementById('bottomLockToggle')`));
-        check('bottom lock is off by default', await exec(`!document.getElementById('bottomLockToggle').checked`));
-        await exec(`(() => { const c = document.getElementById('bottomLockToggle'); c.checked = true; c.dispatchEvent(new Event('change')); })()`);
-        await wait(120);
-        check('bottom lock persisted when enabled', (await exec(`localStorage.getItem('offerHunterTeleprompterBottomLock')`)) === '1');
+        // 「锁定到最底端」这项已删除:改成「贴底才跟随」,不再需要开关。
+        check('the bottom-lock setting is gone', await exec(`!document.getElementById('bottomLockToggle')`));
 
         await exec(`document.getElementById('settingsBack').click()`);
         await wait(120);
@@ -389,6 +392,38 @@ app.whenReady().then(async () => {
         teleprompter.broadcast('new-detail-response', { detailId: 'd9', turnSeq: 9, question: '普通问题', text: '详细内容' });
         await wait(120);
         check('a normal detail answer does not spawn a brief block', await exec(`document.querySelectorAll('#feed .turn').length === 0`));
+
+        // ---- 跟随行为:只在贴底时跟随;翻上去就不跟;向下箭头拉回底端并重新跟随 ----
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        for (let i = 0; i < 40; i += 1) {
+            teleprompter.broadcast('transcription-final', { text: `跟随问题${i}`, speaker: 'interviewer', turnId: 1000 + i });
+            teleprompter.broadcast('new-response', { turnId: 1000 + i, text: `跟随回答内容第${i}轮。` });
+            teleprompter.broadcast('response-complete', { turnId: 1000 + i });
+        }
+        await wait(500);
+        const atFeedBottom = () => exec(`(() => { const f = document.getElementById('feed'); return f.scrollHeight - f.clientHeight - f.scrollTop <= 4; })()`);
+        check('feed becomes scrollable with many turns', await exec(`document.getElementById('feed').scrollHeight > document.getElementById('feed').clientHeight + 50`));
+        check('new content keeps the feed pinned to the bottom while following', await atFeedBottom());
+
+        // 翻到顶部 → 停止跟随;再来新内容不应把画面拽回去
+        await exec(`document.getElementById('feed').scrollTop = 0`);
+        await wait(200);
+        teleprompter.broadcast('transcription-final', { text: '翻上去之后的新问题', speaker: 'interviewer', turnId: 2000 });
+        teleprompter.broadcast('new-response', { turnId: 2000, text: '翻上去之后的新回答' });
+        await wait(250);
+        check('a new turn does not yank the view while scrolled up', (await exec(`document.getElementById('feed').scrollTop`)) === 0);
+        check('jump-to-latest arrow dims once off the bottom', await exec(`!document.getElementById('scrollBtn').classList.contains('at-bottom')`));
+
+        // 点箭头 → 回到底端并恢复跟随
+        await exec(`document.getElementById('scrollBtn').click()`);
+        await wait(250);
+        check('jump-to-latest scrolls back to the bottom', await atFeedBottom());
+        check('jump-to-latest arrow dims once back at the bottom', await exec(`document.getElementById('scrollBtn').classList.contains('at-bottom')`));
+        teleprompter.broadcast('transcription-final', { text: '箭头之后的又一问', speaker: 'interviewer', turnId: 3000 });
+        teleprompter.broadcast('new-response', { turnId: 3000, text: '箭头之后的又一答' });
+        await wait(250);
+        check('following resumes after using the jump-to-latest button', await atFeedBottom());
 
         // ---- 双栏(平板)开关:默认关,开启后隐藏精要/详细切换键、左右并排、两栏各装各的 ----
         await exec(`document.getElementById('settingsBtn').click()`);
