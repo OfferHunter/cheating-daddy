@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1116">
+<title>激活码签发</title>
+<!--
+  手机端签发工具：单文件、无外部依赖、无任何网络请求。
+  私钥只在这一页里解密和使用，用口令（PBKDF2）加密后存在本机 localStorage，从不上传。
+  签名算法与 payload 格式照抄 src/utils/license-format.js，签出的码和 npm run license 完全等价。
+  离线也能用：把本文件传到手机打开，或“添加到主屏幕”即可。
+-->
+<style>
+  :root {
+    --bg: #0f1116; --card: #191c23; --card2: #22262f; --line: #2e333d;
+    --fg: #e8eaee; --muted: #98a0ae; --accent: #4f8cff; --ok: #3ecf8e; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg); min-height: 100vh;
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+    max-width: 560px; margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input, textarea {
+    width: 100%; background: var(--card2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 13px 14px; font-size: 16px; font-family: inherit; outline: none;
+  }
+  textarea { min-height: 108px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .04em; }
+  button {
+    appearance: none; border: 0; border-radius: 10px; padding: 13px 16px; font-size: 16px; font-weight: 600;
+    background: var(--accent); color: #fff; width: 100%; margin-top: 14px; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 500; font-size: 14px; padding: 10px; margin-top: 14px; }
+  button:disabled { opacity: .5; }
+  .row { display: flex; gap: 10px; }
+  .row > button { margin-top: 0; }
+  .hint { font-size: 12.5px; margin-top: 8px; min-height: 1em; }
+  .hint.ok { color: var(--ok); } .hint.bad { color: var(--bad); } .hint.muted { color: var(--muted); }
+  .out { background: var(--card2); border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .out .line { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  .out .code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13.5px; word-break: break-all; user-select: all; }
+  .banner { background: #3a1f22; border: 1px solid #6b3136; color: #ffb4b4; border-radius: 10px; padding: 12px; font-size: 13.5px; margin-bottom: 14px; display: none; }
+  .hidden { display: none !important; }
+  .foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>激活码签发</h1>
+  <div class="sub">私钥只在本机解密，不联网、不上传。</div>
+
+  <div id="banner" class="banner"></div>
+
+  <!-- 首次设置：粘贴私钥 + 设口令 -->
+  <div id="setupCard" class="card hidden">
+    <h2>首次设置</h2>
+    <label for="pem">私钥（.license-private/private-key.pem 全文）</label>
+    <textarea id="pem" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+    <label for="pw1">设置口令（用来加密私钥，务必记牢）</label>
+    <input id="pw1" type="password" autocomplete="new-password">
+    <label for="pw2">再输一次口令</label>
+    <input id="pw2" type="password" autocomplete="new-password">
+    <div id="setupHint" class="hint"></div>
+    <button id="saveBtn">加密并保存</button>
+    <div class="foot">私钥经 PBKDF2 + AES-GCM 加密后存在本机；忘口令 = 密钥作废，需重新粘贴。</div>
+  </div>
+
+  <!-- 解锁 -->
+  <div id="unlockCard" class="card hidden">
+    <h2>解锁</h2>
+    <label for="pw">口令</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <div id="unlockHint" class="hint"></div>
+    <button id="unlockBtn">解锁</button>
+    <button id="resetBtn" class="ghost">清除本机保存的私钥</button>
+  </div>
+
+  <!-- 签发 -->
+  <div id="signCard" class="card hidden">
+    <h2>签发激活码</h2>
+    <label for="mc">机器码</label>
+    <input id="mc" class="mono" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XX" spellcheck="false" autocapitalize="characters" autocorrect="off">
+    <div id="mcHint" class="hint muted"></div>
+    <label for="validity">有效期：填天数（如 365），留空或 L 表示终身</label>
+    <input id="validity" placeholder="365 / L" spellcheck="false" autocapitalize="off" autocorrect="off">
+    <div id="vHint" class="hint muted"></div>
+    <button id="genBtn">生成激活码</button>
+    <div id="out" class="out hidden">
+      <div class="line" id="outMeta"></div>
+      <div class="code" id="outCode"></div>
+      <div class="row">
+        <button id="copyBtn" class="ghost">复制激活码</button>
+        <button id="lockBtn" class="ghost">锁定</button>
+      </div>
+    </div>
+    <div id="genHint" class="hint"></div>
+  </div>
+
+<script>
+'use strict';
+
+// ---------- 与客户端共享的格式常量 / 纯函数（照抄 src/utils/license-format.js） ----------
+const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const PREFIX = 'OH2';        // 只签当前格式；OH1 是旧码，不再新签
+const LIFETIME = 0;
+const DATA_CHARS = 26;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const $ = id => document.getElementById(id);
+
+function sanitize(value) {
+  return String(value).toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-Z]/g, '');
+}
+
+function checksumChar(dataChars) {
+  let sum = 0;
+  for (let i = 0; i < dataChars.length; i++) sum = (sum + (i + 1) * ALPHABET.indexOf(dataChars[i])) % 32;
+  return ALPHABET[sum];
+}
+
+function group(chars) {
+  const out = [];
+  for (let i = 0; i < chars.length; i += 5) out.push(chars.slice(i, i + 5));
+  return out.join('-');
+}
+
+function canonicalize(value) { return group(sanitize(value)); }
+
+function isValidMachineCode(value) {
+  const raw = sanitize(value);
+  if (raw.length !== DATA_CHARS + 1) return false;
+  if ([...raw].some(c => !ALPHABET.includes(c))) return false;
+  return checksumChar(raw.slice(0, DATA_CHARS)) === raw[DATA_CHARS];
+}
+
+function expiryField(expiresAt) { return expiresAt == null ? String(LIFETIME) : String(Math.floor(expiresAt / 1000)); }
+
+function parseValidity(input) {
+  const v = String(input).trim();
+  if (!v) return { ok: true, expiresAt: null, days: null };
+  if (/^(l|lifetime|forever|终身|永久)$/i.test(v)) return { ok: true, expiresAt: null, days: null };
+  if (/^\d+$/.test(v)) { const d = Number(v); if (d > 0) return { ok: true, expiresAt: Date.now() + d * DAY_MS, days: d }; }
+  return { ok: false };
+}
+
+function describeValidity({ expiresAt, days }) {
+  if (expiresAt == null) return '终身';
+  return `${days} 天（到期 ${new Date(expiresAt).toISOString().slice(0, 10)}）`;
+}
+
+// ---------- 二进制 / 编码小工具 ----------
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function bytesToB64(bytes) {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+function base64url(bytes) {
+  return bytesToB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// PEM（标准 base64）→ PKCS8 DER 字节
+function pemToDer(pem) {
+  const body = String(pem).replace(/-----BEGIN [^-]+-----/, '').replace(/-----END [^-]+-----/, '').replace(/\s+/g, '');
+  if (!body) throw new Error('没读到私钥内容');
+  return b64ToBytes(body);
+}
+
+// ---------- 私钥保险箱：PBKDF2 派生密钥 + AES-GCM 加密后存本机 ----------
+const VAULT_KEY = 'licensePhoneVaultV1';
+const PBKDF2_ITER = 210000;
+
+async function deriveAesKey(passphrase, salt, iter) {
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
+    material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function sealDer(passphrase, der) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveAesKey(passphrase, salt, PBKDF2_ITER);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, der));
+  return { v: 1, iter: PBKDF2_ITER, salt: bytesToB64(salt), iv: bytesToB64(iv), ct: bytesToB64(ct) };
+}
+
+async function openDer(passphrase, vault) {
+  const key = await deriveAesKey(passphrase, b64ToBytes(vault.salt), vault.iter || PBKDF2_ITER);
+  const der = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(vault.iv) }, key, b64ToBytes(vault.ct));
+  return new Uint8Array(der);
+}
+
+async function importSigningKey(der) {
+  return crypto.subtle.importKey('pkcs8', der, { name: 'Ed25519' }, false, ['sign']);
+}
+
+async function signCode(cryptoKey, machineCode, expiresAt) {
+  const payload = `${PREFIX}.${machineCode}.${expiryField(expiresAt)}`;
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, cryptoKey, new TextEncoder().encode(payload)));
+  return `${payload}.${base64url(sig)}`;
+}
+
+// ---------- 界面 ----------
+let signingKey = null; // 解锁后常驻内存；锁定 / 刷新即消失
+
+function showBanner(text) {
+  const b = $('banner');
+  b.textContent = text;
+  b.style.display = 'block';
+}
+
+function readVault() {
+  try { const raw = localStorage.getItem(VAULT_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+function showScreen(name) {
+  for (const id of ['setupCard', 'unlockCard', 'signCard']) $(id).classList.add('hidden');
+  if (name) $(name).classList.remove('hidden');
+}
+
+function updateMachineHint() {
+  const raw = $('mc').value.trim();
+  const hint = $('mcHint');
+  if (!raw) { hint.className = 'hint muted'; hint.textContent = '粘贴用户发来的机器码（格式会自动纠正大小写/连字符）。'; return; }
+  if (isValidMachineCode(raw)) { hint.className = 'hint ok'; hint.textContent = '机器码有效 ✓'; }
+  else { hint.className = 'hint bad'; hint.textContent = '机器码长度或校验位不对，让用户重新复制，别手打。'; }
+}
+
+function updateValidityHint() {
+  const hint = $('vHint');
+  const v = parseValidity($('validity').value);
+  if (!v.ok) { hint.className = 'hint bad'; hint.textContent = '填正整数天数，或 L / 留空表示终身。'; return; }
+  hint.className = 'hint muted';
+  hint.textContent = '有效期：' + describeValidity(v);
+}
+
+async function copyText(text, btn) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    const old = btn.textContent; btn.textContent = '已复制 ✓';
+    setTimeout(() => { btn.textContent = old; }, 1400);
+  } catch { $('genHint').className = 'hint bad'; $('genHint').textContent = '复制失败，请长按选中手动复制。'; }
+}
+
+// ---------- 事件绑定 ----------
+function bind() {
+  $('mc').addEventListener('input', updateMachineHint);
+  $('validity').addEventListener('input', updateValidityHint);
+
+  // 首次设置
+  $('saveBtn').addEventListener('click', async () => {
+    const hint = $('setupHint');
+    const pem = $('pem').value;
+    const pw1 = $('pw1').value, pw2 = $('pw2').value;
+    if (!pw1 || pw1.length < 6) { hint.className = 'hint bad'; hint.textContent = '口令至少 6 位。'; return; }
+    if (pw1 !== pw2) { hint.className = 'hint bad'; hint.textContent = '两次口令不一致。'; return; }
+    let der;
+    try { der = pemToDer(pem); } catch (e) { hint.className = 'hint bad'; hint.textContent = '私钥读取失败：' + e.message; return; }
+    try {
+      signingKey = await importSigningKey(der); // 先验证私钥本身能被浏览器接受
+    } catch (e) { hint.className = 'hint bad'; hint.textContent = '私钥格式不被支持：' + (e.message || e) + '（需为 PKCS8 的 Ed25519 私钥）'; return; }
+    try {
+      localStorage.setItem(VAULT_KEY, JSON.stringify(await sealDer(pw1, der)));
+    } catch (e) { hint.className = 'hint bad'; hint.textContent = '保存失败：' + (e.message || e); return; }
+    $('pem').value = $('pw1').value = $('pw2').value = '';
+    enterSign();
+  });
+
+  // 解锁
+  $('unlockBtn').addEventListener('click', unlock);
+  $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
+  $('resetBtn').addEventListener('click', () => {
+    if (!confirm('清除本机保存的私钥？清除后需重新粘贴私钥并设口令。')) return;
+    localStorage.removeItem(VAULT_KEY);
+    signingKey = null;
+    showBanner('已清除本机保存的私钥。');
+    showScreen('setupCard');
+  });
+
+  // 签发
+  $('genBtn').addEventListener('click', async () => {
+    const hint = $('genHint');
+    hint.className = 'hint';
+    if (!signingKey) { showScreen('unlockCard'); return; }
+    if (!isValidMachineCode($('mc').value)) { hint.className = 'hint bad'; hint.textContent = '机器码无效，请先修正。'; return; }
+    const v = parseValidity($('validity').value);
+    if (!v.ok) { hint.className = 'hint bad'; hint.textContent = '有效期格式不正确。'; return; }
+    const machineCode = canonicalize($('mc').value);
+    try {
+      const code = await signCode(signingKey, machineCode, v.expiresAt);
+      $('out').classList.remove('hidden');
+      $('outMeta').textContent = `${machineCode} · ${describeValidity(v)}`;
+      $('outCode').textContent = code;
+      hint.textContent = '';
+    } catch (e) { hint.className = 'hint bad'; hint.textContent = '签发失败：' + (e.message || e); }
+  });
+
+  $('copyBtn').addEventListener('click', e => copyText($('outCode').textContent, e.currentTarget));
+  $('lockBtn').addEventListener('click', () => {
+    signingKey = null;
+    $('pw').value = ''; $('unlockHint').textContent = ''; $('unlockHint').className = 'hint';
+    $('out').classList.add('hidden');
+    showScreen('unlockCard');
+  });
+}
+
+async function unlock() {
+  const hint = $('unlockHint');
+  const vault = readVault();
+  if (!vault) { showScreen('setupCard'); return; }
+  hint.className = 'hint'; hint.textContent = '解密中…';
+  try {
+    signingKey = await importSigningKey(await openDer($('pw').value, vault));
+    $('pw').value = '';
+    enterSign();
+  } catch {
+    hint.className = 'hint bad'; hint.textContent = '口令错误（或本机密钥已损坏）。';
+  }
+}
+
+function enterSign() {
+  showScreen('signCard');
+  updateMachineHint();
+  updateValidityHint();
+}
+
+async function boot() {
+  bind();
+  if (!(window.crypto && window.crypto.subtle)) {
+    showBanner('当前环境不支持 WebCrypto，无法签名。请用新版 Chrome / Safari，并通过 https 或本地文件打开本页。');
+    return;
+  }
+  if (readVault()) showScreen('unlockCard');
+  else showScreen('setupCard');
+}
+
+boot();
+</script>
+</body>
+</html>

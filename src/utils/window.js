@@ -152,6 +152,7 @@ function showWindow(win) {
     if (process.platform !== 'win32') return;
     const [x, y] = win.getPosition();
     // 逼系统把命中区域重算一遍。
+    win.setPosition(x+1, y);
     win.setPosition(x, y);
 }
 
