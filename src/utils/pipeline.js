@@ -252,7 +252,8 @@ function handleAsrSentence(text, sentenceEnd, source) {
 
     state.turnText = state.turnText ? `${state.turnText} ${sentence}` : sentence;
     state.interimText = '';
-    console.log(`[Pipeline] ASR sentence (${source}):`, sentence);
+    // 只记长度不记原文：这份 app.log 是要发给对方排障的，面试对话不能跟着走。长度非零就足以证明识别在出句子。
+    console.log(`[Pipeline] ASR sentence (${source}): ${sentence.length} chars`);
     logTransportEvent('asr.sentence_final', { text: sentence, source });
     sendBubble('transcription-update', source);
 
@@ -265,7 +266,7 @@ function interruptCandidate() {
     const text = bubbleText(CANDIDATE).trim();
     if (text.length < MIN_CANDIDATE_CHARS) return;
 
-    console.log('[Pipeline] Candidate interrupted:', text);
+    console.log('[Pipeline] Candidate interrupted:', text.length, 'chars');
     sendBubble('transcription-update', CANDIDATE);
 }
 
@@ -314,13 +315,13 @@ function flushTurn(source) {
 
     if (source === CANDIDATE) {
         if (text.length < MIN_CANDIDATE_CHARS) {
-            console.log('[Pipeline] Candidate fragment dropped:', text);
+            console.log('[Pipeline] Candidate fragment dropped:', text.length, 'chars');
             return;
         }
 
         // 什么都不派发：候选人说的话是下一个回答的背景，而不是要回答的问题。它并入开着的块，这里不给块
         // 设上限——块由下一个轮次整体关闭（见 commitCandidateSpeech）。
-        console.log('[Pipeline] Candidate speech:', text);
+        console.log('[Pipeline] Candidate speech:', text.length, 'chars');
         candidateSpeech.push(text);
         // 历史立即保存；同一发言块复用序号更新，不等待下一个问题。
         if (candidateHistoryOrder === null) candidateHistoryOrder = ++turnSeq;
@@ -331,7 +332,7 @@ function flushTurn(source) {
         return;
     }
 
-    console.log('[Pipeline] Turn dispatched:', text);
+    console.log('[Pipeline] Turn dispatched:', text.length, 'chars');
     // 先派发拿到这一轮的 id,再把它挂到问题上:渲染端据此把回答插到自己问题下面/配到自己问题上。
     // 派发是同步的(网络请求在 await 里),所以这条 final 仍然早于任何 new-response 到达。
     const entry = dispatchTurn(text);

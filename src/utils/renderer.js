@@ -28,6 +28,39 @@ let capturePaused = false;
 
 const isMacOS = process.platform === 'darwin';
 
+// 渲染端的 console 只写进 Chromium 的 devtools，打包后无处可看。全部原样转发到主进程落盘（主进程那份
+// 文件里带 [Renderer] 前缀）。这里是「采集起不来」时唯一能看到错误名的地方——NotAllowedError 和
+// NotFoundError 的处置完全不同，而它们只会出现在渲染端的 catch 里。
+const LOG_LEVELS = { log: 'INFO', info: 'INFO', debug: 'DEBUG', warn: 'WARN', error: 'ERROR' };
+Object.entries(LOG_LEVELS).forEach(([method, level]) => {
+    const original = console[method].bind(console);
+    console[method] = (...args) => {
+        original(...args);
+        try {
+            const text = args
+                .map(arg => {
+                    if (arg instanceof Error) return arg.stack || `${arg.name}: ${arg.message}`;
+                    if (typeof arg === 'string') return arg;
+                    return JSON.stringify(arg);
+                })
+                .join(' ');
+            ipcRenderer.send('log-message', `${level} ${text}`);
+        } catch {
+            // 转发失败不影响本地的正常日志。
+        }
+    };
+});
+
+// startCapture 是不 await 也不 catch 地调用的，采集失败会变成无人处理的 rejection。兜住它——不然
+// 「截图没反应」在主进程日志里连一条错误都没有。
+window.addEventListener('error', event => {
+    console.error('[Renderer] window error:', event.message, `${event.filename}:${event.lineno}:${event.colno}`);
+});
+window.addEventListener('unhandledrejection', event => {
+    const reason = event.reason;
+    console.error('[Renderer] unhandled rejection:', reason && (reason.stack || reason.message || String(reason)));
+});
+
 const storage = {
     async getConfig() {
         const result = await ipcRenderer.invoke('storage:get-config');
@@ -244,6 +277,32 @@ function buildMicConstraints(micDeviceId) {
     return { audio, video: false };
 }
 
+// 「麦克风/扬声器用不了」要在两处取证：系统给了这个进程什么许可（看主进程日志的 [Perm] 几行），
+// 以及这里 enumerateDevices 看得到哪些设备、标签有没有被打码。标签为空 = 当前 origin 还没拿到设备许可，
+// 本身就是一条线索。
+async function describeMediaDevices() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        return devices.map(d => `${d.kind}:${d.label || '(no label)'}`);
+    } catch (error) {
+        return [`enumerateDevices failed: ${error.name}: ${error.message}`];
+    }
+}
+
+async function logPermissionStates() {
+    for (const name of ['microphone', 'camera']) {
+        try {
+            const status = await navigator.permissions.query({ name });
+            console.log(`[Capture] permission ${name}: ${status.state}`);
+        } catch (error) {
+            console.log(`[Capture] permission ${name}: query failed (${error.message})`);
+        }
+    }
+}
+
+// 三条采集路径——屏幕（截图来源）、Windows 回环音（"扬声器"）、麦克风——各自成败互不连坐。它们过去串在一个
+// try 里：麦克风排在 getDisplayMedia 之后，屏幕一旦取不到就直接跳到 catch，麦克风那段根本不执行。日志里
+// "截图没反应 + 扬声器哑 + 麦克风也没声"因此可能只是同一个根因，必须拆开才看得到真相。
 async function startCapture(imageQuality = 'medium') {
     currentImageQuality = imageQuality;
 
@@ -252,17 +311,31 @@ async function startCapture(imageQuality = 'medium') {
     // 麦克风是候选人自己那一路：与扬声器那一路并行，而不是取代它，所以只有「明确不用麦克风」才会关掉它。
     const shouldCaptureMic = micDeviceId !== 'none';
 
+    console.log('[Capture] start', { imageQuality, micDeviceId, shouldCaptureMic });
+    await logPermissionStates();
+    console.log('[Capture] devices:', await describeMediaDevices());
+
     // 在开始任何采集之前先释放：这一路开不开由本次会话自己的选择决定，上一次会话留下的东西两种情况下都
     // 不该继续活着。
     releaseMicCapture();
 
+    await startScreenCapture();
+    if (shouldCaptureMic) await startMicCapture(micDeviceId);
+}
+
+// 屏幕 + Windows 回环音。macOS 的"扬声器"不在这里，它走 SystemAudioDump，所以那个也单独成一块——它挂掉
+// 不该把截图一起带走。
+async function startScreenCapture() {
     try {
         if (isMacOS) {
-            console.log('Starting macOS capture with SystemAudioDump...');
-
-            const audioResult = await ipcRenderer.invoke('start-macos-audio');
-            if (!audioResult.success) {
-                throw new Error('Failed to start macOS audio capture: ' + audioResult.error);
+            try {
+                const audioResult = await ipcRenderer.invoke('start-macos-audio');
+                if (!audioResult.success) {
+                    throw new Error(audioResult.error);
+                }
+                console.log('macOS system audio started (SystemAudioDump)');
+            } catch (audioError) {
+                console.error(`[Capture] macOS system audio failed [${audioError && audioError.name}]:`, audioError);
             }
 
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -274,17 +347,7 @@ async function startCapture(imageQuality = 'medium') {
                 audio: false, // 系统声音走 SystemAudioDump，不走浏览器
             });
 
-            console.log('macOS screen capture started - audio handled by SystemAudioDump');
-
-            if (shouldCaptureMic) {
-                try {
-                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
-                    console.log('macOS microphone capture started');
-                    setupMicProcessing(micCaptureStream);
-                } catch (micError) {
-                    console.warn('Failed to get microphone access on macOS:', micError);
-                }
-            }
+            console.log('macOS screen capture started');
         } else {
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
                 video: {
@@ -304,28 +367,36 @@ async function startCapture(imageQuality = 'medium') {
             console.log('Windows capture started with loopback audio');
 
             setupWindowsLoopbackProcessing();
-
-            if (shouldCaptureMic) {
-                try {
-                    micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
-                    console.log('Windows microphone capture started');
-                    setupMicProcessing(micCaptureStream);
-                } catch (micError) {
-                    console.warn('Failed to get microphone access on Windows:', micError);
-                }
-            }
         }
 
+        // 视频轨有没有、有没有音频轨（扬声器回环靠它）在这一行当场可辨：只有视频轨 = 只拿到了屏幕、没拿到
+        // 系统声音，正是 getDisplayMedia 少给 'loopback' 时的样子。
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        const audioTrack = mediaStream.getAudioTracks()[0];
         console.log('MediaStream obtained:', {
-            hasVideo: mediaStream.getVideoTracks().length > 0,
-            hasAudio: mediaStream.getAudioTracks().length > 0,
-            videoTrack: mediaStream.getVideoTracks()[0]?.getSettings(),
+            videoTracks: mediaStream.getVideoTracks().length,
+            audioTracks: mediaStream.getAudioTracks().length,
+            videoLabel: videoTrack ? videoTrack.label : null,
+            videoSettings: videoTrack ? videoTrack.getSettings() : null,
+            audioSettings: audioTrack ? audioTrack.getSettings() : null,
         });
 
         console.log('Manual mode enabled - screenshots will be captured on demand only');
     } catch (err) {
-        console.error('Error starting capture:', err);
+        // 错误名（NotAllowedError/NotFoundError/NotReadableError/AbortError）就是处置方式的分水岭，单独拎出来。
+        console.error(`Error starting screen capture [${err && err.name}]:`, err);
         offerHunter.setStatus('error');
+    }
+}
+
+// 麦克风独立于屏幕之外：屏幕取不到（缺屏幕录制权限、没有屏幕源）不该顺带把候选人的声音也一起关掉。
+async function startMicCapture(micDeviceId) {
+    try {
+        micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
+        console.log('Microphone capture started, label:', micCaptureStream.getAudioTracks()[0]?.label);
+        setupMicProcessing(micCaptureStream);
+    } catch (micError) {
+        console.error(`Error starting microphone capture [${micError && micError.name}]:`, micError);
     }
 }
 
@@ -337,10 +408,18 @@ function startAudioPump(stream, channel) {
     const source = context.createMediaStreamSource(stream);
     const processor = context.createScriptProcessor(BUFFER_SIZE, 1, 1);
 
+    // 泵起来了不等于有声音。记一次「第一帧」：某一侧永远停在「pump started」而没有第一帧，就是那一路采到的是静音。
+    console.log(`[Audio] ${channel} pump started, context=${context.state}`);
+    let sawFirstFrame = false;
+
     let audioBuffer = [];
     const samplesPerChunk = SAMPLE_RATE * AUDIO_CHUNK_DURATION;
 
     processor.onaudioprocess = async e => {
+        if (!sawFirstFrame) {
+            sawFirstFrame = true;
+            console.log(`[Audio] ${channel} first frame`);
+        }
         audioBuffer.push(...e.inputBuffer.getChannelData(0));
 
         while (audioBuffer.length >= samplesPerChunk) {

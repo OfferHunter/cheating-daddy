@@ -29,7 +29,13 @@ function getScreenSource() {
     if (!screenSourcePending) {
         screenSourcePending = desktopCapturer
             .getSources({ types: ['screen'] })
-            .then(sources => (cachedScreenSource = sources[0]))
+            .then(sources => {
+                // macOS 上没给「屏幕录制」权限时，getSources 会返回空数组——这正是截图和扬声器一起失效的根因候选。
+                // 把「枚举到了几块屏」写进日志，好和「枚举抛错」这个分支区分开。
+                console.log(`[DisplayMedia] desktopCapturer returned ${sources.length} source(s)`);
+                cachedScreenSource = sources[0];
+                return cachedScreenSource;
+            })
             .finally(() => (screenSourcePending = null));
     }
     return screenSourcePending;
@@ -67,12 +73,24 @@ function createWindow(sendToRenderer) {
 
     session.defaultSession.setDisplayMediaRequestHandler(
         (request, callback) => {
+            // 这行日志没出现，就说明处理器根本没被调用——macOS 15+ 且开了系统选择器时正是如此（见下面 opts）。
+            // 「截图/扬声器全废」最常见的两种根因在这里当场分开：没打印=走了系统选择器，打印了但 source 为 null=没枚举到屏。
+            console.log('[DisplayMedia] request', {
+                video: request.videoRequested,
+                audio: request.audioRequested,
+                userGesture: request.userGesture,
+                frameUrl: request.frame && request.frame.url,
+            });
+
             // 每次请求都必须回一次 callback：拿到源就授予，枚举失败或没拿到屏就回空对象把请求拒掉。
             // 少了这条错误分支，getSources 一旦 reject，渲染端的 getDisplayMedia 会永远挂着。
             getScreenSource()
-                .then(source => callback(source ? { video: source, audio: 'loopback' } : {}))
+                .then(source => {
+                    console.log('[DisplayMedia] grant', source ? `${source.id} (${source.name})` : 'no source -> reject');
+                    callback(source ? { video: source, audio: 'loopback' } : {});
+                })
                 .catch(error => {
-                    console.error('Failed to resolve screen source for display media:', error);
+                    console.error('[DisplayMedia] failed to resolve screen source:', error);
                     callback({});
                 });
         },

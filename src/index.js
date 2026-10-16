@@ -5,9 +5,14 @@ if (require('electron-squirrel-startup')) {
 // First, before anything can log: a GBK console renders our UTF-8 Chinese as mojibake.
 require('./utils/consoleEncoding').enableUtf8Console();
 
+// 紧接着接管 console：打包后没有终端，不落盘的话出错机器上什么都留不下。必须早于任何会打日志的 require。
+const logger = require('./utils/logger');
+logger.install();
+
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, systemPreferences } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
 const { setupIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/session');
 const teleprompter = require('./utils/teleprompter');
@@ -52,14 +57,37 @@ function createMainWindow() {
     return mainWindow;
 }
 
+// 支持工单里最关键的三行：什么版本、什么系统、系统有没有把麦克风/摄像头/屏幕录制的许可给到这个进程。
+// 麦克风和摄像头在 Win/macOS 上都能问；'screen' 只有 macOS 认。任何一项读不出来都不该挡住启动。
+function logEnvironment() {
+    console.log(
+        `[App] ${app.getName()} v${app.getVersion()} | electron ${process.versions.electron} | ` +
+            `${process.platform} ${os.release()} (${process.arch}) | packaged=${app.isPackaged}`
+    );
+    console.log(`[App] log file: ${logger.getLogFilePath()}`);
+
+    for (const mediaType of ['microphone', 'camera', 'screen']) {
+        try {
+            console.log(`[Perm] ${mediaType}: ${systemPreferences.getMediaAccessStatus(mediaType)}`);
+        } catch (error) {
+            console.log(`[Perm] ${mediaType}: unavailable (${error.message})`);
+        }
+    }
+}
+
 app.whenReady().then(async () => {
+    logEnvironment();
+
     // Initialize storage (checks version, resets if needed)
     storage.initializeStorage();
 
     // Trigger screen recording permission prompt on macOS if not already granted
     if (process.platform === 'darwin') {
         const { desktopCapturer } = require('electron');
-        desktopCapturer.getSources({ types: ['screen'] }).catch(() => {});
+        desktopCapturer
+            .getSources({ types: ['screen'] })
+            .then(sources => console.log(`[Perm] getSources(screen) returned ${sources.length} source(s)`))
+            .catch(error => console.error('[Perm] getSources(screen) failed:', error));
     }
 
     createMainWindow();
@@ -492,9 +520,9 @@ function setupGeneralIpcHandlers() {
         }
     });
 
-    // Debug logging from renderer
+    // 渲染端的日志转发口。加了 [Renderer] 前缀，同一份文件里才分得清是谁在说话。
     ipcMain.on('log-message', (event, msg) => {
-        console.log(msg);
+        console.log('[Renderer]', msg);
     });
 }
 

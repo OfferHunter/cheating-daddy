@@ -57,12 +57,22 @@ function initializeNewSession(customPrompt = null) {
     });
 }
 
+// 日志里只留形状不留内容：转录原文和 AI 回答都要跟着 app.log 被发去排障，所以字符串字段一律换成字符数。
+// 各字段长度非零就说明这一路的数据确实落到磁盘了，诊断够用。
+function describeTurn(turn) {
+    const shape = {};
+    for (const [key, value] of Object.entries(turn)) {
+        shape[key] = typeof value === 'string' ? `${value.length} chars` : value;
+    }
+    return shape;
+}
+
 // 三个 save 只有字段名和 IPC 频道不同：按 order 插进自己的列表，然后把**整份**列表交给渲染端落盘。
 // 传整份而不是这一条，是为了让任意顺序到达的多次写入得到同一个文件。payload 结构不能改，渲染端按
 // 频道名分发。
 function appendHistory(list, turn, channel, label) {
     const next = [...list, turn].sort((a, b) => a.order - b.order);
-    console.log(`Saved ${label}:`, turn);
+    console.log(`Saved ${label}:`, describeTurn(turn));
     sendToRenderer(channel, { sessionId: currentSessionId, turn, fullHistory: next });
     return next;
 }
@@ -183,8 +193,16 @@ async function startMacOSAudioCapture() {
     const CHUNK_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS * CHUNK_DURATION;
 
     let audioBuffer = Buffer.alloc(0);
+    // 只记第一次。区分「进程起来了但一声不出」（多半是没拿到屏幕录制权限）和「压根没起来」——两者的
+    // 日志长得很像，这一行把扬声器失效的两条岔路分开。
+    let sawFirstChunk = false;
 
     systemAudioProc.stdout.on('data', data => {
+        if (!sawFirstChunk) {
+            sawFirstChunk = true;
+            console.log('[SystemAudioDump] first audio data received:', data.length, 'bytes');
+        }
+
         audioBuffer = Buffer.concat([audioBuffer, data]);
 
         while (audioBuffer.length >= CHUNK_SIZE) {

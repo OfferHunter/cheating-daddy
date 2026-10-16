@@ -253,16 +253,34 @@ function updateValidityHint() {
 }
 
 async function copyText(text, btn) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
-    else {
-      const ta = document.createElement('textarea');
-      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
-    }
+  let ok = false;
+
+  // 1) 现代剪贴板 API：需安全上下文；本地文件 / WebView / 权限策略都可能直接拒绝
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); ok = true; } catch { /* 落到下面的兜底 */ }
+  }
+
+  // 2) 兜底：execCommand('copy')，失败时返回 false 而非抛异常，必须看返回值
+  if (!ok) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0';
+    ta.style.width = '1px'; ta.style.height = '1px'; ta.style.padding = '0';
+    ta.style.border = '0'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); // iOS 需显式设选区
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+  }
+
+  if (ok) {
     const old = btn.textContent; btn.textContent = '已复制 ✓';
     setTimeout(() => { btn.textContent = old; }, 1400);
-  } catch { $('genHint').className = 'hint bad'; $('genHint').textContent = '复制失败，请长按选中手动复制。'; }
+  } else {
+    $('genHint').className = 'hint bad';
+    $('genHint').textContent = '复制失败，请长按上方激活码手动复制。';
+  }
 }
 
 // ---------- 事件绑定 ----------
