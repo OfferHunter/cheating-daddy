@@ -255,6 +255,7 @@ description: 主要项目、职责和技术成果
 | 显示或隐藏窗口         | `Ctrl + \`               | `Cmd + \`               |
 | 切换鼠标穿透           | `Ctrl + M`               | `Cmd + M`               |
 | 截图并分析             | `Ctrl + Enter`           | `Cmd + Enter`           |
+| 截图进入缓存           | `Ctrl + Shift + Enter`   | `Cmd + Shift + Enter`   |
 | 向上或向下滚动回答     | `Ctrl + Shift + ↑/↓`     | `Cmd + Shift + ↑/↓`     |
 | 上一条或下一条详细回答 | `Ctrl + Shift + [` / `]` | `Cmd + Shift + [` / `]` |
 | 切换明暗主题           | `Ctrl + Shift + L`       | `Cmd + Shift + L`       |

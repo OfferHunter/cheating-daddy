@@ -280,6 +280,18 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
+    if (keybinds.screenShotToCache) {
+        try {
+            globalShortcut.register(keybinds.screenShotToCache, () => {
+                console.log('Screenshot-to-cache shortcut triggered');
+                sendToRenderer('cache-screenshot');
+            });
+            console.log(`Registered screenShotToCache: ${keybinds.screenShotToCache}`);
+        } catch (error) {
+            console.error(`Failed to register screenShotToCache (${keybinds.screenShotToCache}):`, error);
+        }
+    }
+
     if (keybinds.scrollUp) {
         try {
             globalShortcut.register(keybinds.scrollUp, () => {

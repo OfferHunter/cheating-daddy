@@ -197,6 +197,22 @@ app.whenReady().then(async () => {
         await wait(150);
         check('cache button shows the cached count', (await exec(`window.__q('.cache-btn').textContent`)).includes('(2)'));
 
+        // 两个按钮必须同款:字号、字体、高度一致,缓存按钮也有图标,文字才不会一左一右错位。
+        const buttonMetrics = await exec(`(() => {
+            const send = getComputedStyle(window.__q('.analyze-btn'));
+            const cache = getComputedStyle(window.__q('.cache-btn'));
+            return {
+                sameFont: send.fontFamily === cache.fontFamily && send.fontSize === cache.fontSize,
+                sameHeight: send.height === cache.height,
+                samePadding: send.padding === cache.padding,
+                cacheHasIcon: !!window.__q('.cache-btn svg'),
+            };
+        })()`);
+        check('cache button matches the send button font', buttonMetrics.sameFont);
+        check('cache button matches the send button height', buttonMetrics.sameHeight);
+        check('cache button matches the send button padding', buttonMetrics.samePadding);
+        check('cache button has the send button icon', buttonMetrics.cacheHasIcon);
+
         // 回归:面试模式仍渲染转录区、输入栏(含改名后的按钮),且有回答时出现分栏抓手和右侧面板。
         await exec(`(() => {
             const el = window.__el();

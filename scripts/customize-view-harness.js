@@ -41,7 +41,7 @@ const PAGE = `<!doctype html>
         backgroundTransparency: 0.48, textTransparency: 0.83,
         maxSentenceSilenceMs: 1500, micMaxSentenceSilenceMs: 2000, micGateDb: -45, micGateDwellMs: 300,
         chatContextTurns: 15, chatMaxTokens: 128000, detailPaneWidth: 0.38, theme: 'gruvbox', nonFocusableSession: true,
-        writtenAutoScreenshot: true, writtenScreenshotIntervalSec: 3,
+        writtenAutoScreenshot: false, writtenScreenshotIntervalSec: 5,
     };
     window.__storedPrefs = {};
     window.require = function (name) {
@@ -58,10 +58,15 @@ const PAGE = `<!doctype html>
         throw new Error('unexpected require in harness: ' + name);
     };
     window.offerHunter = {
-        getDefaultKeybinds: () => ({ moveUp: 'Ctrl+Up', moveDown: 'Ctrl+Down' }),
+        getDefaultKeybinds: () => ({
+            moveUp: 'Ctrl+Up', moveDown: 'Ctrl+Down',
+            screenShot: 'Ctrl+Enter', screenShotToCache: 'Ctrl+Shift+Enter',
+        }),
         getKeybindActions: () => [
             { key: 'moveUp', name: 'Move Window Up' },
             { key: 'moveDown', name: 'Move Window Down' },
+            { key: 'screenShot', name: 'Take ScreenShot' },
+            { key: 'screenShotToCache', name: 'Screenshot to cache' },
         ],
         storage: {
             getPreferences: async () => window.__storedPrefs,
@@ -161,12 +166,15 @@ app.whenReady().then(async () => {
             `window.__written = () => [...window.__root().querySelectorAll('.surface')].find(s => s.querySelector('.surface-title')?.textContent.trim() === '笔试'); void 0`
         );
         check('written test section rendered', await exec(`!!window.__written()`));
-        check('written toggle reads 笔试自动截图', (await exec(`window.__written().querySelector('.toggle-label').textContent`)).trim() === '笔试自动截图');
+        check(
+            'written toggle reads 进入笔试后开启自动截图',
+            (await exec(`window.__written().querySelector('.toggle-label').textContent`)).trim() === '进入笔试后开启自动截图'
+        );
         check(
             'written interval description is the agreed sentence',
-            (await exec(`[...window.__written().querySelectorAll('.form-help')].map(el => el.textContent.replace(/\\s+/g, ' ').trim()).includes('隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 3 秒。')`))
+            (await exec(`[...window.__written().querySelectorAll('.form-help')].map(el => el.textContent.replace(/\\s+/g, ' ').trim()).includes('隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 5 秒。')`))
         );
-        check('written interval defaults to 3 seconds', (await exec(`window.__written().querySelector('input[type=number]').value`)) === '3');
+        check('written interval defaults to 5 seconds', (await exec(`window.__written().querySelector('input[type=number]').value`)) === '5');
 
         // 间隔写入时夹到 0.5–60:手改配置也不能把定时器变成连发。
         await exec(`(() => {
@@ -185,6 +193,20 @@ app.whenReady().then(async () => {
         })()`);
         await wait(150);
         check('written auto-screenshot toggle persisted', (await exec(`window.__storedPrefs.writtenAutoScreenshot`)) === false);
+
+        // 快捷键表:截图动作改成了合并名,缓存动作有了自己的默认键。
+        const keybindRows = await exec(`[...window.__root().querySelectorAll('.keybind-row')].map(row => [
+            row.querySelector('.keybind-name').textContent.trim(),
+            row.querySelector('.keybind-input').value,
+        ])`);
+        check(
+            'screenshot shortcut row reads the combined label',
+            keybindRows.some(([name, value]) => name === '分析屏幕(截图)/截图并发送' && value === 'Ctrl+Enter')
+        );
+        check(
+            'cache shortcut row reads 截图进入缓存 with its default key',
+            keybindRows.some(([name, value]) => name === '截图进入缓存' && value === 'Ctrl+Shift+Enter')
+        );
 
         win.destroy();
     } catch (error) {

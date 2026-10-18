@@ -917,10 +917,11 @@ export class CustomizeView extends LocalizedLitElement {
                             .checked=${this.writtenAutoScreenshot}
                             @change=${e => this.handleWrittenAutoScreenshotChange(e.target.checked)}
                         />
-                        <span class="toggle-label">Auto screenshot in written tests</span>
+                        <span class="toggle-label">Enable auto screenshot after starting a written test</span>
                     </label>
                     <div class="form-help">
                         Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time.
+                        Note: each screenshot consumes a small amount of tokens, so enable it with care.
                     </div>
                     <div class="form-group vertical">
                         <label class="form-label">Screenshot Interval (s)</label>
@@ -934,7 +935,7 @@ export class CustomizeView extends LocalizedLitElement {
                             @change=${e => this.handleWrittenScreenshotIntervalChange(e.target.value)}
                         />
                         <div class="form-help">
-                            Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 3
+                            Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 5
                             seconds.
                         </div>
                     </div>

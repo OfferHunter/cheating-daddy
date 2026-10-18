@@ -60,8 +60,8 @@ const DEFAULT_PREFERENCES = Object.freeze({
     screenshotSummary: true,
     // 笔试模式的自动截图：决定开始笔试时是否自动开始，以及多久截一帧。间隔存秒，设置页直接按秒展示；
     // 每一帧都会和上一次已作答的那一帧一起交给模型判断题目是否变了，变了才重新作答。
-    writtenAutoScreenshot: true,
-    writtenScreenshotIntervalSec: 3,
+    writtenAutoScreenshot: false,
+    writtenScreenshotIntervalSec: 5,
     selectedImageQuality: 'medium',
     // 'none' captures no microphone at all; any other value is a deviceId from enumerateDevices()
     // ('default' and 'communications' are Chromium's own pseudo-devices for the system defaults).

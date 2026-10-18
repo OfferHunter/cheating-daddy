@@ -121,12 +121,12 @@ const zh = {
     'Thinking in the screenshot reply': '截图回答启用思考',
     'Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come back empty. Takes effect on the next session.':
         '回答前思考会增加少量等待，但通常能提高质量。建议简短回答关闭、详细回答开启。截图回答单独控制，因为图片请求的思考也占用超时时间；复杂截图可能在输出正文前就耗尽时间。下次会话生效。',
-    'Auto screenshot in written tests': '笔试自动截图',
-    'Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time.':
-        '开始笔试时是否自动截图；左上角的暂停按钮可随时停止或继续。',
+    'Enable auto screenshot after starting a written test': '进入笔试后开启自动截图',
+    'Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time. Note: each screenshot consumes a small amount of tokens, so enable it with care.':
+        '开始笔试时是否自动截图；左上角的暂停按钮可随时停止或继续。注意，每次截图都将耗费一点 Token，请谨慎开启。',
     'Screenshot Interval (s)': '截图间隔（秒）',
-    'Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 3 seconds.':
-        '隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 3 秒。',
+    'Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 5 seconds.':
+        '隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 5 秒。',
     'Summarize the screenshot into the conversation': '把截图概括写入对话',
     'Before the answer, a small extra request turns the screenshot into a text line — that line is what the transcript shows, and the only trace of the turn in the model\'s context later. Turn it off to skip that request and show just “[屏幕截图]”; the screenshot is still answered in the detail pane, and the turn is left out of the replayed context. Takes effect on the next session.':
         '作答之前会额外发一个小请求，把截图概括成一行文字：这行就是对话记录里显示的内容，也是这一轮之后在模型上下文里唯一的痕迹。关闭后不再发这个请求，对话记录只显示「[屏幕截图]」；截图本身仍会在详细面板里作答，这一轮也不再回放给模型。下次会话生效。',
@@ -260,7 +260,7 @@ const zh = {
     'Move Window Right': '窗口右移',
     'Toggle Visibility': '显示或隐藏窗口',
     'Toggle Click-through': '切换鼠标穿透',
-    'Take ScreenShot': '截图',
+    'Take ScreenShot': '分析屏幕(截图)/截图并发送',
     'Scroll Response Up': '向上滚动回答',
     'Scroll Response Down': '向下滚动回答',
     'Previous Detailed Answer': '上一条详细回答',

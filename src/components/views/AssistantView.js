@@ -477,23 +477,31 @@ export class AssistantView extends LocalizedLitElement {
                 padding: var(--space-md) var(--chat-gutter);
             }
 
-            /* 小一号的次按钮:把当前屏收进缓存,不发送。 */
+            /* 与「截图并发送」同款外观,只是不发送、也没有点击后的波浪动画。 */
             .cache-btn {
+                position: relative;
                 background: var(--bg-elevated);
                 border: 1px solid var(--border);
-                color: var(--text-secondary);
+                color: var(--text-primary);
                 cursor: pointer;
                 font-size: var(--font-size-xs);
-                font-family: var(--font);
+                font-family: var(--font-mono);
                 white-space: nowrap;
-                padding: var(--space-xs) var(--space-sm);
+                padding: var(--space-xs) var(--space-md);
                 border-radius: 100px;
-                height: 28px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition:
+                    border-color 0.4s ease,
+                    background var(--transition);
+                flex-shrink: 0;
             }
 
             .cache-btn:hover:not(:disabled) {
                 border-color: var(--accent);
-                color: var(--text-primary);
+                background: var(--bg-surface);
             }
 
             .cache-btn:disabled {
@@ -697,9 +705,11 @@ export class AssistantView extends LocalizedLitElement {
 
         this.handleScrollUp = () => this.scrollResponseUp();
         this.handleScrollDown = () => this.scrollResponseDown();
+        this.handleCacheShortcut = () => this.handleScreenshotToCache();
 
         ipcRenderer.on('scroll-response-up', this.handleScrollUp);
         ipcRenderer.on('scroll-response-down', this.handleScrollDown);
+        ipcRenderer.on('cache-screenshot', this.handleCacheShortcut);
         // 视图会被导航重建,缓存活在渲染端模块里,重建时把已有张数读回来。
         this.screenshotCacheCount = window.getScreenshotCacheCount?.() ?? 0;
     }
@@ -710,6 +720,7 @@ export class AssistantView extends LocalizedLitElement {
 
         if (this.handleScrollUp) ipcRenderer.removeListener('scroll-response-up', this.handleScrollUp);
         if (this.handleScrollDown) ipcRenderer.removeListener('scroll-response-down', this.handleScrollDown);
+        if (this.handleCacheShortcut) ipcRenderer.removeListener('cache-screenshot', this.handleCacheShortcut);
     }
 
     // 无条件读，不判断面板是否可见：让面板出现的是本场第一条回答，那时存的宽度必须已经在内存里，否则面板会以默认
@@ -1129,7 +1140,9 @@ export class AssistantView extends LocalizedLitElement {
     renderCacheButton() {
         return html`
             <button class="cache-btn" ?disabled=${this.isAnalyzing} @click=${this.handleScreenshotToCache}>
-                ${t('Screenshot to cache', '截图进入缓存')}${this.screenshotCacheCount ? ` (${this.screenshotCacheCount})` : ''}
+                <span class="analyze-btn-content">
+                    ${t('Screenshot to cache', '截图进入缓存')}${this.screenshotCacheCount ? ` (${this.screenshotCacheCount})` : ''}
+                </span>
             </button>
         `;
     }
