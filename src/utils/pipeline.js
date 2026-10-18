@@ -941,6 +941,11 @@ function initializeChatSession(customPrompt, mode = 'interview') {
     // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
     // 的执行器会按调用时刻的目录校验。
     const prefs = getPreferences();
+    // 设置里关了自动截图时,桌面开局就处于暂停态(渲染端 _paused 与定时器同一事实)。主进程的 paused
+    // 也从这里出发,开局的 update-status 才不会再把它覆盖成「未暂停」——手机上的暂停键跟着它走。
+    paused = sessionMode === 'written' && prefs.writtenAutoScreenshot === false;
+    // 手机提词页据此切到笔试页:没有精要/详细三档、暂停键管自动截图。
+    sendToRenderer('session-mode', { mode: sessionMode, paused });
     // 用户在编辑面板里改过的系统提示词分段；空对象即全用内置默认。
     const promptOverrides = prefs.promptOverrides || {};
     currentSystemPrompt = getSystemPrompt(customPrompt, promptOverrides);
@@ -979,7 +984,8 @@ function initializeChatSession(customPrompt, mode = 'interview') {
 
     if (sessionMode === 'written') {
         // 笔试不开语音识别：没有 socket、没有音频门槛，所有内容都来自截图。
-        sendToRenderer('update-status', 'Waiting for the question...');
+        // 走统一的刷新入口：开局暂停(关闭了自动截图)时它会发 Paused，而不是把状态盖回等待题目。
+        updateStreamingStatus();
     } else {
         // 从这里起状态栏归 ASR 客户端自己的状态管：先是 Connecting... 然后 Listening...。
         startAsrClients();
@@ -1029,6 +1035,7 @@ function processLocalAudio(monoChunk24k, source = 'system') {
 }
 
 function closeLocalSession() {
+    const wasActive = isLocalActive;
     if (isLocalActive) {
         flushTurn(CANDIDATE);
         commitCandidateSpeech();
@@ -1046,6 +1053,8 @@ function closeLocalSession() {
     currentDetailFollowUpSystemPrompt = null;
     detailModeEnabled = false;
     detailKnowledgeEntries = [];
+    // 会话结束后让手机退回默认的面试等待页;下一场开局会再发真实的模式。
+    if (wasActive) sendToRenderer('session-mode', { mode: '', paused: false });
 }
 
 function isLocalSessionActive() {

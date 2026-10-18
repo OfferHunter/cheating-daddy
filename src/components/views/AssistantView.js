@@ -472,9 +472,44 @@ export class AssistantView extends LocalizedLitElement {
                 flex: none;
                 display: flex;
                 align-items: center;
-                justify-content: flex-end;
+                justify-content: space-between;
                 gap: var(--space-sm);
                 padding: var(--space-md) var(--chat-gutter);
+            }
+
+            .written-actions-right {
+                display: flex;
+                align-items: center;
+                gap: var(--space-sm);
+            }
+
+            /* 和手机提词页那颗向下箭头同形:贴底时淡下去当提示,不在底端时点击回到底端并恢复跟随。 */
+            .written-jump {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                color: var(--text-primary);
+                background: var(--bg-elevated);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                cursor: pointer;
+                transition: opacity 0.15s;
+            }
+
+            .written-jump:hover {
+                border-color: var(--accent);
+            }
+
+            .written-jump.at-bottom {
+                opacity: 0.35;
+            }
+
+            .written-jump svg {
+                width: 16px;
+                height: 16px;
             }
 
             /* 与「截图并发送」同款外观,只是不发送、也没有点击后的波浪动画。 */
@@ -595,7 +630,10 @@ export class AssistantView extends LocalizedLitElement {
         const container = this.shadowRoot.querySelector('.written-scroll');
         if (!container) return;
 
-        this._writtenPinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        const pinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        // 贴底状态同时决定向下箭头的浓淡,所以它的变化也要触发重渲;只在导航高亮变了才渲会让箭头停在旧样子。
+        const pinnedChanged = pinned !== this._writtenPinned;
+        this._writtenPinned = pinned;
 
         const top = container.scrollTop;
         const maxTop = container.scrollHeight - container.clientHeight;
@@ -608,7 +646,7 @@ export class AssistantView extends LocalizedLitElement {
             });
         }
 
-        if (active !== this._writtenActive) {
+        if (active !== this._writtenActive || pinnedChanged) {
             this._writtenActive = active;
             this.requestUpdate();
         }
@@ -619,14 +657,23 @@ export class AssistantView extends LocalizedLitElement {
         if (container) container.scrollTop = container.scrollHeight;
     }
 
+    // 向下箭头:回到底端并恢复跟随,之后的流式 token 会继续把视图带走。
+    _jumpWrittenToBottom() {
+        this._writtenPinned = true;
+        this._writtenActive = Math.max(0, this.detailMessages.length - 1);
+        this._scrollWrittenToBottom();
+        this.requestUpdate();
+    }
+
     _jumpToWritten(index) {
         const container = this.shadowRoot.querySelector('.written-scroll');
         const node = container?.querySelectorAll('.written-answer')[index];
         if (!container || !node) return;
         // 跳转即停止跟随,否则下一批 token 又把人拽回末尾。
-        this._writtenPinned = false;
         this._writtenActive = index;
         container.scrollTop = node.offsetTop;
+        // 内容不足一屏时 scrollTop 会被夹到 0,此刻其实就贴底;按真实位置算,箭头才不会停成「可下拉」的样子。
+        this._writtenPinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
         this.requestUpdate();
     }
 
@@ -1130,8 +1177,29 @@ export class AssistantView extends LocalizedLitElement {
                 }
 
                 <div class="written-actions">
-                    ${this.renderCacheButton()}
-                    ${this.renderScreenshotSendButton()}
+                    <button
+                        type="button"
+                        class="written-jump ${this._writtenPinned ? 'at-bottom' : ''}"
+                        title=${t('Jump to latest', '跳到最新')}
+                        aria-label=${t('Jump to latest', '跳到最新')}
+                        @click=${() => this._jumpWrittenToBottom()}
+                    >
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M6 9l6 6 6-6" />
+                        </svg>
+                    </button>
+                    <div class="written-actions-right">
+                        ${this.renderCacheButton()}
+                        ${this.renderScreenshotSendButton()}
+                    </div>
                 </div>
             </div>
         `;

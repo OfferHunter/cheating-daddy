@@ -27,7 +27,7 @@ const REPLAY_LIMIT = 80;
 
 // 手机能下达的指令白名单。手机是显示器,这几条是它唯一被允许反过来驱动桌面的动作,所以只认精确字符串,
 // 且必须来自已鉴权的连接。
-const COMMANDS = new Set(['screenshot', 'clear-context', 'toggle-pause', 'end-session']);
+const COMMANDS = new Set(['screenshot', 'screenshot-to-cache', 'clear-context', 'toggle-pause', 'end-session']);
 
 // 只有这些频道会外发。这是安全边界而不是过滤优化:`save-session-context` 带 customPrompt、任何凭证都
 // 不在此列,一律不出主进程。
@@ -42,6 +42,7 @@ const FORWARDED_CHANNELS = new Set([
     'transcription-final',
     'update-status',
     'session-initializing',
+    'session-mode',
 ]);
 
 // 精确白名单,不接受拼接——路径穿越在第一步就被挡掉。marked 复用渲染端那份,手机页因此不必自带解析器。
@@ -61,6 +62,12 @@ let pairingCode = null;
 // 在门外;按 IP 分开后,攻击者只锁得住自己。
 const pairState = new Map(); // ip -> { attempts, lockedUntil }
 let replay = [];
+// 最近一次会话模式。模式事件只在开局/结束时发一次,重连时它通常早就被 80 条回放窗口挤掉了,
+// 但手机必须一上来就知道该铺面试页还是笔试页,所以单独留一份当前值在鉴权后先补发。
+let sessionModeEvent = null;
+// 最近一条状态。暂停/恢复只靠 update-status 播报;手机重连时若它已滚出回放窗口,暂停键就会显示错,
+// 所以同样留一份当前值在鉴权后先去重放之前补发。
+let lastStatus = null;
 const clients = new Set();
 
 // 桌面当前主题的解析令牌,渲染端在每次换主题时推来。手机页拿不到桌面的 :root,只能靠这里把它渲染成
@@ -257,6 +264,10 @@ function handleSocket(ws, req) {
             clearTimeout(authTimer);
             // 回放最近事件:手机锁屏或切后台后重连,画面直接补齐到当前状态,而不是等下一个问题才有内容。
             ws.send(JSON.stringify({ type: 'auth-ok' }));
+            // 先把当前会话模式补上(它可能已滚出回放窗口),再补事件:手机一睁眼就该是正确的那一页。
+            // 本进程还没开过会话(可能刚重启)就明确发一次面试态,免得页面停在上一轮的笔试布局里。
+            ws.send(JSON.stringify(sessionModeEvent || { channel: 'session-mode', data: { mode: '', paused: false } }));
+            if (lastStatus) ws.send(JSON.stringify({ channel: 'update-status', data: lastStatus }));
             // 回放区间用标记包起来:手机端据此知道这一段是补历史,不据此重建问题占位块——块早就存在,
             // 重建会让同一个轮次出现两份、导航条数也对不上。
             if (replay.length) {
@@ -323,6 +334,8 @@ async function startTeleprompter() {
     ensureToken();
     rotateCode();
     replay = [];
+    sessionModeEvent = null;
+    lastStatus = null;
 
     const preferred = Number(storage.getConfig().teleprompterPort) || DEFAULT_PORT;
     const instance = http.createServer(handleRequest);
@@ -355,6 +368,8 @@ function stopTeleprompter() {
     }
     clients.clear();
     replay = [];
+    sessionModeEvent = null;
+    lastStatus = null;
     if (wss) wss.close();
     if (server) server.close();
     wss = null;
@@ -369,6 +384,8 @@ function broadcast(channel, data) {
     if (!FORWARDED_CHANNELS.has(channel)) return;
 
     const event = { channel, data };
+    if (channel === 'session-mode') sessionModeEvent = event;
+    if (channel === 'update-status') lastStatus = data;
     replay.push(event);
     if (replay.length > REPLAY_LIMIT) replay.shift();
 

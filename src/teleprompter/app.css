@@ -204,6 +204,13 @@ body {
     gap: 6px;
 }
 
+/* 笔试页没有精要和详细两档可分,三档滑块整组收起;清空上下文在笔试里是无效动作(桌面端也不显示它),
+   一并收起来,免得手机上点了只清掉本地而桌面还留着回答。 */
+.stage.written-mode .modes,
+.stage.written-mode #refreshBtn {
+    display: none;
+}
+
 .conn {
     display: inline-flex;
     align-items: center;
@@ -437,6 +444,15 @@ body {
     border-bottom: none;
 }
 
+/* 笔试只显示回答:问题行整行不出现,回答之间的分隔线用更醒目的 --border-strong,和桌面笔试一致。 */
+.stage.written-mode .question {
+    display: none;
+}
+
+.stage.written-mode .turn {
+    border-bottom-color: var(--border-strong);
+}
+
 .question {
     margin: 0 0 10px;
     font-size: var(--q-font-size);
@@ -546,6 +562,25 @@ body {
     align-items: flex-end;
     gap: 8px;
     padding: 6px 16px calc(env(safe-area-inset-bottom) + 16px);
+}
+
+/* 笔试时右侧是两颗按钮(进缓存、并发送),并排放在原来截图键的位置。 */
+.control-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+/* 手机上两颗带字按钮要挤进一行:收一点内边距和字号,窄屏也不至于把左边箭头挤出去。 */
+.stage.written-mode .control-btn {
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+.stage.written-mode .control-btn svg {
+    width: 14px;
+    height: 14px;
 }
 
 /* 底栏透明后,按钮若还用 --bg-app 就和页面底色糊在一起,改用 --bg-elevated 让它留出可见的浅色块。 */

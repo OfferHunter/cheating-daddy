@@ -29,6 +29,7 @@ const STRINGS = {
         online: '已连接',
         offline: '重连中',
         waiting: '等待面试开始…',
+        waitingWritten: '等待笔试题目…',
         detailError: '（详细回答生成失败）',
         qLabel: '问',
         settingsTitle: '设置',
@@ -37,6 +38,8 @@ const STRINGS = {
         fontSampleQuestion: '这是问题示例',
         fontSampleAnswer: '这是回答示例',
         shotBtn: '截图',
+        shotSendBtn: '截图并发送',
+        cacheBtn: '截图进入缓存',
         shotQuestion: '截图',
     },
     en: {
@@ -52,6 +55,7 @@ const STRINGS = {
         online: 'Connected',
         offline: 'Disconnected, reconnecting…',
         waiting: 'Waiting for the session to start…',
+        waitingWritten: 'Waiting for the written question…',
         detailError: '(detailed answer failed)',
         qLabel: 'Q',
         settingsTitle: 'Settings',
@@ -60,6 +64,8 @@ const STRINGS = {
         fontSampleQuestion: 'This is a question',
         fontSampleAnswer: 'This is an answer',
         shotBtn: 'Screenshot',
+        shotSendBtn: 'Screenshot & send',
+        cacheBtn: 'Screenshot to cache',
         shotQuestion: 'Screenshot',
     },
 };
@@ -70,6 +76,8 @@ let S = STRINGS[lang];
 
 const state = {
     screen: 'pair',
+    // 桌面端当前会话的类型。笔试页没有精要/详细之分:一列回答、不显示问题、暂停键管的是自动截图。
+    sessionMode: 'interview',
     answerMode: 'brief',
     // 是否贴在最新底端。用户滚上去就翻成 false,新内容便不再把他拽回去;滚回/点箭头到底端又翻回 true。
     following: true,
@@ -115,8 +123,13 @@ const dom = {
     answerRange: document.getElementById('answerRange'),
     answerValue: document.getElementById('answerValue'),
     shotBtn: document.getElementById('shotBtn'),
+    shotLabel: document.getElementById('shotLabel'),
+    shotSendLabel: document.getElementById('shotSendLabel'),
+    cacheBtn: document.getElementById('cacheBtn'),
     scrollBtn: document.getElementById('scrollBtn'),
 };
+
+const isWritten = () => state.sessionMode === 'written';
 
 const esc = value =>
     String(value ?? '').replace(
@@ -319,7 +332,8 @@ function findEntry(mode, id) {
 // 截图那一轮在手机的精要里单开一块:按轮次 id(turnSeq)寻址,和普通轮次同一套 id 空间。问题行用固定标签
 // (图里问的是什么由摘要负责,那块不进这里);直接建立而不是走 claimEntry 收养,免得顶替掉旁边还开着的提问占位块。
 function upsertScreenshotBrief(turnSeq, text, final, error) {
-    if (turnSeq == null) return;
+    // 笔试页直接把详细列表当正文显示,截图回答跟普通回答一样落在那里;再并进精要就会重复一份。
+    if (isWritten() || turnSeq == null) return;
     const id = String(turnSeq);
     let entry = findEntry('brief', id);
     if (!entry) {
@@ -379,6 +393,7 @@ function claimEntry(mode, id, text, question) {
 // 配对——连续快速提问时,靠「谁是开着的那个块」去认必然认错。详细列表的回答用的是另一个 id(detailId),
 // 且问题文本随 detail 事件一起来,所以它保持可收养状态,仍交给 claimEntry。
 function handleQuestion(text, final, turnId) {
+    if (isWritten()) return;
     state.pendingQuestion = text;
 
     // 重连重放:这些块在这一段之前就已经存在了,只就地补问题/定稿,绝不再立占位块——同一个 id 出现两条
@@ -450,13 +465,31 @@ function applyEvent({ channel, data }) {
             return;
 
         // 桌面把音源状态念出来,这里跟着点亮/熄灭暂停键。认的是原始英文串,不受手机语言影响。
+        // 笔试下这颗键管的是自动截图,桌面暂停/恢复同样会走 update-status,所以状态依旧由它说了算。
         case 'update-status':
             state.paused = data === 'Paused';
             renderPause();
             return;
 
+        // 会话模式随开局广播;重连时由服务端补发当前值。笔试带初始暂停位(设置里关了自动截图时开局即暂停),
+        // 好让手机上的暂停键和桌面按钮从第一帧起就一致。
+        case 'session-mode': {
+            const mode = data && data.mode === 'written' ? 'written' : 'interview';
+            if (data && typeof data.paused === 'boolean') {
+                state.paused = data.paused;
+                renderPause();
+            }
+            if (mode !== state.sessionMode) {
+                state.sessionMode = mode;
+                applySessionMode();
+            }
+            return;
+        }
+
         case 'transcription-update':
         case 'transcription-final':
+            // 笔试没有转录。
+            if (isWritten()) return;
             // 候选人的话('user')是背景,屏幕截图('screen')是一道被作答的题而不是面试官的提问:两者都
             // 不该在手机上当成待读的提问。手动输入的消息不带 speaker,要照常显示。
             if (!data || data.speaker === 'user' || data.speaker === 'screen') return;
@@ -518,26 +551,33 @@ const BOTTOM_THRESHOLD = 24;
 // 双栏联动滚动时置上,免得程序化滚动另一栏又反过来触发它的 scroll 处理器,滚成一个环。
 let syncGuard = false;
 
+// 笔试只有一份内容(详细列表),没有精要/详细之分。
 function activeList() {
+    if (isWritten()) return state.details;
     return state.answerMode === 'brief' ? state.briefs : state.details;
 }
 
 // 单栏时,精要/详细共用一个 #feed,由 answerMode 决定装哪一份;双栏时各有各的容器,两份同时在场。
+// 笔试强制单栏,详细回答直接进 #feed。
 function feedFor(mode) {
+    if (isWritten()) return mode === 'detail' ? dom.feed : null;
     if (state.split) return mode === 'brief' ? dom.feedBrief : dom.feedDetail;
     return mode === state.answerMode ? dom.feed : null;
 }
 
-// 导航跟着精要走:单栏看当前模式那一份,双栏固定在左栏(精要)。
+// 导航跟着精要走:单栏看当前模式那一份,双栏固定在左栏(精要);笔试跟着唯一的那列回答走。
 function navList() {
+    if (isWritten()) return state.details;
     return state.split ? state.briefs : activeList();
 }
 
 function navMode() {
+    if (isWritten()) return 'detail';
     return state.split ? 'brief' : state.answerMode;
 }
 
 function navFeed() {
+    if (isWritten()) return dom.feed;
     return state.split ? dom.feedBrief : dom.feed;
 }
 
@@ -548,16 +588,18 @@ function rebuild() {
     navEls = [];
     dom.nav.innerHTML = '';
 
-    if (state.split) {
+    // 笔试永远单栏:即使面试时停在「兼有」,这里也不能把分栏铺回来。
+    const split = state.split && !isWritten();
+    if (split) {
         for (const entry of state.briefs) upsertNode('brief', entry);
         for (const entry of state.details) upsertNode('detail', entry);
         if (!state.briefs.length) dom.feedBrief.innerHTML = `<p class="empty">${esc(S.waiting)}</p>`;
     } else {
         const list = activeList();
         if (list.length) {
-            for (const entry of list) upsertNode(state.answerMode, entry);
+            for (const entry of list) upsertNode(isWritten() ? 'detail' : state.answerMode, entry);
         } else {
-            dom.feed.innerHTML = `<p class="empty">${esc(S.waiting)}</p>`;
+            dom.feed.innerHTML = `<p class="empty">${esc(isWritten() ? S.waitingWritten : S.waiting)}</p>`;
         }
     }
     syncNav();
@@ -584,7 +626,8 @@ function upsertNode(mode, entry) {
         blockEls.set(key, node);
     }
 
-    const rawQuestion = entry.question || '';
+    // 笔试只显示回答:固定问句和截图概括都不渲染,问题行整行为空(CSS 里也再挡一层)。
+    const rawQuestion = isWritten() ? '' : entry.question || '';
     if (node.questionEl.dataset.raw !== rawQuestion) {
         node.questionEl.innerHTML = rawQuestion ? `<span class="tag">${esc(S.qLabel)}</span>${esc(rawQuestion)}` : '';
         node.questionEl.dataset.raw = rawQuestion;
@@ -635,7 +678,7 @@ function updateBlock(mode, entry) {
 function anchorToLast() {
     suppressScroll = true;
     scrollFeedToBottom(navFeed());
-    if (state.split) scrollFeedToBottom(dom.feedDetail);
+    if (state.split && !isWritten()) scrollFeedToBottom(dom.feedDetail);
     requestAnimationFrame(() => {
         suppressScroll = false;
     });
@@ -707,7 +750,7 @@ function jumpTo(entry) {
     if (!node) return;
     state.following = false;
     feed.scrollTop = node.el.offsetTop;
-    if (state.split) syncPeerToIndex(feed, indexOfTurn(feed, node.el));
+    if (state.split && !isWritten()) syncPeerToIndex(feed, indexOfTurn(feed, node.el));
     updateNavActive();
 }
 
@@ -924,12 +967,26 @@ function applyPaneFraction(f) {
 
 function applySplit(value) {
     state.split = Boolean(value);
-    // 单栏 #feed 与双栏 #splitView 互斥显隐,顶栏滑块在三档之间始终可见。
-    dom.feed.hidden = state.split;
-    dom.splitView.hidden = !state.split;
+    // 单栏 #feed 与双栏 #splitView 互斥显隐,顶栏滑块在三档之间始终可见。笔试没有「兼有」,
+    // 无论记忆里的选择是什么都铺单栏。
+    const split = state.split && !isWritten();
+    dom.feed.hidden = split;
+    dom.splitView.hidden = !split;
     state.following = true;
     applyPaneFraction(paneFraction);
     rebuild();
+}
+
+// 会话模式切换:笔试收走三档滑块、露出「截图进入缓存」,并把原截图键改名为「截图并发送」;
+// 回到面试时原样还原。可见性交给 CSS 类,按钮文案由 localize() 写好的两份交替显示。
+function applySessionMode() {
+    const written = isWritten();
+    dom.stage.classList.toggle('written-mode', written);
+    dom.cacheBtn.hidden = !written;
+    dom.shotLabel.hidden = written;
+    dom.shotSendLabel.hidden = !written;
+    updateModeButtons();
+    applySplit(state.split);
 }
 
 // 分隔条拖拽:按下捕获指针(拖出这 6px 也还在拖),每帧把右栏宽度写到元素上,松手才落盘。
@@ -988,7 +1045,7 @@ function onFeedScroll(source) {
     }
     updateNavActive();
     updateFollowBtn();
-    if (state.split && !syncGuard) syncPeerFromScroll(source);
+    if (state.split && !isWritten() && !syncGuard) syncPeerFromScroll(source);
 }
 
 dom.feed.addEventListener('scroll', () => onFeedScroll(dom.feed));
@@ -1014,6 +1071,9 @@ dom.refreshBtn.addEventListener('click', () => {
 });
 
 dom.shotBtn.addEventListener('click', () => sendCommand('screenshot'));
+
+// 笔试专有:只抓一帧攒进桌面缓存,不发送。长题目分几屏时先把上半部分存起来,最后再一次性「截图并发送」。
+dom.cacheBtn.addEventListener('click', () => sendCommand('screenshot-to-cache'));
 
 dom.settingsBtn.addEventListener('click', openSettings);
 dom.settingsBack.addEventListener('click', closeSettings);

@@ -213,6 +213,49 @@ app.whenReady().then(async () => {
         check('cache button matches the send button padding', buttonMetrics.samePadding);
         check('cache button has the send button icon', buttonMetrics.cacheHasIcon);
 
+        // 左下角向下箭头:与手机端同款,贴底时淡下去,翻上去后点击回到底端。
+        check('written actions lead with a jump-to-latest arrow', await exec(`!!window.__q('.written-jump')`));
+        check(
+            'jump arrow sits at the left edge of the actions row',
+            await exec(`(() => {
+                const row = window.__q('.written-actions');
+                const btn = window.__q('.written-jump');
+                const inner = row.getBoundingClientRect().left + parseFloat(getComputedStyle(row).paddingLeft);
+                return Math.abs(btn.getBoundingClientRect().left - inner) <= 1;
+            })()`)
+        );
+        check('jump arrow dims while pinned to the bottom', await exec(`window.__q('.written-jump').classList.contains('at-bottom')`));
+
+        // 真实窗口里 :host 自带 flex 列布局;harness 的外层规则把它盖成了 block,这里用行内样式还原,
+        // 否则 .written-scroll 会随内容长高而不出现滚动条。
+        await exec(`(() => { const el = window.__el(); el.style.display = 'flex'; el.style.flexDirection = 'column'; })()`);
+        await exec(`(() => {
+            const el = window.__el();
+            el.detailMessages = Array.from({ length: 30 }, (_, i) => ({
+                detailId: 100 + i,
+                turnSeq: 100 + i,
+                question: '',
+                text: '第' + (i + 1) + '题答案：' + '内容'.repeat(60),
+                final: true,
+            }));
+        })()`);
+        await wait(300);
+        check(
+            'written feed becomes scrollable with many answers',
+            await exec(`(() => { const s = window.__q('.written-scroll'); return s.scrollHeight > s.clientHeight + 50; })()`)
+        );
+        // 隐藏窗口里程序化改 scrollTop 不一定派发 scroll,补发一次,让模拟与真实滚动等价。
+        await exec(`(() => { const s = window.__q('.written-scroll'); s.scrollTop = 0; s.dispatchEvent(new Event('scroll')); })()`);
+        await wait(200);
+        check('jump arrow lights up once scrolled up', await exec(`!window.__q('.written-jump').classList.contains('at-bottom')`));
+        await exec(`window.__q('.written-jump').click()`);
+        await wait(250);
+        check(
+            'jump arrow scrolls the written feed to the bottom',
+            await exec(`(() => { const s = window.__q('.written-scroll'); return s.scrollHeight - s.clientHeight - s.scrollTop <= 2; })()`)
+        );
+        check('jump arrow dims again at the bottom', await exec(`window.__q('.written-jump').classList.contains('at-bottom')`));
+
         // 回归:面试模式仍渲染转录区、输入栏(含改名后的按钮),且有回答时出现分栏抓手和右侧面板。
         await exec(`(() => {
             const el = window.__el();

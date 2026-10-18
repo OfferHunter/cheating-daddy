@@ -560,6 +560,11 @@ function setupTeleprompterIpcHandlers() {
             win.webContents
                 .executeJavaScript('window.captureManualScreenshot && window.captureManualScreenshot()', true)
                 .catch(error => console.error('Teleprompter screenshot command failed:', error.message));
+        } else if (action === 'screenshot-to-cache') {
+            // 只抓当前帧攒进缓存,不发送——笔试长题目分屏时先存起来,攒够再一次性发送。
+            win.webContents
+                .executeJavaScript('window.captureScreenshotToCache && window.captureScreenshotToCache()', true)
+                .catch(error => console.error('Teleprompter cache screenshot command failed:', error.message));
         } else if (action === 'clear-context') {
             win.webContents
                 .executeJavaScript(

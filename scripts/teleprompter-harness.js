@@ -484,6 +484,47 @@ app.whenReady().then(async () => {
         check('returning to 精要 restores the single feed and hides the split', await exec(`document.getElementById('modeBrief').classList.contains('active') && !document.getElementById('feed').hidden && document.getElementById('splitView').hidden`));
         check('leaving 兼有 clears the persisted flag', (await exec(`localStorage.getItem('offerHunterTeleprompterSplit')`)) === '0');
 
+        // ---- 笔试页:收走三档滑块,只显示回答(问题行隐藏、回答间有分割线),暂停键跟桌面初始态走 ----
+        teleprompter.broadcast('session-initializing', true);
+        await wait(150);
+        teleprompter.broadcast('session-mode', { mode: 'written', paused: true });
+        await wait(150);
+        check('written mode hides the three-slot mode slider', await exec(`getComputedStyle(document.querySelector('.modes')).display === 'none'`));
+        check('written mode hides the clear-context button', await exec(`getComputedStyle(document.getElementById('refreshBtn')).display === 'none'`));
+        check('written mode shows the screenshot-to-cache button', await exec(`getComputedStyle(document.getElementById('cacheBtn')).display !== 'none'`));
+        check('written mode renames the shot button to 截图并发送', await exec(`document.getElementById('shotLabel').hidden && document.getElementById('shotSendLabel').hidden === false && document.getElementById('shotSendLabel').textContent.trim() === '截图并发送'`));
+        check('written mode starts from the desktop pause state', await exec(`document.getElementById('pauseBtn').classList.contains('paused')`));
+        check('written empty state waits for the written question', (await exec(`document.querySelector('#feed .empty').textContent`)).trim() === '等待笔试题目…');
+
+        teleprompter.broadcast('new-detail-response', { detailId: 'w1', turnSeq: 101, question: '对屏幕截图的作答', text: '第一题答案', screenshot: true });
+        teleprompter.broadcast('new-detail-response', { detailId: 'w2', turnSeq: 102, question: '对屏幕截图的作答', text: '第二题答案', screenshot: true });
+        teleprompter.broadcast('detail-response-complete', { detailId: 'w1', turnSeq: 101, ok: true, screenshot: true });
+        teleprompter.broadcast('detail-response-complete', { detailId: 'w2', turnSeq: 102, ok: true, screenshot: true });
+        await wait(250);
+        check('written answers land in the single feed', await exec(`document.querySelectorAll('#feed .turn').length === 2`));
+        check('written mode never shows the question line', await exec(`[...document.querySelectorAll('#feed .question')].every(q => getComputedStyle(q).display === 'none')`));
+        check('written screenshot answers are not duplicated into a brief copy', await exec(`document.querySelectorAll('#feed .turn').length === 2 && document.querySelectorAll('#nav .nav-dash').length === 2`));
+        check('written answers are separated by a visible rule', await exec(`(() => {
+            const first = document.querySelector('#feed .turn');
+            const style = getComputedStyle(first);
+            return parseFloat(style.borderBottomWidth) > 0 && style.borderBottomStyle === 'solid';
+        })()`));
+
+        commands.length = 0;
+        await exec(`document.getElementById('cacheBtn').click()`);
+        await wait(120);
+        check('cache button sends the screenshot-to-cache command', commands.includes('screenshot-to-cache'));
+        await exec(`document.getElementById('shotBtn').click()`);
+        await wait(120);
+        check('shot button still sends the screenshot command in written mode', commands.includes('screenshot'));
+
+        // 回到面试页:滑块、清空、原截图键都回来。
+        teleprompter.broadcast('session-mode', { mode: 'interview', paused: false });
+        await wait(150);
+        check('leaving written mode restores the three-slot slider', await exec(`getComputedStyle(document.querySelector('.modes')).display !== 'none'`));
+        check('leaving written mode hides the cache button', await exec(`getComputedStyle(document.getElementById('cacheBtn')).display === 'none'`));
+        check('leaving written mode restores the plain 截图 label', await exec(`!document.getElementById('shotLabel').hidden && document.getElementById('shotLabel').textContent.trim() === '截图' && document.getElementById('shotSendLabel').hidden`));
+
         win.destroy();
     } catch (error) {
         results.push(`FAIL  harness threw: ${error && error.stack ? error.stack : error}`);
