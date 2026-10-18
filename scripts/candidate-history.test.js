@@ -7,6 +7,8 @@ function harness() {
     const events = [];
     const session = { module: { exports: {} }, console: { log() {} }, require(name) {
         if (name === 'electron') return { BrowserWindow: { getAllWindows: () => [{ webContents: { send: (channel, data) => events.push({ channel, data }) } }] } };
+        // sendToRenderer 会把每条推送再交给手机提词器一份,这里只需要一个不炸的桩。
+        if (name === './teleprompter') return { broadcast() {} };
         return {};
     } };
     vm.runInNewContext(fs.readFileSync(require.resolve('../src/utils/session'), 'utf8') + '\ncurrentSessionId = "test-session";', session);

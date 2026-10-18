@@ -1,5 +1,11 @@
 const { DEFAULT_PREFERENCES } = require('../defaults');
-const { getSystemPrompt, getDetailSystemPrompt, getScreenshotSummaryPrompt, getScreenshotAnswerPrompt } = require('./prompts');
+const {
+    getSystemPrompt,
+    getDetailSystemPrompt,
+    getScreenshotSummaryPrompt,
+    getScreenshotAnswerPrompt,
+    getScreenChangePrompt,
+} = require('./prompts');
 const { sendToRenderer, initializeNewSession, saveConversationTurn, saveDetailTurn, saveCandidateSpeech } = require('./session');
 const { getChatModel, requestChat } = require('./chat');
 const {
@@ -38,6 +44,14 @@ let screenshotSummaryEnabled = DEFAULT_PREFERENCES.screenshotSummary;
 // 是现读目录的，所以这里过期最坏只是查不到，不会变成错误的事实。
 let detailKnowledgeEntries = [];
 let isLocalActive = false;
+
+// 'interview' 走原来的全套链路；'written' 不开语音识别、只有详细面板。由 initializeChatSession 设定。
+let sessionMode = 'interview';
+// 笔试里正在流式作答的详细回答数。turnLog 只记对话轮，截图轮不在里面，所以状态行得单独数这一份。
+let writtenPending = 0;
+// 上一次真正作答时的那一帧（base64）。自动截图每一拍拿新帧和它比，题目变了才重答——和上一帧比会漏掉
+// 缓慢累积的变化，而和每一拍都比会让光标抖动导致重答。第一帧没有基线，直接作答。
+let writtenLastAnsweredFrame = null;
 
 // 两路采集各有自己的识别器：扬声器那路转录面试官，并且只有它会产生要作答的轮次；麦克风那路转录候选人，
 // 说的话永远只是背景。两边算法相同，各一个 socket。
@@ -483,6 +497,18 @@ function updateStreamingStatus() {
         return;
     }
 
+    // 笔试没有「聆听」这回事：空闲时等的是下一帧题目变化，回答在详细面板里流。
+    if (sessionMode === 'written') {
+        if (writtenPending === 0) {
+            sendToRenderer('update-status', 'Waiting for the question...');
+        } else if (writtenPending === 1) {
+            sendToRenderer('update-status', 'Generating response...');
+        } else {
+            sendToRenderer('update-status', `Generating ${writtenPending} responses...`);
+        }
+        return;
+    }
+
     const pending = pendingTurnCount();
     if (pending === 0) {
         sendToRenderer('update-status', 'Listening...');
@@ -580,6 +606,12 @@ function startDetailStream(turnEntry, { question, thinking, screenshot = false }
     const messages = buildMessages(currentDetailSystemPrompt, turnEntry);
     logTransportEvent('chat.request', { turnId: entry.turnSeq, detail: true, roles: messages.map(message => message.role) });
 
+    // 笔试的所有回答都在这条链上，而状态行只数 turnLog（截图轮不进去），所以这里自己记一份。
+    if (sessionMode === 'written') {
+        writtenPending += 1;
+        updateStreamingStatus();
+    }
+
     detailLog.push(entry);
     if (detailLog.length > MAX_DETAIL_TURNS) detailLog = detailLog.slice(-MAX_DETAIL_TURNS);
 
@@ -657,6 +689,10 @@ function startDetailStream(turnEntry, { question, thinking, screenshot = false }
             // 这段流式期间会话可能被重启或被另一个会话取代。它仍然必须安静地结束：sendToRenderer 总是发
             // 给第一个窗口，不管那窗口在显示哪个会话，所以没有守卫的完成事件会落进下一个会话的面板。
             if (entry.generation !== sessionGeneration) return;
+            if (sessionMode === 'written') {
+                writtenPending = Math.max(0, writtenPending - 1);
+                updateStreamingStatus();
+            }
 
             logTransportEvent('chat.completed', { turnId: entry.turnSeq, detail: true, rounds, finishReason });
             console.log('[Pipeline] detail response completed:', entry.turnSeq);
@@ -691,6 +727,10 @@ function startDetailStream(turnEntry, { question, thinking, screenshot = false }
             entry.status = 'failed';
             console.error('[Pipeline] detail error:', error);
             if (entry.generation !== sessionGeneration) return;
+            if (sessionMode === 'written') {
+                writtenPending = Math.max(0, writtenPending - 1);
+                updateStreamingStatus();
+            }
 
             // 也带上问题：在第一个 token 前就失败的请求从没在面板里开出过一行，所以这个完成事件才是把失
             // 败带进视野的东西。
@@ -886,13 +926,16 @@ function resetAudioState() {
     // 与轮次日志一起清掉，否则之后新开的会话一上来还能在面板里翻到上一个会话的详细回答。
     detailLog = [];
     detailSeq = 0;
+    writtenPending = 0;
+    writtenLastAnsweredFrame = null;
     sessionGeneration += 1;
 }
 
-function initializeChatSession(customPrompt) {
+function initializeChatSession(customPrompt, mode = 'interview') {
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
+    sessionMode = mode === 'written' ? 'written' : 'interview';
 
     // 开关和知识库索引都在这里一次性读好。索引故意是快照而不是每轮重建：那会给每个回答前面加一次目录
     // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
@@ -928,19 +971,28 @@ function initializeChatSession(customPrompt) {
         micGateDwellMs,
     });
 
-    initializeNewSession(customPrompt);
+    // 笔试在历史页里单独标成「考试助手」，简历/面试那套标签对它没有意义。
+    initializeNewSession(customPrompt, sessionMode === 'written' ? 'exam' : 'interview');
     isLocalActive = true;
 
-    // 从这里起状态栏归 ASR 客户端自己的状态管：先是 Connecting... 然后 Listening...。
     sendToRenderer('session-initializing', false);
-    startAsrClients();
 
-    console.log('[Pipeline] Session initialized');
+    if (sessionMode === 'written') {
+        // 笔试不开语音识别：没有 socket、没有音频门槛，所有内容都来自截图。
+        sendToRenderer('update-status', 'Waiting for the question...');
+    } else {
+        // 从这里起状态栏归 ASR 客户端自己的状态管：先是 Connecting... 然后 Listening...。
+        startAsrClients();
+    }
+
+    console.log('[Pipeline] Session initialized', { mode: sessionMode });
     return true;
 }
 
 function processLocalAudio(monoChunk24k, source = 'system') {
     if (!isLocalActive) return;
+    // 笔试没有识别器；渲染端也不送音频，这里是防绕路的第二道门。
+    if (sessionMode === 'written') return;
 
     // 暂停时帧照旧转发，只是内容是静音。端点在听不到声音足够久之后会结束任务，而一个死掉的 socket 得在
     // 恢复后的第一个问题前面重连——所以这些流量让会话保持热着，而用户的音频从不作为语音到达它。闸门和
@@ -1029,7 +1081,8 @@ function setPaused(value) {
         suspendPendingText();
         sendToRenderer('update-status', 'Paused');
     } else if (isLocalActive) {
-        sendToRenderer('update-status', 'Listening...');
+        // 笔试恢复后状态取决于还有没有回答在流；面试在空闲时仍然是 Listening...。
+        updateStreamingStatus();
     }
 }
 
@@ -1059,28 +1112,39 @@ async function sendLocalText(text) {
     return { success: true, turnId: entry ? entry.seq : null };
 }
 
-async function sendLocalImage(base64Data) {
+// images 可以是单帧字符串，也可以是一叠：「截图进入缓存」攒下的几屏加当前这一屏。它们按顺序是同一道题
+// 的不同部分，合成一个问题交给模型，而不是分几轮各答一遍。
+async function sendLocalImage(images) {
     if (!isLocalActive) {
         return { success: false, error: 'No active session' };
     }
 
-    const requestContent = [
-        { type: 'text', text: getScreenshotAnswerPrompt() },
-        {
-            type: 'image_url',
-            image_url: {
-                url: `data:image/jpeg;base64,${base64Data}`,
-            },
-        },
-    ];
+    const frames = (Array.isArray(images) ? images : [images]).filter(frame => typeof frame === 'string' && frame);
+    if (!frames.length) {
+        return { success: false, error: 'No image data' };
+    }
+
+    const requestContent = [{ type: 'text', text: getScreenshotAnswerPrompt() }];
+    if (frames.length > 1) {
+        requestContent.push({
+            type: 'text',
+            text: `以下是同一道题的 ${frames.length} 张连续截图，按顺序对应题目的不同部分；请把它们合并成一道完整的题目来理解和作答。`,
+        });
+    }
+    for (const frame of frames) {
+        requestContent.push({ type: 'image_url', image_url: { url: jpegDataUrl(frame) } });
+    }
 
     // 截图不是面试官在说话，但它仍然是一个新轮次：块也得在这里关闭，否则这个提示词会漏掉最后一个提问
     // 之后候选人说过的所有话。
     commitCandidateSpeech();
+    // 笔试没有对话转录，摘要那行文字唯一的用途就是屏幕上的对话记录，所以整条摘要请求都省掉；这一轮的
+    // contextText 直接落成标签，于是它作为「空截图轮」被排除在之后的提示词之外。
+    const summaryEnabled = sessionMode !== 'written' && screenshotSummaryEnabled;
     // 先用占位符开行而不是用提示词：截图轮的 contextText 为空时 userContent 会退回 requestContent，而
     // 对截图来说那个退路就是整张 base64 图，会被回放进之后每一个提示词。从这里起，截图轮的 contextText
     // 永不为空。关掉概述时占位符就是最终文本「[屏幕截图]」，这行不再改写。
-    const placeholder = screenshotSummaryEnabled ? SCREEN_PENDING_LINE : SCREEN_PREFIX;
+    const placeholder = summaryEnabled ? SCREEN_PENDING_LINE : SCREEN_PREFIX;
     const entry = createTurn(requestContent, placeholder, 'screen');
     // 这一轮永远不会有东西流进来：它本该装着的回答在面板里，而它等的摘要是另一个独立请求。留在待处理状态
     // 会永远声称有回答在路上。
@@ -1093,17 +1157,107 @@ async function sendLocalImage(base64Data) {
 
     startScreenshotAnswer(entry);
     // 不 await，而且先于回答启动，让两个请求重叠：摘要是关掉思考的一个小请求，回答是开着思考的一个长请求。
-    if (screenshotSummaryEnabled) {
-        runScreenshotSummary(entry, base64Data);
+    if (summaryEnabled) {
+        // 汇总只要一张：多帧只可能出现在笔试,而笔试不开概述,这里用第一张作为兜底。
+        runScreenshotSummary(entry, frames[0]);
     } else {
         // 没有概述请求要等：这一行立刻落定，并像概述回来时那样落盘、放开状态行。截图轮不在 turnLog 里占待处理
         // 位，不调 updateStreamingStatus 会把「正在分析图像…」一直挂到下一次转录。
         sendToRenderer('transcription-final', { text: SCREEN_PREFIX, speaker: 'screen', blockId: entry.seq });
-        saveConversationTurn(SCREEN_PREFIX, '', entry.seq);
+        // 笔试没有转录页，这行落盘只会在历史里留下一条没有回答的空记录。
+        if (sessionMode !== 'written') saveConversationTurn(SCREEN_PREFIX, '', entry.seq);
         updateStreamingStatus();
     }
 
     return { success: true, model: getChatModel(), turnId: entry.seq };
+}
+
+// ===== 笔试自动截图 =====
+
+function jpegDataUrl(base64Data) {
+    return `data:image/jpeg;base64,${base64Data}`;
+}
+
+// 把「上一次答过的那一帧」和当前帧一起交给模型，问变没变、以及当前帧还有没有一道完整题目。
+// 返回 'changed' | 'same' | 'no-question'。出错时按 'same' 处理：一次网络抖动不该让同一道题在每个间隔上
+// 重答一遍。
+async function judgeScreenFrame(previousFrame, currentFrame) {
+    // 静态页面重复截出来的 JPEG 往往一个字节都不差，这种连请求都不必发。
+    if (previousFrame === currentFrame) return 'same';
+
+    const messages = [
+        { role: 'system', content: getScreenChangePrompt() },
+        {
+            role: 'user',
+            content: [
+                { type: 'text', text: '第一帧（上一次已作答的屏幕）：' },
+                { type: 'image_url', image_url: { url: jpegDataUrl(previousFrame) } },
+                { type: 'text', text: '第二帧（当前屏幕）：' },
+                { type: 'image_url', image_url: { url: jpegDataUrl(currentFrame) } },
+            ],
+        },
+    ];
+
+    try {
+        logTransportEvent('chat.request', { screenChange: true, roles: messages.map(message => message.role) });
+        // 只回一个词，给 16 个 token 足够；关掉思考，这一拍越快越好。
+        const { text } = await requestChat(messages, () => {}, { thinking: false, maxTokens: 16 });
+        const verdict = String(text).toUpperCase();
+        // UNCHANGED 里也含 CHANGED，所以带上词边界；NO_QUESTION 优先，它和另外两态是互斥的。
+        if (/\bNO_QUESTION\b/.test(verdict)) return 'no-question';
+        if (/\bCHANGED\b/.test(verdict) && !/\bSAME\b/.test(verdict)) return 'changed';
+        return 'same';
+    } catch (error) {
+        console.error('[Pipeline] screen change check failed:', error);
+        return 'same';
+    }
+}
+
+// 一帧 = 一道题：走与手动截图完全相同的作答链，只是不写对话记录、不发摘要请求。
+function answerWrittenFrame(base64Data) {
+    const requestContent = [
+        { type: 'text', text: getScreenshotAnswerPrompt() },
+        { type: 'image_url', image_url: { url: jpegDataUrl(base64Data) } },
+    ];
+
+    // 基线只在真正开始作答时推进。判为 SAME 的帧不记，下一次仍然和「上一次答过的题」比。
+    writtenLastAnsweredFrame = base64Data;
+
+    const entry = createTurn(requestContent, SCREEN_PREFIX, 'screen');
+    // 这一轮的回答走详细链，turnLog 里没有等待中的请求，留在 pending 会让状态行永远声称有回答在路上。
+    entry.status = 'done';
+
+    sendToRenderer('update-status', 'Analyzing image...');
+    startScreenshotAnswer(entry);
+}
+
+// 渲染端按设置里的间隔送来一帧。返回的 changed 只用于日志，判定与作答都在这里完成。
+async function autoScreenshot(base64Data) {
+    if (!isLocalActive || sessionMode !== 'written') {
+        return { success: false, error: 'Not a written session' };
+    }
+    if (paused) return { success: true, changed: false, skipped: 'paused' };
+
+    // 判断期间会话可能被结束或重启，回来时要能识别出来。
+    const generation = sessionGeneration;
+
+    // 第一帧没有可比的基线，直接作答。
+    if (!writtenLastAnsweredFrame) {
+        answerWrittenFrame(base64Data);
+        return { success: true, changed: true, first: true };
+    }
+
+    const verdict = await judgeScreenFrame(writtenLastAnsweredFrame, base64Data);
+    // 当前帧没有完整题目（页面滚走、只露出一角、加载中）时保留上一帧的答案：新帧不能把已有作答盖掉。
+    if (verdict === 'no-question') {
+        return { success: true, changed: false, skipped: 'no-question' };
+    }
+    if (verdict !== 'changed' || paused || !isLocalActive || generation !== sessionGeneration) {
+        return { success: true, changed: false };
+    }
+
+    answerWrittenFrame(base64Data);
+    return { success: true, changed: true };
 }
 
 module.exports = {
@@ -1114,4 +1268,5 @@ module.exports = {
     clearContext,
     sendLocalText,
     sendLocalImage,
+    autoScreenshot,
 };

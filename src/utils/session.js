@@ -40,19 +40,19 @@ function sendToRenderer(channel, data) {
     teleprompter.broadcast(channel, data);
 }
 
-function initializeNewSession(customPrompt = null) {
+function initializeNewSession(customPrompt = null, profile = SESSION_PROFILE) {
     currentSessionId = Date.now().toString();
     startTransportLog(currentSessionId);
     conversationHistory = [];
     detailHistory = [];
     candidateHistory = [];
-    currentProfile = SESSION_PROFILE;
+    currentProfile = profile;
     currentCustomPrompt = customPrompt;
-    console.log('New conversation session started:', currentSessionId);
+    console.log('New conversation session started:', currentSessionId, 'profile:', profile);
 
     sendToRenderer('save-session-context', {
         sessionId: currentSessionId,
-        profile: SESSION_PROFILE,
+        profile,
         customPrompt: customPrompt || '',
     });
 }
@@ -263,7 +263,7 @@ function stopMacOSAudioCapture() {
 }
 
 function setupIpcHandlers() {
-    ipcMain.handle('initialize-chat', async (event, customPrompt) => {
+    ipcMain.handle('initialize-chat', async (event, customPrompt, mode) => {
         // 激活门控只放在这一个入口:它把 chatSessionActive 置真,而音频/文本/截图/清空上下文全都先校验这个
         // 标志,所以没激活时整条实时管线一起关掉,不必在每个 handler 里重复检查。渲染端本来也把未激活用户
         // 挡在引导页,这里防的是绕过界面直接调 IPC——源码公开,改掉渲染端那行判断太容易了。
@@ -271,7 +271,7 @@ function setupIpcHandlers() {
             console.error('initialize-chat refused: license not activated');
             return false;
         }
-        chatSessionActive = getPipeline().initializeChatSession(customPrompt);
+        chatSessionActive = getPipeline().initializeChatSession(customPrompt, mode);
         return chatSessionActive;
     });
 
@@ -322,24 +322,42 @@ function setupIpcHandlers() {
 
     ipcMain.handle('send-image-content', async (event, { data }) => {
         try {
-            if (!data || typeof data !== 'string') {
+            // 手动截图可以带一叠缓存帧(长题目分屏截取),所以这里接受字符串或字符串数组。
+            const frames = Array.isArray(data) ? data : [data];
+            if (!frames.length || frames.some(frame => typeof frame !== 'string' || !frame)) {
                 console.error('Invalid image data received');
                 return { success: false, error: 'Invalid image data' };
             }
 
-            const buffer = Buffer.from(data, 'base64');
-            if (buffer.length < 1000) {
-                console.error(`Image buffer too small: ${buffer.length} bytes`);
-                return { success: false, error: 'Image buffer too small' };
+            for (const frame of frames) {
+                const buffer = Buffer.from(frame, 'base64');
+                if (buffer.length < 1000) {
+                    console.error(`Image buffer too small: ${buffer.length} bytes`);
+                    return { success: false, error: 'Image buffer too small' };
+                }
             }
 
             if (!chatSessionActive) {
                 return { success: false, error: 'No active session' };
             }
 
-            return await getPipeline().sendLocalImage(data);
+            return await getPipeline().sendLocalImage(frames);
         } catch (error) {
             console.error('Error sending image:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // 笔试自动截图：渲染端按间隔抓帧，这一帧和上一张「已作答」的帧一起交给模型判断要不要重新作答。
+    // 判断和作答都在主进程，因为 API 密钥和轮次状态都在这里。
+    ipcMain.handle('auto-screenshot', async (event, { data }) => {
+        if (!chatSessionActive) return { success: false, error: 'No active session' };
+        if (!data || typeof data !== 'string') return { success: false, error: 'Invalid image data' };
+
+        try {
+            return await getPipeline().autoScreenshot(data);
+        } catch (error) {
+            console.error('Error handling auto screenshot:', error);
             return { success: false, error: error.message };
         }
     });

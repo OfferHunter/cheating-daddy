@@ -58,6 +58,10 @@ const DEFAULT_PREFERENCES = Object.freeze({
     // 里唯一的痕迹（图本身不进上下文）。关闭后不再发这个请求，对话记录里只留「[屏幕截图]」，这一轮也不会被
     // 回放给模型；截图本身的作答（详细面板）不受影响。是开关而非内容，所以「恢复默认」会重置它。
     screenshotSummary: true,
+    // 笔试模式的自动截图：决定开始笔试时是否自动开始，以及多久截一帧。间隔存秒，设置页直接按秒展示；
+    // 每一帧都会和上一次已作答的那一帧一起交给模型判断题目是否变了，变了才重新作答。
+    writtenAutoScreenshot: true,
+    writtenScreenshotIntervalSec: 3,
     selectedImageQuality: 'medium',
     // 'none' captures no microphone at all; any other value is a deviceId from enumerateDevices()
     // ('default' and 'communications' are Chromium's own pseudo-devices for the system defaults).

@@ -28,6 +28,8 @@ const SETTINGS_KEYS = [
     'detailThinking',
     'screenshotThinking',
     'screenshotSummary',
+    'writtenAutoScreenshot',
+    'writtenScreenshotIntervalSec',
     'nonFocusableSession',
     'chatContextTurns',
     'chatMaxTokens',
@@ -286,6 +288,8 @@ export class CustomizeView extends LocalizedLitElement {
         detailThinking: { type: Boolean },
         screenshotThinking: { type: Boolean },
         screenshotSummary: { type: Boolean },
+        writtenAutoScreenshot: { type: Boolean },
+        writtenScreenshotIntervalSec: { type: Number },
         nonFocusableSession: { type: Boolean },
         chatContextTurns: { type: Number },
         chatMaxTokens: { type: Number },
@@ -432,6 +436,21 @@ export class CustomizeView extends LocalizedLitElement {
     async handleScreenshotSummaryChange(checked) {
         this.screenshotSummary = checked;
         await offerHunter.storage.updatePreference('screenshotSummary', checked);
+    }
+
+    async handleWrittenAutoScreenshotChange(checked) {
+        this.writtenAutoScreenshot = checked;
+        await offerHunter.storage.updatePreference('writtenAutoScreenshot', checked);
+    }
+
+    async handleWrittenScreenshotIntervalChange(rawValue) {
+        const seconds = Number.parseFloat(rawValue);
+        if (!Number.isFinite(seconds)) return;
+
+        // 和音频超时一样在写入时夹一次：0 或负数会让定时器变成连发，设置页的 min/max 拦不住手改配置。
+        this.writtenScreenshotIntervalSec = Math.min(60, Math.max(0.5, seconds));
+        await offerHunter.storage.updatePreference('writtenScreenshotIntervalSec', this.writtenScreenshotIntervalSec);
+        this.requestUpdate();
     }
 
     async handleNonFocusableSessionChange(checked) {
@@ -886,6 +905,44 @@ export class CustomizeView extends LocalizedLitElement {
         `;
     }
 
+    renderWrittenSection() {
+        return html`
+            <section class="surface">
+                <div class="surface-title">Written Test</div>
+                <div class="form-grid">
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.writtenAutoScreenshot}
+                            @change=${e => this.handleWrittenAutoScreenshotChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Auto screenshot in written tests</span>
+                    </label>
+                    <div class="form-help">
+                        Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time.
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Screenshot Interval (s)</label>
+                        <input
+                            type="number"
+                            step="0.5"
+                            min="0.5"
+                            max="60"
+                            class="control"
+                            .value=${this.writtenScreenshotIntervalSec}
+                            @change=${e => this.handleWrittenScreenshotIntervalChange(e.target.value)}
+                        />
+                        <div class="form-help">
+                            Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 3
+                            seconds.
+                        </div>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
     renderAppearanceSection() {
         return html`
             <section class="surface">
@@ -1018,8 +1075,8 @@ export class CustomizeView extends LocalizedLitElement {
                 }
                 <div class="unified-wrap">
                     <div class="page-title">Settings</div>
-                    ${this.renderAudioSection()} ${this.renderLanguageSection()} ${this.renderAnswerSection()} ${this.renderAppearanceSection()}
-                    ${this.renderKeyboardSection()} ${this.renderPrivacySection()}
+                    ${this.renderAudioSection()} ${this.renderLanguageSection()} ${this.renderAnswerSection()} ${this.renderWrittenSection()}
+                    ${this.renderAppearanceSection()} ${this.renderKeyboardSection()} ${this.renderPrivacySection()}
                 </div>
             </div>
         `;

@@ -168,10 +168,32 @@ function getScreenshotAnswerPrompt() {
 使用页面/题目所用的语言作答：中文内容就用简体中文，英文内容就用英文。专业术语（如 React、Kubernetes、ROI）保留英文原词。`;
 }
 
+// 笔试自动截图的判题请求：两帧一起给模型，只要一个词。光标、计时器、加载动画都在动，不点名忽略的话
+// 每一拍都会判成「变了」，于是每 3 秒重答一次同一道题。
+function getScreenChangePrompt() {
+    return `你是一名屏幕内容比对器。用户会按顺序给你两张同一块屏幕的截图：第一张是上一次已经作答的题目，第二张是当前屏幕。
+请判断两张图里的**题目内容**是否发生了变化。
+
+算作变化：
+- 题干的文字、数字、选项或代码被改写、替换；
+- 换成了另一道题，或页面滚动到了明显不同的题目；
+- 新增或删除了一大段与题目有关的文字、代码或图表。
+
+不算变化（必须忽略）：
+- 鼠标指针、文本光标、输入框闪烁、加载动画、时钟或倒计时跳动；
+- 浏览器/软件的界面元素、通知、滚动条位置的小幅变化；
+- 与题目无关的轻微渲染差异。
+
+另外：如果第二张图里**没有一道完整、可读的题目**——例如页面被滚走、只露出题目的一角、正在加载、空白页或过渡页——直接输出 NO_QUESTION。只有整道题目都清楚可见时，才比较 CHANGED / SAME。
+
+只输出一个词：发生了变化输出 CHANGED，没有变化输出 SAME，当前帧没有完整题目输出 NO_QUESTION。不要输出任何其他内容。`;
+}
+
 module.exports = {
     DEFAULT_PROMPT_SEGMENTS,
     getSystemPrompt,
     getDetailSystemPrompt,
     getScreenshotSummaryPrompt,
     getScreenshotAnswerPrompt,
+    getScreenChangePrompt,
 };

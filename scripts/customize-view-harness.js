@@ -41,6 +41,7 @@ const PAGE = `<!doctype html>
         backgroundTransparency: 0.48, textTransparency: 0.83,
         maxSentenceSilenceMs: 1500, micMaxSentenceSilenceMs: 2000, micGateDb: -45, micGateDwellMs: 300,
         chatContextTurns: 15, chatMaxTokens: 128000, detailPaneWidth: 0.38, theme: 'gruvbox', nonFocusableSession: true,
+        writtenAutoScreenshot: true, writtenScreenshotIntervalSec: 3,
     };
     window.__storedPrefs = {};
     window.require = function (name) {
@@ -49,6 +50,8 @@ const PAGE = `<!doctype html>
                 DEFAULT_PREFERENCES: DEFAULTS,
                 DEFAULT_CONFIG: { layout: 'normal' },
                 getResetPreferences: () => Object.assign({}, DEFAULTS),
+                // 组件只按 SETTINGS_KEYS 从源对象拷到目标上,这里照原样做即可。
+                applyPreferences: (target, source, keys) => { keys.forEach(key => { if (key in source) target[key] = source[key]; }); },
             };
         }
         if (name === 'electron') return { ipcRenderer: { send() {}, invoke: async () => {} } };
@@ -56,6 +59,10 @@ const PAGE = `<!doctype html>
     };
     window.offerHunter = {
         getDefaultKeybinds: () => ({ moveUp: 'Ctrl+Up', moveDown: 'Ctrl+Down' }),
+        getKeybindActions: () => [
+            { key: 'moveUp', name: 'Move Window Up' },
+            { key: 'moveDown', name: 'Move Window Down' },
+        ],
         storage: {
             getPreferences: async () => window.__storedPrefs,
             getKeybinds: async () => null,
@@ -148,6 +155,36 @@ app.whenReady().then(async () => {
         check('font sample label reflects the size', (await exec(`window.__q('.font-sample').closest('.form-group').querySelector('.slider-value').textContent`)).trim() === '24px');
         check('font sample caption unchanged after resize', (await exec(`window.__q('.font-sample').textContent`)).trim() === '这是回答字号');
         check('slider change persisted to storage', (await exec(`window.__storedPrefs.fontSize`)) === 24);
+
+        // 笔试自动截图块:标题、开关、间隔,以及描述必须是约定的那句话。
+        await exec(
+            `window.__written = () => [...window.__root().querySelectorAll('.surface')].find(s => s.querySelector('.surface-title')?.textContent.trim() === '笔试'); void 0`
+        );
+        check('written test section rendered', await exec(`!!window.__written()`));
+        check('written toggle reads 笔试自动截图', (await exec(`window.__written().querySelector('.toggle-label').textContent`)).trim() === '笔试自动截图');
+        check(
+            'written interval description is the agreed sentence',
+            (await exec(`[...window.__written().querySelectorAll('.form-help')].map(el => el.textContent.replace(/\\s+/g, ' ').trim()).includes('隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 3 秒。')`))
+        );
+        check('written interval defaults to 3 seconds', (await exec(`window.__written().querySelector('input[type=number]').value`)) === '3');
+
+        // 间隔写入时夹到 0.5–60:手改配置也不能把定时器变成连发。
+        await exec(`(() => {
+            const input = window.__written().querySelector('input[type=number]');
+            input.value = '0.1';
+            input.dispatchEvent(new Event('change'));
+        })()`);
+        await wait(150);
+        check('written interval clamped to 0.5 on save', (await exec(`window.__storedPrefs.writtenScreenshotIntervalSec`)) === 0.5);
+        check('written interval input reflects the clamp', (await exec(`window.__written().querySelector('input[type=number]').value`)) === '0.5');
+
+        await exec(`(() => {
+            const toggle = window.__written().querySelector('input[type=checkbox]');
+            toggle.checked = false;
+            toggle.dispatchEvent(new Event('change'));
+        })()`);
+        await wait(150);
+        check('written auto-screenshot toggle persisted', (await exec(`window.__storedPrefs.writtenAutoScreenshot`)) === false);
 
         win.destroy();
     } catch (error) {

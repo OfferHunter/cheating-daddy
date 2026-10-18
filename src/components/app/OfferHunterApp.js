@@ -1,6 +1,6 @@
 const { DEFAULT_PREFERENCES, DEFAULT_CONFIG, applyPreferences } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement, setUiLanguage, isChinese } from '../../utils/i18n.js';
+import { LocalizedLitElement, setUiLanguage, isChinese, t } from '../../utils/i18n.js';
 import { scrollbarStyles } from '../views/sharedPageStyles.js';
 import { MainView } from '../views/MainView.js';
 import { ApiConfigView } from '../views/ApiConfigView.js';
@@ -358,8 +358,12 @@ export class OfferHunterApp extends LocalizedLitElement {
     static properties = {
         currentView: { type: String },
         statusText: { type: String },
+        // 笔试空态里显示的错误。只在还没有任何回答时可见；模型侧失败由回答行自己的红色注记承担。
+        writtenError: { type: String },
         startTime: { type: Number },
         sessionActive: { type: Boolean },
+        // 'interview'（默认，原会话）或 'written'（笔试：只有详细面板、不开语音识别）。
+        sessionMode: { type: String },
         messages: { type: Array },
         // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
@@ -374,8 +378,11 @@ export class OfferHunterApp extends LocalizedLitElement {
         super();
         this.currentView = 'main';
         this.statusText = '';
+        this.writtenError = '';
+        this._writtenErrorSource = '';
         this.startTime = null;
         this.sessionActive = false;
+        this.sessionMode = 'interview';
         this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
@@ -504,6 +511,30 @@ export class OfferHunterApp extends LocalizedLitElement {
 
     setStatus(text) {
         this.statusText = text;
+    }
+
+    // 笔试空态的错误条：只放错误本身，来源前缀用来分辨是哪条链断的，不附任何操作指导。
+    // 同一条错误重复到达时不再触发渲染——自动截图会按间隔反复失败。
+    reportWrittenError(source, detail) {
+        const text = String(detail || '').trim();
+        if (!text) return;
+
+        const labels = {
+            capture: isChinese() ? '屏幕捕获失败' : 'Screen capture failed',
+            screenshot: isChinese() ? '截图发送失败' : 'Screenshot send failed',
+            cache: isChinese() ? '截图缓存失败' : 'Screenshot cache failed',
+        };
+        const message = labels[source] ? `${labels[source]}: ${text}` : text;
+        this._writtenErrorSource = source;
+        if (message !== this.writtenError) this.writtenError = message;
+    }
+
+    // 只有「解决这条错误的那一步」成功才清掉它：自动截图成功不该抹掉一次手动发送失败，反过来也一样。
+    // 不传 sources 表示整条会话重新开始，全部清空。
+    clearWrittenError(sources = null) {
+        if (sources && !sources.includes(this._writtenErrorSource)) return;
+        this._writtenErrorSource = '';
+        if (this.writtenError) this.writtenError = '';
     }
 
     // 转录是以「整轮快照」到达的：要么改写还开着的那条气泡，要么新开一条；已落定的气泡永不再动。两个说话人
@@ -782,12 +813,15 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    async handleStart() {
-        // 只要求有所选识别服务的那套凭据；对话那把永远是 DeepSeek 的。识别服务二选一，未配全就拦到配置页。
-        const [chatKey, config, creds] = await Promise.all([
+    async handleStart(mode = 'interview') {
+        const written = mode === 'written';
+        // 面试要求有所选识别服务的那套凭据；对话那把永远是 DeepSeek 的。笔试不开语音识别，只要对话密钥。
+        // 识别服务二选一，面试时未配全就拦到配置页。
+        const [chatKey, config, creds, prefs] = await Promise.all([
             offerHunter.storage.getDeepseekApiKey(),
             offerHunter.storage.getConfig(),
             offerHunter.storage.getCredentials(),
+            offerHunter.storage.getPreferences(),
         ]);
 
         const provider = config.asrProvider || 'bailian';
@@ -802,20 +836,24 @@ export class OfferHunterApp extends LocalizedLitElement {
                 : Boolean((creds.bailianApiKey || '').trim() && (config.bailianWsUrl || '').trim() && (config.bailianModel || '').trim());
 
         // 缺密钥或初始化失败都指向同一个地方——「API 配置」页，那里才是唯一能改密钥的入口。
-        if (!chatKey || chatKey.trim() === '' || !asrConfigured) {
+        if (!chatKey || chatKey.trim() === '' || (!written && !asrConfigured)) {
             this.navigate('api-config');
             return;
         }
 
-        const success = await offerHunter.initializeChat();
+        const success = await offerHunter.initializeChat(mode);
         if (!success) {
             this.navigate('api-config');
             return;
         }
 
-        offerHunter.startCapture(this.selectedImageQuality);
+        offerHunter.startCapture(this.selectedImageQuality, mode);
+        this.sessionMode = mode;
+        this.writtenError = '';
+        this._writtenErrorSource = '';
         this.messages = [];
-        this._paused = false;
+        // 笔试的「暂停」管的是自动截图：设置里关掉自动截图时，开局即处于暂停态，左上角按钮点一下才开始。
+        this._paused = written ? prefs.writtenAutoScreenshot === false : false;
         // floor 跟随的是主进程自己的计数器，而 resetAudioState 会把它们归零，所以沿用旧值会让新会话的每个
         // id 都落在旧 floor 之下，被静默压制。
         this._turnFloorId = 0;
@@ -879,7 +917,7 @@ export class OfferHunterApp extends LocalizedLitElement {
 
             case 'main':
                 return html`
-                    <main-view .onStart=${() => this.handleStart()} .onOpenConfig=${() => this.navigate('api-config')}></main-view>
+                    <main-view .onStart=${mode => this.handleStart(mode)} .onOpenConfig=${() => this.navigate('api-config')}></main-view>
                 `;
 
             case 'api-config':
@@ -907,6 +945,9 @@ export class OfferHunterApp extends LocalizedLitElement {
             case 'assistant':
                 return html`
                     <assistant-view
+                        .sessionMode=${this.sessionMode}
+                        .paused=${this._paused}
+                        .writtenError=${this.writtenError}
                         .messages=${this.messages}
                         .detailMessages=${this.detailMessages}
                         .detailCurrent=${this.detailCurrent}
@@ -1080,16 +1121,21 @@ export class OfferHunterApp extends LocalizedLitElement {
                             <rect x="13.6" y="5" width="3.4" height="14" rx="1" />
                         </svg>
                     </button>
-                    <button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
-                        <!-- 和手机提词页那颗「清空上下文」用同一个扫帚图标,两边一眼对得上。 -->
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="currentColor">
-                            <path
-                                d="M453.312 448H248a29.312 29.312 0 0 0-29.312 29.312v58.688c0 16.192 13.12 29.312 29.312 29.312h528a29.312 29.312 0 0 0 29.312-29.312v-58.688A29.312 29.312 0 0 0 776 448H570.688V184a29.312 29.312 0 0 0-29.376-29.312h-58.624a29.312 29.312 0 0 0-29.376 29.312V448z m-58.624-58.688V154.688c0-32.448 26.24-58.688 58.624-58.688h117.376c32.384 0 58.624 26.24 58.624 58.688v234.624h176c32.448 0 58.688 26.24 58.688 58.688v117.312c0 32.448-26.24 58.688-58.688 58.688v234.688c0 32.384-26.24 58.624-58.624 58.624H277.312a58.688 58.688 0 0 1-58.624-58.624V624a58.688 58.688 0 0 1-58.688-58.688V448c0-32.384 26.24-58.688 58.688-58.688h176z m352 234.688H277.312v205.312c0 16.192 13.184 29.376 29.376 29.376h410.624a29.312 29.312 0 0 0 29.376-29.376V624z m-88 58.688c16.192 0 29.312 13.12 29.312 29.312v146.688h-58.688v-146.688c0-16.192 13.184-29.312 29.376-29.312z m-117.376 58.624c16.192 0 29.376 13.184 29.376 29.376v88H512v-88c0-16.192 13.12-29.376 29.312-29.376z m-117.312 58.688c16.192 0 29.312 13.12 29.312 29.312v29.376h-58.624v-29.376c0-16.192 13.12-29.312 29.312-29.312z"
-                            />
-                        </svg>
-                    </button>
+                    ${
+                        // 笔试没有对话转录，模型上下文里也从不写入截图轮，清空上下文在这里是个无效按钮。
+                        this.sessionMode === 'written'
+                            ? ''
+                            : html`<button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
+                                  <!-- 和手机提词页那颗「清空上下文」用同一个扫帚图标,两边一眼对得上。 -->
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="currentColor">
+                                      <path
+                                          d="M453.312 448H248a29.312 29.312 0 0 0-29.312 29.312v58.688c0 16.192 13.12 29.312 29.312 29.312h528a29.312 29.312 0 0 0 29.312-29.312v-58.688A29.312 29.312 0 0 0 776 448H570.688V184a29.312 29.312 0 0 0-29.376-29.312h-58.624a29.312 29.312 0 0 0-29.376 29.312V448z m-58.624-58.688V154.688c0-32.448 26.24-58.688 58.624-58.688h117.376c32.384 0 58.624 26.24 58.624 58.688v234.624h176c32.448 0 58.688 26.24 58.688 58.688v117.312c0 32.448-26.24 58.688-58.688 58.688v234.688c0 32.384-26.24 58.624-58.624 58.624H277.312a58.688 58.688 0 0 1-58.624-58.624V624a58.688 58.688 0 0 1-58.688-58.688V448c0-32.384 26.24-58.688 58.688-58.688h176z m352 234.688H277.312v205.312c0 16.192 13.184 29.376 29.376 29.376h410.624a29.312 29.312 0 0 0 29.376-29.376V624z m-88 58.688c16.192 0 29.312 13.12 29.312 29.312v146.688h-58.688v-146.688c0-16.192 13.184-29.312 29.376-29.312z m-117.376 58.624c16.192 0 29.376 13.184 29.376 29.376v88H512v-88c0-16.192 13.12-29.376 29.312-29.376z m-117.312 58.688c16.192 0 29.312 13.12 29.312 29.312v29.376h-58.624v-29.376c0-16.192 13.12-29.312 29.312-29.312z"
+                                      />
+                                  </svg>
+                              </button>`
+                    }
                 </div>
-                <div class="live-bar-center">Interview</div>
+                <div class="live-bar-center">${this.sessionMode === 'written' ? t('Written Test', '笔试') : 'Interview'}</div>
                 <div class="live-bar-right">
                     ${this.statusText ? html`<span class="live-bar-text">${this.statusText}</span>` : ''}
                     <span class="live-bar-text">${this.getElapsedTime()}</span>

@@ -127,25 +127,54 @@ app.whenReady().then(async () => {
         check('pairing box shows the code', (await exec(`window.__q('.pair-code').textContent`)).trim() === '123456');
         check('status reads waiting before pairing', (await exec(`window.__q('.pair-status').textContent`)).includes('等待手机连接'));
 
-        // 未配对:按钮禁用,点了也不启动。
-        await exec(`window.__started = 0; document.querySelector('main-view').onStart = () => { window.__started += 1; }; void 0`);
-        check('start button disabled before pairing', await exec(disabled));
-        check('unpaired start button reads 手机未连接', (await exec(`window.__q('.start-button').textContent`)).includes('手机未连接'));
-        check('unpaired start button drops the shortcut hint', await exec(`!window.__q('.shortcut-hint')`));
+        // 未配对:两个入口都禁用,点了也不启动。
+        await exec(
+            `window.__started = 0; window.__mode = null; document.querySelector('main-view').onStart = mode => { window.__started += 1; window.__mode = mode; }; window.__buttons = () => window.__root().querySelectorAll('.start-button'); void 0`
+        );
+        check('both start buttons rendered', (await exec(`window.__buttons().length`)) === 2);
+        check('start buttons disabled before pairing', await exec(`[...window.__buttons()].every(b => b.disabled)`));
+        check('unpaired buttons read 手机未连接', await exec(`[...window.__buttons()].every(b => b.textContent.includes('手机未连接'))`));
+        check('start buttons carry no shortcut hint', await exec(`!window.__q('.shortcut-hint')`));
         await exec(`window.__q('.start-button').click()`);
         await wait(100);
         check('clicking disabled button does not start', (await exec(`window.__started`)) === 0);
 
-        // 手机连上:轮询(1.5s)后按钮应启用,点击才真正启动。
+        // 手机连上:轮询(1.5s)后按钮应启用,点击才真正启动;两个入口各自把自己的模式交给上层。
         await exec(`window.__tp.paired = true`);
         await wait(1800);
-        check('start button enabled after phone pairs', await exec(`!${disabled}`));
-        check('paired start button reads 开始会话', (await exec(`window.__q('.start-button').textContent`)).includes('开始会话'));
-        check('paired start button shows the shortcut hint', await exec(`!!window.__q('.shortcut-hint')`));
-        check('status reads connected after pairing', (await exec(`window.__q('.pair-status').textContent`)).includes('手机已连接'));
-        await exec(`window.__q('.start-button').click()`);
+        check('start buttons enabled after phone pairs', await exec(`[...window.__buttons()].every(b => !b.disabled)`));
+        check('first start button reads 开始面试', (await exec(`window.__buttons()[0].textContent`)).includes('开始面试'));
+        check('second start button reads 开始笔试', (await exec(`window.__buttons()[1].textContent`)).includes('开始笔试'));
+        // 两个入口同款白底,并排放在同一行。
+        check(
+            'both start buttons use the same white style',
+            await exec(`(() => {
+                const [a, b] = window.__buttons();
+                const color = el => getComputedStyle(el).backgroundColor;
+                return color(a) === color(b) && color(a) === 'rgb(232, 232, 232)';
+            })()`)
+        );
+        check(
+            'start buttons sit on the same row',
+            await exec(`(() => {
+                const [a, b] = window.__buttons();
+                const left = a.getBoundingClientRect();
+                const right = b.getBoundingClientRect();
+                return Math.abs(left.top - right.top) < 1 && right.left > left.left;
+            })()`)
+        );
+        // 原本 Ctrl+Enter 是主页的开面试快捷键,现在按钮上不再提示,按下也不该启动任何会话。
+        check('start buttons carry no shortcut hint after pairing', await exec(`!window.__q('.shortcut-hint')`));
+        await exec(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))`);
         await wait(100);
-        check('clicking enabled button starts the session', (await exec(`window.__started`)) === 1);
+        check('ctrl+enter no longer starts a session', (await exec(`window.__started`)) === 0);
+        check('status reads connected after pairing', (await exec(`window.__q('.pair-status').textContent`)).includes('手机已连接'));
+        await exec(`window.__buttons()[0].click()`);
+        await wait(100);
+        check('interview button starts with mode interview', (await exec(`window.__started === 1 && window.__mode === 'interview'`)));
+        await exec(`window.__buttons()[1].click()`);
+        await wait(100);
+        check('written button starts with mode written', (await exec(`window.__started === 2 && window.__mode === 'written'`)));
 
         // 手机断开:按钮应重新禁用。
         await exec(`window.__tp.paired = false`);

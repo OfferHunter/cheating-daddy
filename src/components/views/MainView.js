@@ -187,6 +187,16 @@ export class MainView extends LocalizedLitElement {
             opacity: 0.9;
         }
 
+        /* 两个入口并排,等宽平分这一行。 */
+        .start-actions {
+            display: flex;
+            gap: var(--space-sm);
+        }
+
+        .start-actions .start-button {
+            flex: 1;
+        }
+
         .start-button.disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -194,14 +204,6 @@ export class MainView extends LocalizedLitElement {
 
         .start-button.disabled:hover {
             opacity: 0.5;
-        }
-
-        .shortcut-hint {
-            display: inline-flex;
-            align-items: center;
-            gap: 2px;
-            opacity: 0.5;
-            font-family: var(--font-mono);
         }
 
         .pair-box {
@@ -329,13 +331,10 @@ export class MainView extends LocalizedLitElement {
         this.teleprompterRunning = false;
         this.teleprompterPaired = false;
         this.teleprompterCopied = false;
-
-        this.boundKeydownHandler = this._handleKeydown.bind(this);
     }
 
     connectedCallback() {
         super.connectedCallback();
-        document.addEventListener('keydown', this.boundKeydownHandler);
         // 配对是主进程那边的状态,渲染端没有事件可听,轮询最省事:主页在会话开始前才挂着,这点开销可忽略。
         this._refreshTeleprompter();
         this._teleprompterTimer = setInterval(() => this._refreshTeleprompter(), 1500);
@@ -343,7 +342,6 @@ export class MainView extends LocalizedLitElement {
 
     disconnectedCallback() {
         super.disconnectedCallback();
-        document.removeEventListener('keydown', this.boundKeydownHandler);
         clearInterval(this._teleprompterTimer);
         clearTimeout(this._copiedTimer);
     }
@@ -379,14 +377,6 @@ export class MainView extends LocalizedLitElement {
         this.teleprompterPaired = Boolean(status.paired);
     }
 
-    _handleKeydown(e) {
-        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-        if ((isMac ? e.metaKey : e.ctrlKey) && e.key === 'Enter' && this._canStartSession()) {
-            e.preventDefault();
-            this._handleStart();
-        }
-    }
-
     // 电脑+移动端这一模式里手机才是显示端,没配对就开会话等于对着没人看的窗口说话,所以必须先连上手机。
     _canStartSession() {
         const page = MODE_PAGES[this.pageIndex];
@@ -394,9 +384,9 @@ export class MainView extends LocalizedLitElement {
         return page === 'desktop';
     }
 
-    _handleStart() {
+    _handleStart(mode = 'interview') {
         if (this.isInitializing || !this._canStartSession()) return;
-        this.onStart();
+        this.onStart(mode);
     }
 
     // 环形切换：到两端再点就回到另一头。
@@ -432,70 +422,35 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    _renderStartButton(enabled = true, disabledLabel = null) {
-        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    _renderStartButton({ mode, label, enabled = true, disabledLabel = null }) {
         const disabled = this.isInitializing || !enabled;
-        // 手机没连上时按钮换成断开提示;初始化中的短暂禁用不算「没连上」,仍显示「开始会话」。
+        // 手机没连上时按钮换成断开提示;初始化中的短暂禁用不算「没连上」,仍显示入口名。
         const disconnected = !this.isInitializing && !enabled && Boolean(disabledLabel);
 
-        const cmdIcon = html`<svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-        >
-            <path
-                d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"
-            />
-        </svg>`;
-        const ctrlIcon = html`<svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-        >
-            <path d="M6 15l6-6 6 6" />
-        </svg>`;
-        const enterIcon = html`<svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="3"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-        >
-            <path d="M9 10l-5 5 5 5" />
-            <path d="M20 4v7a4 4 0 0 1-4 4H4" />
-        </svg>`;
-
         return html`
-            <button
-                class="start-button ${disabled ? 'disabled' : ''}"
-                ?disabled=${disabled}
-                @click=${() => this._handleStart()}
-            >
-                <span class="btn-label">
-                    ${disconnected ? disabledLabel : t('Start Session', '开始会话')}
-                    ${
-                        disconnected
-                            ? ''
-                            : html`<span class="shortcut-hint">${isMac ? cmdIcon : ctrlIcon}${enterIcon}</span>`
-                    }
-                </span>
+            <button class="start-button ${disabled ? 'disabled' : ''}" ?disabled=${disabled} @click=${() => this._handleStart(mode)}>
+                <span class="btn-label">${disconnected ? disabledLabel : label}</span>
             </button>
+        `;
+    }
+
+    // 两个入口并排、同款按钮,不再用视觉权重区分主次,也没有快捷键提示。
+    _renderStartButtons(enabled = true, disabledLabel = null) {
+        return html`
+            <div class="start-actions">
+                ${this._renderStartButton({
+                    mode: 'interview',
+                    label: t('Start Interview', '开始面试'),
+                    enabled,
+                    disabledLabel,
+                })}
+                ${this._renderStartButton({
+                    mode: 'written',
+                    label: t('Start Written Test', '开始笔试'),
+                    enabled,
+                    disabledLabel,
+                })}
+            </div>
         `;
     }
 
@@ -517,7 +472,7 @@ export class MainView extends LocalizedLitElement {
                     '虽然本应用隐身，但部分网站可能会捕捉快捷键、离屏事件、离屏率等，请你谨慎使用此模式。\n设置中开启「会话界面不可聚焦」可以让会议软件/网页始终保持聚焦，但无法使用下方输入框打字（一般情况下用不上），且鼠标移进应用区域仍会被捕捉离屏事件；\n开启「鼠标穿透」可以彻底让本应用透明化（鼠标移动到本应用上不触发离屏事件），但也会让您无法点击本应用的控件；\n建议将快捷键设置为常用单键如空格、回车和字母键，这样即使被捕捉到也无所谓，但可能会触发其他应用的其他控件。'
                 ).split('\n').map((line, i) => (i === 0 ? line : html`<br />${line}`))}
             </div>
-            ${this._renderStartButton()}
+            ${this._renderStartButtons()}
             <div class="config-hint">
                 <span class="link" @click=${() => this.onOpenConfig()}
                     >${t('Configure chat and speech models', '配置对话与语音模型')}</span
@@ -570,7 +525,7 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    // 电脑+移动端提词：手机负责显示，先在下面配对，连上之后「开始会话」才放行。
+    // 电脑+移动端提词：手机负责显示，先在下面配对，连上之后「开始面试 / 开始笔试」才放行。
     _renderDesktopPhonePage() {
         return html`
             <div class="page-title">
@@ -591,7 +546,7 @@ export class MainView extends LocalizedLitElement {
                     .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
             </div>
             ${this._renderPairingBox()}
-            ${this._renderStartButton(this.teleprompterPaired, t('Phone not connected', '手机未连接'))}
+            ${this._renderStartButtons(this.teleprompterPaired, t('Phone not connected', '手机未连接'))}
             <div class="config-hint">
                 <span class="link" @click=${() => this.onOpenConfig()}
                     >${t('Configure chat and speech models', '配置对话与语音模型')}</span

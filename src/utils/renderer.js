@@ -22,11 +22,35 @@ let offscreenCanvas = null;
 let offscreenContext = null;
 let currentImageQuality = 'medium';
 
+// 笔试模式：只采屏幕、不开任何音频；自动截图定时器也归这里管，因为采集在渲染端。
+let writtenMode = false;
+let autoScreenshotTimer = null;
+// 一次自动截图包含「抓帧 → 主进程判断 → 可能作答」，可能比间隔还长。上一轮没回来就跳过这一拍，免得请求叠起来。
+let autoScreenshotBusy = false;
+// 手动截图和自动截图共用同一块离屏画布，串行执行，否则两边的 drawImage/toBlob 会互相覆盖。
+let frameCaptureChain = Promise.resolve();
+// captureFrameBase64 最近一次抓不到帧的原因。只记真正的故障：视频还没出第一帧是瞬态，不该在每个笔试会话
+// 开头闪一条假错误，所以那一路不写这里。
+let lastFrameError = '';
+// 「截图进入缓存」攒下的帧：长题目分几屏截，最后和当前这一屏一起发。自动截图从不读写它。
+let manualScreenshotCache = [];
+
 // 暂停时采集照旧，每 100ms 仍然送一帧，只是帧里是静音。改成停止发送反而会饿死识别任务——端点静默太久
 // 会主动结束它；而送出去的静音帧在到达 socket 前就被丢掉了，音频不会作为语音离开本进程。
 let capturePaused = false;
 
 const isMacOS = process.platform === 'darwin';
+
+// 笔试空态里的错误条。错误只在笔试里有落点：面试没有空态，采集失败仍旧走原来的状态栏。
+function reportWrittenError(source, detail) {
+    if (!writtenMode) return;
+    offerHunter.reportWrittenError(source, detail);
+}
+
+function clearWrittenError(sources) {
+    if (!writtenMode) return;
+    offerHunter.clearWrittenError(sources);
+}
 
 // 渲染端的 console 只写进 Chromium 的 devtools，打包后无处可看。全部原样转发到主进程落盘（主进程那份
 // 文件里带 [Renderer] 前缀）。这里是「采集起不来」时唯一能看到错误名的地方——NotAllowedError 和
@@ -224,13 +248,14 @@ function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-async function initializeChat() {
+async function initializeChat(mode = 'interview') {
     const prefs = await storage.getPreferences();
     const customPrompt = prefs.customPrompt ?? DEFAULT_PREFERENCES.customPrompt;
 
-    const success = await ipcRenderer.invoke('initialize-chat', customPrompt);
+    const success = await ipcRenderer.invoke('initialize-chat', customPrompt, mode);
     if (success) {
-        offerHunter.setStatus('Live');
+        // 笔试没有语音识别，说「实时」会误导；等第一帧截图到达后才会有回答。
+        offerHunter.setStatus(mode === 'written' ? 'Waiting for the question...' : 'Live');
         return true;
     }
     offerHunter.setStatus('error');
@@ -303,15 +328,18 @@ async function logPermissionStates() {
 // 三条采集路径——屏幕（截图来源）、Windows 回环音（"扬声器"）、麦克风——各自成败互不连坐。它们过去串在一个
 // try 里：麦克风排在 getDisplayMedia 之后，屏幕一旦取不到就直接跳到 catch，麦克风那段根本不执行。日志里
 // "截图没反应 + 扬声器哑 + 麦克风也没声"因此可能只是同一个根因，必须拆开才看得到真相。
-async function startCapture(imageQuality = 'medium') {
+async function startCapture(imageQuality = 'medium', mode = 'interview') {
     currentImageQuality = imageQuality;
+    writtenMode = mode === 'written';
+    stopAutoScreenshotTimer();
 
     await loadPreferencesCache();
     const micDeviceId = preferencesCache.audioInputDeviceId || 'none';
     // 麦克风是候选人自己那一路：与扬声器那一路并行，而不是取代它，所以只有「明确不用麦克风」才会关掉它。
-    const shouldCaptureMic = micDeviceId !== 'none';
+    // 笔试两路都不要：没有识别，采集音频只是白白占用设备和隐私。
+    const shouldCaptureMic = !writtenMode && micDeviceId !== 'none';
 
-    console.log('[Capture] start', { imageQuality, micDeviceId, shouldCaptureMic });
+    console.log('[Capture] start', { imageQuality, mode, micDeviceId, shouldCaptureMic });
     await logPermissionStates();
     console.log('[Capture] devices:', await describeMediaDevices());
 
@@ -319,23 +347,83 @@ async function startCapture(imageQuality = 'medium') {
     // 不该继续活着。
     releaseMicCapture();
 
-    await startScreenCapture();
+    await startScreenCapture(!writtenMode);
     if (shouldCaptureMic) await startMicCapture(micDeviceId);
+    // startCapture 不被 await，用户可能在采集还没起来时就点了暂停：这时不能反过来把定时器开起来。
+    if (writtenMode && !capturePaused && preferencesCache.writtenAutoScreenshot !== false) {
+        startAutoScreenshotTimer({ immediate: true });
+    }
+}
+
+function autoScreenshotIntervalMs() {
+    const seconds = Number(preferencesCache?.writtenScreenshotIntervalSec);
+    const safe = Number.isFinite(seconds) ? seconds : DEFAULT_PREFERENCES.writtenScreenshotIntervalSec;
+    return Math.min(60, Math.max(0.5, safe)) * 1000;
+}
+
+function stopAutoScreenshotTimer() {
+    if (autoScreenshotTimer) {
+        clearInterval(autoScreenshotTimer);
+        autoScreenshotTimer = null;
+    }
+}
+
+function startAutoScreenshotTimer({ immediate = false } = {}) {
+    stopAutoScreenshotTimer();
+    autoScreenshotTimer = setInterval(() => autoScreenshotTick(), autoScreenshotIntervalMs());
+    // 开局题目通常已经在屏幕上，不必先空等一个间隔；恢复暂停时同理，用户刚点完就想看到结果。
+    if (immediate) autoScreenshotTick();
+}
+
+// 抓一帧就交给主进程：判断「和上一帧比题目变没变」以及作答都在那边，因为 API 密钥和轮次状态归主进程。
+async function autoScreenshotTick() {
+    if (!writtenMode || capturePaused || !mediaStream || autoScreenshotBusy) return;
+
+    autoScreenshotBusy = true;
+    try {
+        const frame = await withCaptureLock(() => captureFrameBase64(currentImageQuality));
+        if (!frame) {
+            if (lastFrameError) reportWrittenError('capture', lastFrameError);
+            return;
+        }
+
+        const result = await ipcRenderer.invoke('auto-screenshot', { data: frame.data });
+        if (!result?.success) {
+            console.warn('[Capture] auto screenshot rejected:', result?.error);
+            reportWrittenError('screenshot', result?.error || 'Unknown error');
+        } else {
+            // 这一拍成功说明采集和发送都恢复了；缓存失败是另一条链，不跟着清。
+            clearWrittenError(['capture', 'screenshot']);
+        }
+    } catch (error) {
+        console.error('[Capture] auto screenshot failed:', error);
+        reportWrittenError('screenshot', error.message);
+    } finally {
+        autoScreenshotBusy = false;
+    }
+}
+
+function withCaptureLock(task) {
+    const next = frameCaptureChain.then(task, task);
+    frameCaptureChain = next.catch(() => {});
+    return next;
 }
 
 // 屏幕 + Windows 回环音。macOS 的"扬声器"不在这里，它走 SystemAudioDump，所以那个也单独成一块——它挂掉
 // 不该把截图一起带走。
-async function startScreenCapture() {
+async function startScreenCapture(withAudio = true) {
     try {
         if (isMacOS) {
-            try {
-                const audioResult = await ipcRenderer.invoke('start-macos-audio');
-                if (!audioResult.success) {
-                    throw new Error(audioResult.error);
+            if (withAudio) {
+                try {
+                    const audioResult = await ipcRenderer.invoke('start-macos-audio');
+                    if (!audioResult.success) {
+                        throw new Error(audioResult.error);
+                    }
+                    console.log('macOS system audio started (SystemAudioDump)');
+                } catch (audioError) {
+                    console.error(`[Capture] macOS system audio failed [${audioError && audioError.name}]:`, audioError);
                 }
-                console.log('macOS system audio started (SystemAudioDump)');
-            } catch (audioError) {
-                console.error(`[Capture] macOS system audio failed [${audioError && audioError.name}]:`, audioError);
             }
 
             mediaStream = await navigator.mediaDevices.getDisplayMedia({
@@ -355,18 +443,20 @@ async function startScreenCapture() {
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
                 },
-                audio: {
-                    sampleRate: SAMPLE_RATE,
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                },
+                audio: withAudio
+                    ? {
+                          sampleRate: SAMPLE_RATE,
+                          channelCount: 1,
+                          echoCancellation: true,
+                          noiseSuppression: true,
+                          autoGainControl: true,
+                      }
+                    : false,
             });
 
-            console.log('Windows capture started with loopback audio');
+            console.log(withAudio ? 'Windows capture started with loopback audio' : 'Windows screen capture started without audio');
 
-            setupWindowsLoopbackProcessing();
+            if (withAudio) setupWindowsLoopbackProcessing();
         }
 
         // 视频轨有没有、有没有音频轨（扬声器回环靠它）在这一行当场可辨：只有视频轨 = 只拿到了屏幕、没拿到
@@ -385,6 +475,7 @@ async function startScreenCapture() {
     } catch (err) {
         // 错误名（NotAllowedError/NotFoundError/NotReadableError/AbortError）就是处置方式的分水岭，单独拎出来。
         console.error(`Error starting screen capture [${err && err.name}]:`, err);
+        reportWrittenError('capture', [err && err.name, err && err.message].filter(Boolean).join(': ') || 'Unknown error');
         offerHunter.setStatus('error');
     }
 }
@@ -538,14 +629,23 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
     );
 }
 
-// 返回主进程的答复；什么都没发出去时返回 null。调用方拿这个值来结束自己的忙碌态，所以每条拒绝发送的
-// 路径都必须说得出话——静默 return 会让按钮一直转到下一次会话。
-async function captureManualScreenshot(imageQuality = null) {
-    console.log('Manual screenshot triggered');
-    const quality = imageQuality || currentImageQuality;
+// 当前屏幕帧 → JPEG base64；没有流或还没有帧时返回 null。手动与自动截图共用这一条抓帧路径，
+// 输出尺寸/质量的选择只在这里做一次。
+async function captureFrameBase64(quality) {
+    lastFrameError = '';
 
     if (!mediaStream) {
+        // 采集在会话开始时就没起来，那条更具体的错误已经由 startScreenCapture 报过了；这里不拿一个笼统的
+        // 「没有采集流」去覆盖它。
         console.warn('No media stream available, skipping screenshot');
+        return null;
+    }
+
+    // macOS 上用户可以从系统菜单栏停止共享；轨道结束后视频元素会停在最后一帧，继续截图只会把旧画面发出去。
+    const videoTrack = mediaStream.getVideoTracks()[0];
+    if (!videoTrack || videoTrack.readyState === 'ended') {
+        lastFrameError = 'Screen capture stream ended';
+        console.warn('Screen capture stream ended, skipping screenshot');
         return null;
     }
 
@@ -604,34 +704,26 @@ async function captureManualScreenshot(imageQuality = null) {
 
     return new Promise(resolve => {
         offscreenCanvas.toBlob(
-            async blob => {
+            blob => {
                 if (!blob) {
+                    lastFrameError = 'Failed to encode the screenshot';
                     console.error('Failed to create blob from canvas');
                     resolve(null);
                     return;
                 }
 
                 const reader = new FileReader();
-                reader.onloadend = async () => {
+                reader.onloadend = () => {
                     const base64data = reader.result.split(',')[1];
 
                     if (!base64data || base64data.length < 100) {
+                        lastFrameError = 'Invalid screenshot data';
                         console.error('Invalid base64 data generated');
                         resolve(null);
                         return;
                     }
 
-                    console.log(`Sending image: ${destW}x${destH}, ~${Math.round(base64data.length / 1024)}KB`);
-
-                    // 回答是通过详情面板事件流回来的；这个返回值只说明请求已发出去了、发给了哪个模型、开的是哪一轮。
-                    try {
-                        resolve(
-                            await ipcRenderer.invoke('send-image-content', { data: base64data })
-                        );
-                    } catch (error) {
-                        console.error('Failed to send screenshot:', error);
-                        resolve(null);
-                    }
+                    resolve({ data: base64data, width: destW, height: destH });
                 };
                 reader.readAsDataURL(blob);
             },
@@ -641,11 +733,66 @@ async function captureManualScreenshot(imageQuality = null) {
     });
 }
 
+// 只抓当前屏放进缓存，不发任何请求。长题目分几屏时，先用它把前面的部分攒起来。
+async function captureScreenshotToCache(imageQuality = null) {
+    const frame = await withCaptureLock(() => captureFrameBase64(imageQuality || currentImageQuality));
+    if (!frame) {
+        if (lastFrameError) reportWrittenError('cache', lastFrameError);
+        return { success: false, error: lastFrameError || 'No frame available', count: manualScreenshotCache.length };
+    }
+
+    console.log(`Screenshot cached: ${frame.width}x${frame.height}, ~${Math.round(frame.data.length / 1024)}KB`);
+    manualScreenshotCache.push(frame.data);
+    // 缓存成功只说明采集和缓存这条链恢复了，不该顺手抹掉一次手动发送失败。
+    clearWrittenError(['capture', 'cache']);
+    return { success: true, count: manualScreenshotCache.length };
+}
+
+// 返回主进程的答复；什么都没发出去时返回 null。调用方拿这个值来结束自己的忙碌态，所以每条拒绝发送的
+// 路径都必须说得出话——静默 return 会让按钮一直转到下一次会话。
+// 缓存帧排在当前帧前面：它们是先截的题目上半部分，模型按顺序读才对得上。
+async function captureManualScreenshot(imageQuality = null) {
+    console.log('Manual screenshot triggered');
+    const frame = await withCaptureLock(() => captureFrameBase64(imageQuality || currentImageQuality));
+    if (!frame) {
+        if (lastFrameError) reportWrittenError('screenshot', lastFrameError);
+        return null;
+    }
+
+    const frames = [...manualScreenshotCache, frame.data];
+    console.log(
+        `Sending ${frames.length} image(s): current ~${Math.round(frame.data.length / 1024)}KB, cached ${frames.length - 1}`
+    );
+
+    // 回答是通过详情面板事件流回来的；这个返回值只说明请求已发出去了、发给了哪个模型、开的是哪一轮。
+    try {
+        const result = await ipcRenderer.invoke('send-image-content', { data: frames });
+        // 只有主进程收下了才清缓存：发送失败时用户可以直接重试，不用重新一屏屏截。
+        if (result?.success) {
+            manualScreenshotCache = [];
+            clearWrittenError();
+        } else {
+            reportWrittenError('screenshot', result?.error || 'Unknown error');
+        }
+        return result;
+    } catch (error) {
+        console.error('Failed to send screenshot:', error);
+        reportWrittenError('screenshot', error.message || 'Unknown error');
+        return null;
+    }
+}
+
 // 挂到 window 上供组件直接调用。
 window.captureManualScreenshot = captureManualScreenshot;
+window.captureScreenshotToCache = captureScreenshotToCache;
+window.getScreenshotCacheCount = () => manualScreenshotCache.length;
 
 function stopCapture() {
     capturePaused = false;
+    writtenMode = false;
+    stopAutoScreenshotTimer();
+    // 缓存属于这一场会话：换一场还留着上一场的题，下一次「截图并发送」会把它一起发出去。
+    manualScreenshotCache = [];
 
     if (screenshotInterval) {
         clearInterval(screenshotInterval);
@@ -909,14 +1056,9 @@ ipcRenderer.on('clear-sensitive-data', async () => {
 });
 
 function handleShortcut(shortcutKey) {
-    const currentView = offerHunter.getCurrentView();
-
+    // 主页不再用这个快捷键启动会话:两个入口都只在界面上点。主页没有采集流时,截图调用自己会空跑返回。
     if (shortcutKey === 'ctrl+enter' || shortcutKey === 'cmd+enter') {
-        if (currentView === 'main') {
-            offerHunter.element().handleStart();
-        } else {
-            captureManualScreenshot();
-        }
+        captureManualScreenshot();
     }
 }
 
@@ -1281,6 +1423,8 @@ const offerHunter = {
     getLayoutMode: () => offerHunterApp.layoutMode,
 
     setStatus: text => offerHunterApp.setStatus(text),
+    reportWrittenError: (source, detail) => offerHunterApp.reportWrittenError(source, detail),
+    clearWrittenError: sources => offerHunterApp.clearWrittenError(sources),
     addNewResponse: response => offerHunterApp.addNewResponse(response),
     updateCurrentResponse: response => offerHunterApp.updateCurrentResponse(response),
 
@@ -1290,9 +1434,13 @@ const offerHunter = {
     sendTextMessage,
     handleShortcut,
 
-    // 暂停时两条采集照旧跑，只是不再喂给识别器；清空只重置模型看过的上下文，不动磁盘上的记录。
+    // 面试暂停时两条采集照旧跑，只是不再喂给识别器；笔试没有音频，暂停直接停掉自动截图的定时器。
     setPaused: async value => {
         capturePaused = Boolean(value);
+        if (writtenMode) {
+            if (capturePaused) stopAutoScreenshotTimer();
+            else startAutoScreenshotTimer({ immediate: true });
+        }
         return ipcRenderer.invoke('set-audio-paused', Boolean(value));
     },
     clearContext: () => ipcRenderer.invoke('clear-context'),

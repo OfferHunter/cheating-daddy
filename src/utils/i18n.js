@@ -18,6 +18,9 @@ const zh = {
     'AI Context': 'AI 上下文',
     'New Session': '新建会话',
     'Start Session': '开始会话',
+    'Start Interview': '开始面试',
+    'Start Written Test': '开始笔试',
+    'Written Test': '笔试',
     'End Session': '结束会话',
     'Clear context': '清除上下文',
     'Toggle pause': '暂停或继续',
@@ -118,6 +121,12 @@ const zh = {
     'Thinking in the screenshot reply': '截图回答启用思考',
     'Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come back empty. Takes effect on the next session.':
         '回答前思考会增加少量等待，但通常能提高质量。建议简短回答关闭、详细回答开启。截图回答单独控制，因为图片请求的思考也占用超时时间；复杂截图可能在输出正文前就耗尽时间。下次会话生效。',
+    'Auto screenshot in written tests': '笔试自动截图',
+    'Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time.':
+        '开始笔试时是否自动截图；左上角的暂停按钮可随时停止或继续。',
+    'Screenshot Interval (s)': '截图间隔（秒）',
+    'Takes a screenshot at intervals and compares it with the previous frame to decide whether to answer again. Default 3 seconds.':
+        '隔一段时间自动截图，结合上一帧差异判断是否重新作答。默认 3 秒。',
     'Summarize the screenshot into the conversation': '把截图概括写入对话',
     'Before the answer, a small extra request turns the screenshot into a text line — that line is what the transcript shows, and the only trace of the turn in the model\'s context later. Turn it off to skip that request and show just “[屏幕截图]”; the screenshot is still answered in the detail pane, and the turn is left out of the replayed context. Takes effect on the next session.':
         '作答之前会额外发一个小请求，把截图概括成一行文字：这行就是对话记录里显示的内容，也是这一轮之后在模型上下文里唯一的痕迹。关闭后不再发这个请求，对话记录只显示「[屏幕截图]」；截图本身仍会在详细面板里作答，这一轮也不再回放给模型。下次会话生效。',
@@ -161,6 +170,9 @@ const zh = {
     'Drag to resize the detailed answers': '拖动调整详细回答区域大小',
     'Type a message...': '输入消息…',
     'Analyze Screen': '分析屏幕',
+    'Screenshot & send': '截图并发送',
+    'Screenshot to cache': '截图进入缓存',
+    Answers: '回答',
     Start: '开始',
     Stop: '停止',
     Save: '保存',
@@ -267,6 +279,9 @@ const zh = {
     Live: '实时',
     'Generating response...': '正在生成回答…',
     'Analyzing image...': '正在分析图像…',
+    'Waiting for the question...': '正在等待题目…',
+    'Waiting for the written question...': '正在等待笔试题目…',
+    'Auto screenshot paused': '自动截图已暂停',
     'Message sent...': '消息已发送…',
     error: '错误',
     '[click through]': '［鼠标穿透］',

@@ -1,6 +1,6 @@
 const { DEFAULT_PREFERENCES } = window.require('./defaults');
 import { html, css } from '../../assets/lit-core-2.7.4.min.js';
-import { LocalizedLitElement } from '../../utils/i18n.js';
+import { LocalizedLitElement, t } from '../../utils/i18n.js';
 import { conversationStyles, syncMarkdownInto } from './conversationStyles.js';
 import { scrollbarStyles } from './sharedPageStyles.js';
 
@@ -371,10 +371,147 @@ export class AssistantView extends LocalizedLitElement {
                 opacity: 0.45;
                 cursor: default;
             }
+
+            /* 笔试:一列长滚动代替翻页。答案之间用满宽的长横线分隔。 */
+            .written-shell {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+                position: relative;
+            }
+
+            .written-scroll {
+                position: relative;
+                flex: 1;
+                min-width: 0;
+                overflow-y: auto;
+                /* 左边留出导航条(3px + 20px)的宽度,否则横线会从导航底下穿过去。 */
+                padding: var(--space-md) var(--chat-gutter) var(--space-md) 28px;
+                font-size: var(--response-font-size, 15px);
+                line-height: var(--line-height);
+                user-select: text;
+                cursor: text;
+            }
+
+            .written-answer + .written-answer {
+                margin-top: var(--space-md);
+                padding-top: var(--space-md);
+                border-top: 1px solid var(--border-strong);
+            }
+
+            .written-empty {
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: var(--space-md);
+                text-align: center;
+                color: var(--text-muted);
+                font-size: var(--font-size-sm);
+            }
+
+            /* 错误比「等待题目」更该被看到，所以用危险色并允许长文本换行、选中复制。 */
+            .written-empty.error {
+                color: var(--danger);
+                max-width: 720px;
+                margin: 0 auto;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                user-select: text;
+                cursor: text;
+            }
+
+            /* 抄自手机提词页的左侧导航:一竖排短横线,悬浮在正文左侧、垂直居中;桌面上整体带透明度,
+           免得压住正文。 */
+            .written-nav {
+                position: absolute;
+                left: 3px;
+                top: 50%;
+                transform: translateY(-50%);
+                z-index: 2;
+                width: 20px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0;
+                overflow: hidden;
+                opacity: 0.55;
+                transition: opacity 0.15s;
+            }
+
+            .written-nav:hover {
+                opacity: 1;
+            }
+
+            .nav-dash {
+                flex: none;
+                width: 14px;
+                height: 3px;
+                padding: 0;
+                border: none;
+                border-radius: 2px;
+                background: var(--text-muted);
+                cursor: pointer;
+                transition:
+                    background 0.15s,
+                    width 0.15s;
+            }
+
+            .nav-dash:hover {
+                background: var(--text-secondary);
+            }
+
+            .nav-dash.active {
+                width: 18px;
+                background: var(--accent);
+            }
+
+            .written-actions {
+                flex: none;
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                gap: var(--space-sm);
+                padding: var(--space-md) var(--chat-gutter);
+            }
+
+            /* 小一号的次按钮:把当前屏收进缓存,不发送。 */
+            .cache-btn {
+                background: var(--bg-elevated);
+                border: 1px solid var(--border);
+                color: var(--text-secondary);
+                cursor: pointer;
+                font-size: var(--font-size-xs);
+                font-family: var(--font);
+                white-space: nowrap;
+                padding: var(--space-xs) var(--space-sm);
+                border-radius: 100px;
+                height: 28px;
+            }
+
+            .cache-btn:hover:not(:disabled) {
+                border-color: var(--accent);
+                color: var(--text-primary);
+            }
+
+            .cache-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
         `,
     ];
 
     static properties = {
+        // 'written' 时只剩详细面板，没有转录、分栏和输入栏。
+        sessionMode: { type: String },
+        // 笔试的暂停开关直接决定空白态那句话是「等待题目」还是「已暂停」。
+        paused: { type: Boolean },
+        // 笔试空态里的错误条：由 app 元素持有并传入，采集/发送失败时非空。
+        writtenError: { type: String },
+        // 「截图进入缓存」攒了几张。缓存在渲染端模块里,视图重建后从这里读回来。
+        screenshotCacheCount: { type: Number, state: true },
         messages: { type: Array },
         onSendText: { type: Function },
         isAnalyzing: { type: Boolean, state: true },
@@ -388,6 +525,14 @@ export class AssistantView extends LocalizedLitElement {
 
     constructor() {
         super();
+        this.sessionMode = 'interview';
+        this.paused = false;
+        this.writtenError = '';
+        this.screenshotCacheCount = 0;
+        // 笔试的长滚动:贴底时跟着新 token 走;用户往上翻后就不再拽回去。导航高亮跟着滚动位置走。
+        this._writtenPinned = true;
+        this._writtenActive = 0;
+        this._writtenCount = 0;
         this.messages = [];
         this.onSendText = () => {};
         this.isAnalyzing = false;
@@ -427,6 +572,61 @@ export class AssistantView extends LocalizedLitElement {
         const id = row ? row.detailId : 0;
         const text = row ? row.text : '';
         syncMarkdownInto(this.shadowRoot.querySelector('[data-detail-id]'), `${id}:${text}`, text);
+    }
+
+    // 笔试是长滚动:每条回答都有自己的 markdown 容器,一次同步全部。_renderedKey 仍然让没变的行不重解析。
+    _syncWrittenMarkdown() {
+        for (const row of this.detailMessages) {
+            const el = this.shadowRoot.querySelector(`[data-written-id="${row.detailId}"]`);
+            syncMarkdownInto(el, `${row.detailId}:${row.text}`, row.text);
+        }
+    }
+
+    // 和手机端的导航规则一致:落在谁的地界里就点亮谁;滚到底时点亮最后一条,即使它顶不到最上沿。
+    handleWrittenScroll() {
+        const container = this.shadowRoot.querySelector('.written-scroll');
+        if (!container) return;
+
+        this._writtenPinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+        const top = container.scrollTop;
+        const maxTop = container.scrollHeight - container.clientHeight;
+        let active = 0;
+        if (maxTop > 0 && top >= maxTop - 2) {
+            active = this.detailMessages.length - 1;
+        } else {
+            container.querySelectorAll('.written-answer').forEach((node, index) => {
+                if (node.offsetTop <= top + 8) active = index;
+            });
+        }
+
+        if (active !== this._writtenActive) {
+            this._writtenActive = active;
+            this.requestUpdate();
+        }
+    }
+
+    _scrollWrittenToBottom() {
+        const container = this.shadowRoot.querySelector('.written-scroll');
+        if (container) container.scrollTop = container.scrollHeight;
+    }
+
+    _jumpToWritten(index) {
+        const container = this.shadowRoot.querySelector('.written-scroll');
+        const node = container?.querySelectorAll('.written-answer')[index];
+        if (!container || !node) return;
+        // 跳转即停止跟随,否则下一批 token 又把人拽回末尾。
+        this._writtenPinned = false;
+        this._writtenActive = index;
+        container.scrollTop = node.offsetTop;
+        this.requestUpdate();
+    }
+
+    // 与手机端同一条间距规则:先按固定间距排,总长超过视口 1/3 就压到 1/3。
+    _writtenNavHeight() {
+        const count = this.detailMessages.length;
+        const natural = count * 3 + Math.max(0, count - 1) * 8;
+        return Math.min(natural, Math.round(window.innerHeight / 3));
     }
 
     // 当前显示的那条；选中项过期时退回最新的一条——被保留轮次上限丢掉的那条回答不能把面板清空。
@@ -500,6 +700,8 @@ export class AssistantView extends LocalizedLitElement {
 
         ipcRenderer.on('scroll-response-up', this.handleScrollUp);
         ipcRenderer.on('scroll-response-down', this.handleScrollDown);
+        // 视图会被导航重建,缓存活在渲染端模块里,重建时把已有张数读回来。
+        this.screenshotCacheCount = window.getScreenshotCacheCount?.() ?? 0;
     }
 
     disconnectedCallback() {
@@ -593,6 +795,8 @@ export class AssistantView extends LocalizedLitElement {
         // 必须 await：截图可能压根没发出去——没有采集流，或者视频还没出过一帧。这些路径不返回轮次，也就是不会
         // 有回答，忙碌态要在这里结束，而不是等一个永远不会到的完成信号。
         const result = await window.captureManualScreenshot();
+        // 成功发送后渲染端会清空缓存;失败时保留,这里都按实际张数刷新。
+        this.screenshotCacheCount = window.getScreenshotCacheCount?.() ?? 0;
         if (!result?.success) {
             this.isAnalyzing = false;
             return;
@@ -603,6 +807,15 @@ export class AssistantView extends LocalizedLitElement {
         if (this._screenAnswerSettled()) {
             this.isAnalyzing = false;
             this._screenTurnId = null;
+        }
+    }
+
+    // 只抓当前屏放进缓存，不发请求。长题目分几屏时先攒前几屏，最后一次「截图并发送」带上。
+    async handleScreenshotToCache() {
+        if (this.isAnalyzing || !window.captureScreenshotToCache) return;
+        const result = await window.captureScreenshotToCache();
+        if (result && typeof result.count === 'number') {
+            this.screenshotCacheCount = result.count;
         }
     }
 
@@ -744,25 +957,37 @@ export class AssistantView extends LocalizedLitElement {
     updated(changedProperties) {
         super.updated(changedProperties);
 
-        this._syncMarkdown();
-        this._syncDetailMarkdown();
+        // 笔试长滚动和面试分栏的滚动语义不同,分开处理,免得一方的贴底判断改到另一方的状态。
+        if (this.sessionMode === 'written') {
+            this._syncWrittenMarkdown();
+            const count = this.detailMessages.length;
+            if (count !== this._writtenCount) {
+                this._writtenCount = count;
+                if (this._writtenPinned) this._writtenActive = Math.max(0, count - 1);
+            }
+            // 用瞬移而不是平滑滚动:每个 token 触发一次平滑滚动永远追不上自己。
+            if (this._writtenPinned) this._scrollWrittenToBottom();
+        } else {
+            this._syncMarkdown();
+            this._syncDetailMarkdown();
 
-        // 用瞬移而不是平滑滚动：每个 token 触发一次平滑滚动永远追不上自己，还会和上一次动画互相打断。
-        if (this._pinned) {
-            this._scrollToBottom();
-        }
+            // 用瞬移而不是平滑滚动：每个 token 触发一次平滑滚动永远追不上自己，还会和上一次动画互相打断。
+            if (this._pinned) {
+                this._scrollToBottom();
+            }
 
-        const detail = this._currentDetail();
-        if (detail) {
-            if (this._lastDetailId !== detail.detailId) {
-                // 换到另一条回答时总是从它的一头开始：还在流式就停在底部，已完成就回到顶部按顺序读。
-                this._lastDetailId = detail.detailId;
-                this._detailAtBottom = !detail.final;
-                const container = this.shadowRoot.querySelector('.detail-scroll');
-                if (container) container.scrollTop = detail.final ? 0 : container.scrollHeight;
-            } else if (!detail.final && this._detailAtBottom) {
-                // 只有正在变长的回答把视图一起往下带，而且只在这条回答仍然贴底时——用户往回翻过就不该被拽回底部。
-                this._scrollDetailToBottom();
+            const detail = this._currentDetail();
+            if (detail) {
+                if (this._lastDetailId !== detail.detailId) {
+                    // 换到另一条回答时总是从它的一头开始：还在流式就停在底部，已完成就回到顶部按顺序读。
+                    this._lastDetailId = detail.detailId;
+                    this._detailAtBottom = !detail.final;
+                    const container = this.shadowRoot.querySelector('.detail-scroll');
+                    if (container) container.scrollTop = detail.final ? 0 : container.scrollHeight;
+                } else if (!detail.final && this._detailAtBottom) {
+                    // 只有正在变长的回答把视图一起往下带，而且只在这条回答仍然贴底时——用户往回翻过就不该被拽回底部。
+                    this._scrollDetailToBottom();
+                }
             }
         }
 
@@ -844,7 +1069,95 @@ export class AssistantView extends LocalizedLitElement {
         `;
     }
 
+    // 笔试只显示答案:固定问句、图片概括和编号都不渲染,多段答案靠 CSS 的长横线分隔。
+    renderWrittenAnswer(row) {
+        return html`
+            <div class="written-answer">
+                <div class="detail-body message-body markdown ${row.final ? '' : 'streaming'}" data-written-id=${row.detailId}></div>
+                ${row.truncated ? html`<div class="detail-note">Answer cut off at the length limit</div>` : ''}
+                ${row.error ? html`<div class="detail-note danger">${row.error}</div>` : ''}
+            </div>
+        `;
+    }
+
+    // 笔试没有转录、分栏和输入栏:一列长滚动答案 + 左侧导航 + 底部截图按钮。
+    renderWritten() {
+        const rows = this.detailMessages;
+
+        return html`
+            <div class="written-shell">
+                <div class="written-scroll" @scroll=${this.handleWrittenScroll}>
+                    ${
+                        rows.length === 0
+                            ? html`<div class="written-empty ${this.writtenError ? 'error' : ''}">
+                                  ${this.writtenError
+                                      ? this.writtenError
+                                      : this.paused
+                                        ? t('Auto screenshot paused', '自动截图已暂停')
+                                        : t('Waiting for the written question...', '正在等待笔试题目…')}
+                              </div>`
+                            : rows.map(row => this.renderWrittenAnswer(row))
+                    }
+                </div>
+
+                ${
+                    rows.length
+                        ? html`
+                              <nav class="written-nav" style="height:${this._writtenNavHeight()}px" aria-label=${t('Answers', '回答')}>
+                                  ${rows.map(
+                                      (row, index) => html`
+                                          <button
+                                              type="button"
+                                              class="nav-dash ${index === this._writtenActive ? 'active' : ''}"
+                                              @click=${() => this._jumpToWritten(index)}
+                                          ></button>
+                                      `
+                                  )}
+                              </nav>
+                          `
+                        : ''
+                }
+
+                <div class="written-actions">
+                    ${this.renderCacheButton()}
+                    ${this.renderScreenshotSendButton()}
+                </div>
+            </div>
+        `;
+    }
+
+    renderCacheButton() {
+        return html`
+            <button class="cache-btn" ?disabled=${this.isAnalyzing} @click=${this.handleScreenshotToCache}>
+                ${t('Screenshot to cache', '截图进入缓存')}${this.screenshotCacheCount ? ` (${this.screenshotCacheCount})` : ''}
+            </button>
+        `;
+    }
+
+    renderScreenshotSendButton() {
+        return html`
+            <button class="analyze-btn ${this.isAnalyzing ? 'analyzing' : ''}" @click=${this.handleScreenAnswer}>
+                <canvas class="analyze-canvas"></canvas>
+                <span class="analyze-btn-content">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24">
+                        <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M13 3v7h6l-8 11v-7H5z"
+                        />
+                    </svg>
+                    ${t('Screenshot & send', '截图并发送')}
+                </span>
+            </button>
+        `;
+    }
+
     render() {
+        if (this.sessionMode === 'written') return this.renderWritten();
+
         // 拖拽未松手时宽度归指针管：否则流式回答引发的那次重渲会把分隔条弹回原位，和指针打架。
         const paneWidth = `${((this._splitDrag?.fraction ?? paneFraction) * 100).toFixed(1)}%`;
 
@@ -893,22 +1206,8 @@ export class AssistantView extends LocalizedLitElement {
                 <div class="input-bar-inner">
                     <input type="text" id="textInput" placeholder="Type a message..." @keydown=${this.handleTextKeydown} />
                 </div>
-                <button class="analyze-btn ${this.isAnalyzing ? 'analyzing' : ''}" @click=${this.handleScreenAnswer}>
-                    <canvas class="analyze-canvas"></canvas>
-                    <span class="analyze-btn-content">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24">
-                            <path
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M13 3v7h6l-8 11v-7H5z"
-                            />
-                        </svg>
-                        Analyze Screen
-                    </span>
-                </button>
+                ${this.renderCacheButton()}
+                ${this.renderScreenshotSendButton()}
             </div>
         `;
     }

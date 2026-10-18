@@ -65,6 +65,7 @@ const PAGE = `<!doctype html>
         Object.defineProperty(h, 'messages', { value: [], writable: true, configurable: true });
         Object.defineProperty(h, 'detailMessages', { value: [], writable: true, configurable: true });
         Object.defineProperty(h, 'detailCurrent', { value: null, writable: true, configurable: true });
+        Object.defineProperty(h, 'writtenError', { value: '', writable: true, configurable: true });
         h._msgSeq = 0;
         h._turnFloorId = 0;
         h._detailFloorId = 0;
@@ -142,6 +143,19 @@ const PAGE = `<!doctype html>
             h.upsertTranscription('正在问的问题', false, 'interviewer', null, null);
             await h.handleClearContext();
             return h.messages.length === 0;
+        });
+
+        // 7. 笔试空态的错误:来源变成前缀,空错误不覆盖已有文案;别的链成功不会抹掉它,只有来源那条链成功才清。
+        await scenario('written errors carry a source label and clear by source', async () => {
+            const h = mkHost();
+            h.reportWrittenError('capture', 'NotAllowedError: Permission denied');
+            const labeled = h.writtenError === '屏幕捕获失败: NotAllowedError: Permission denied';
+            h.reportWrittenError('screenshot', '');
+            const kept = h.writtenError === '屏幕捕获失败: NotAllowedError: Permission denied';
+            h.clearWrittenError(['screenshot']);
+            const survived = h.writtenError === '屏幕捕获失败: NotAllowedError: Permission denied';
+            h.clearWrittenError(['capture']);
+            return labeled && kept && survived && h.writtenError === '';
         });
 
         return out;

@@ -387,7 +387,7 @@ function broadcast(channel, data) {
 }
 
 function getStatus() {
-    // paired:当前有没有已鉴权的手机连着。桌面主页靠它决定「开始会话」能不能按——这一模式里手机才是显示端,
+    // paired:当前有没有已鉴权的手机连着。桌面主页靠它决定「开始面试 / 开始笔试」能不能按——这一模式里手机才是显示端,
     // 没配对就开会话等于对着一个没人看的窗口说话。
     const paired = [...clients].some(client => client.authed && client.ws.readyState === 1);
     return {
