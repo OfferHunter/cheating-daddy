@@ -395,8 +395,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         this._detailFloorId = 0;
         this.detailMessages = [];
         this.detailCurrent = null;
-        // 一直跟随最新的详细回答，直到用户翻回旧的一条——此后新回答不能再把面板从正在读的那条上拽走。
-        this._detailFollowing = true;
         this._isClickThrough = false;
         this._storageLoaded = false;
         this._timerInterval = null;
@@ -673,7 +671,6 @@ export class OfferHunterApp extends LocalizedLitElement {
                 error: '',
             },
         ];
-        if (this._detailFollowing) this.detailCurrent = detailId;
         return this.detailMessages.length - 1;
     }
 
@@ -723,7 +720,8 @@ export class OfferHunterApp extends LocalizedLitElement {
         this._replaceDetail(index, { usedKnowledge: [...row.usedKnowledge, id] });
     }
 
-    // 面板的 ‹ › 按钮和它们的快捷键都落到这里。每次按一下走一步，两端都夹住。
+    // 详细面板改成连续长滚动后，这两个快捷键仍然按「上一条 / 下一条」走一步。视图盯着 detailCurrent
+    // 的变化把那一行滚进视野，所以这里只负责选中，两端都夹住。
     stepDetail(delta) {
         if (!this.detailMessages.length) return;
 
@@ -733,9 +731,13 @@ export class OfferHunterApp extends LocalizedLitElement {
         const next = Math.max(0, Math.min(ids.length - 1, from + delta));
 
         this.detailCurrent = ids[next];
-        // 往回翻就停止跟随新回答；再翻到最新一条则恢复跟随——这跟手动把转录滚回底部是一回事。
-        this._detailFollowing = next === ids.length - 1;
         this.requestUpdate();
+    }
+
+    // 用户在详细面板里滚到某条回答:记下来,让翻页快捷键从眼前这条继续走。
+    focusDetail(detailId) {
+        if (this._detailIndex(detailId) === -1) return;
+        this.detailCurrent = detailId;
     }
 
     navigate(view) {
@@ -809,7 +811,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         });
         this.detailMessages = this.detailMessages.filter(m => m.final !== true);
         if (this._detailIndex(this.detailCurrent) === -1) this.detailCurrent = null;
-        this._detailFollowing = true;
         this.requestUpdate();
     }
 
@@ -861,7 +862,6 @@ export class OfferHunterApp extends LocalizedLitElement {
         // 跟着转录一起清空：主进程重启会话时会丢掉自己的详细回答日志，留着这些会翻到已经不存在的回答。
         this.detailMessages = [];
         this.detailCurrent = null;
-        this._detailFollowing = true;
         this.startTime = Date.now();
         this.sessionActive = true;
         this.currentView = 'assistant';
@@ -952,8 +952,7 @@ export class OfferHunterApp extends LocalizedLitElement {
                         .detailMessages=${this.detailMessages}
                         .detailCurrent=${this.detailCurrent}
                         .onSendText=${msg => this.handleSendText(msg)}
-                        .onDetailPrev=${() => this.stepDetail(-1)}
-                        .onDetailNext=${() => this.stepDetail(1)}
+                        .onDetailFocus=${id => this.focusDetail(id)}
                     ></assistant-view>
                 `;
 

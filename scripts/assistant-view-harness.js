@@ -256,18 +256,118 @@ app.whenReady().then(async () => {
         );
         check('jump arrow dims again at the bottom', await exec(`window.__q('.written-jump').classList.contains('at-bottom')`));
 
-        // 回归:面试模式仍渲染转录区、输入栏(含改名后的按钮),且有回答时出现分栏抓手和右侧面板。
+        // 面试模式:转录 + 左侧导航 + 左下箭头,右侧详细面板连续长滚动并按轮次与左侧联动。
         await exec(`(() => {
             const el = window.__el();
             el.sessionMode = 'interview';
-            el.messages = [{ id: 1, role: 'interviewer', text: '请介绍一下自己' }];
+            const longQuestion = n => '问题' + n + '：' + '背景描述'.repeat(40);
+            el.messages = [
+                { id: 1, role: 'interviewer', text: longQuestion(1), turnId: 101, final: true },
+                { id: 2, role: 'assistant', text: '精要回答一', turnId: 101, final: true },
+                { id: 3, role: 'interviewer', text: longQuestion(2), turnId: 102, final: true },
+                { id: 4, role: 'assistant', text: '精要回答二', turnId: 102, final: true },
+                { id: 5, role: 'interviewer', text: longQuestion(3), turnId: 103, final: true },
+            ];
+            el.detailMessages = [1, 2, 3].map(n => ({
+                detailId: n,
+                turnSeq: 100 + n,
+                question: '问题' + n,
+                text: '详细答案' + n + '：' + '详细内容'.repeat(80),
+                final: true,
+            }));
+            el.detailCurrent = null;
         })()`);
-        await wait(200);
+        await wait(400);
+
         check('interview mode keeps the transcript column', await exec(`!!window.__q('.chat-wrap') && !!window.__q('.chat-scroll')`));
         check('interview mode keeps the input bar', await exec(`!!window.__q('.input-bar')`));
         check('interview input bar shows 截图并发送', (await exec(`window.__q('.input-bar .analyze-btn').textContent`)).includes('截图并发送'));
         check('interview input bar shows 截图进入缓存', (await exec(`window.__q('.input-bar .cache-btn').textContent`)).includes('截图进入缓存'));
         check('interview mode shows the split handle with detail answers', await exec(`!!window.__q('.split-handle') && !!window.__q('.detail-pane')`));
+
+        check('interview detail pane has no pagination buttons', await exec(`!window.__q('.detail-nav')`));
+        check('interview detail pane renders every answer', await exec(`window.__root().querySelectorAll('.detail-answer').length === 3`));
+        check(
+            'interview answers are separated by a full-width rule',
+            await exec(`(() => {
+                const second = window.__root().querySelectorAll('.detail-answer')[1];
+                const style = getComputedStyle(second);
+                return parseFloat(style.borderTopWidth) > 0 && style.borderTopStyle === 'solid';
+            })()`)
+        );
+        check('interview left nav has one dash per turn', await exec(`window.__root().querySelectorAll('.chat-wrap .written-nav .nav-dash').length === 3`));
+        check('interview has a jump-to-latest arrow', await exec(`!!window.__q('.chat-jump')`));
+        check('interview jump arrow dims at the bottom', await exec(`window.__q('.chat-jump').classList.contains('at-bottom')`));
+
+        // 左侧往上滚:第一根高亮,右侧跟到第一轮,箭头亮起。
+        await exec(`(() => { const s = window.__q('.chat-scroll'); s.scrollTop = 0; s.dispatchEvent(new Event('scroll')); })()`);
+        await wait(250);
+        check(
+            'transcript scroll activates the first turn dash',
+            await exec(`window.__root().querySelectorAll('.chat-wrap .nav-dash')[0].classList.contains('active')`)
+        );
+        check('interview jump arrow lights up once scrolled up', await exec(`!window.__q('.chat-jump').classList.contains('at-bottom')`));
+        check(
+            'transcript scroll pulls the detail pane to the same turn',
+            await exec(`(() => {
+                const d = window.__q('.detail-scroll');
+                const first = window.__root().querySelectorAll('.detail-answer')[0];
+                return Math.abs(first.getBoundingClientRect().top - d.getBoundingClientRect().top) <= 2;
+            })()`)
+        );
+
+        // 点第二根导航短横线:右侧详细面板滚到第二条,标题计数跟着走。
+        await exec(`window.__root().querySelectorAll('.chat-wrap .nav-dash')[1].click()`);
+        await wait(250);
+        check(
+            'clicking a turn dash scrolls the detail pane to that answer',
+            await exec(`(() => {
+                const d = window.__q('.detail-scroll');
+                const second = window.__root().querySelectorAll('.detail-answer')[1];
+                return Math.abs(second.getBoundingClientRect().top - d.getBoundingClientRect().top) <= 2;
+            })()`)
+        );
+        check(
+            'clicking a turn dash activates that dash',
+            await exec(`window.__root().querySelectorAll('.chat-wrap .nav-dash')[1].classList.contains('active')`)
+        );
+        check('detail head counts the active answer', (await exec(`window.__q('.detail-head').textContent`)).includes('2 / 3'));
+
+        // 右侧往上滚:左侧高亮与转录滚到同一轮。
+        await exec(`(() => {
+            const d = window.__q('.detail-scroll');
+            const second = window.__root().querySelectorAll('.detail-answer')[1];
+            d.scrollTop = second.getBoundingClientRect().top - d.getBoundingClientRect().top + d.scrollTop;
+            d.dispatchEvent(new Event('scroll'));
+        })()`);
+        await wait(250);
+        check(
+            'detail scroll activates the same turn dash on the left',
+            await exec(`window.__root().querySelectorAll('.chat-wrap .nav-dash')[1].classList.contains('active')`)
+        );
+        check(
+            'detail scroll brings the transcript to the same question',
+            await exec(`(() => {
+                const s = window.__q('.chat-scroll');
+                const turn = window.__root().querySelectorAll('.turn-marker')[1];
+                return Math.abs(turn.getBoundingClientRect().top - s.getBoundingClientRect().top) <= 2;
+            })()`)
+        );
+
+        // 左下箭头:两栏一起回到底端并淡下去。
+        await exec(`window.__q('.chat-jump').click()`);
+        await wait(250);
+        check(
+            'interview jump arrow pins both panes to the bottom',
+            await exec(`(() => {
+                const s = window.__q('.chat-scroll');
+                const d = window.__q('.detail-scroll');
+                const chatAtBottom = s.scrollHeight - s.clientHeight - s.scrollTop <= 2;
+                const detailAtBottom = d.scrollHeight - d.clientHeight - d.scrollTop <= 2;
+                return chatAtBottom && detailAtBottom;
+            })()`)
+        );
+        check('interview jump arrow dims again at the bottom', await exec(`window.__q('.chat-jump').classList.contains('at-bottom')`));
 
         win.destroy();
     } catch (error) {

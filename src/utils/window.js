@@ -316,7 +316,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         }
     }
 
-    // 详细回答的翻页快捷键只是加速器：面板自己的 ‹ › 按钮才是入口，所以系统不肯让出这个键也无损失。
+    // 详细回答改成连续长滚动后,这两个键负责跳到上一条/下一条;系统不肯让出这个键也无损失。
     if (keybinds.detailPrev) {
         try {
             globalShortcut.register(keybinds.detailPrev, () => {

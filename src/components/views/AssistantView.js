@@ -100,6 +100,11 @@ export class AssistantView extends LocalizedLitElement {
                 padding: 12px var(--chat-gutter);
             }
 
+            /* 左侧导航浮在正文左边,和笔试一样要给它让出 20px,否则短横线会压在气泡上。 */
+            .chat-list.with-nav {
+                padding-left: 28px;
+            }
+
             .chat-empty {
                 display: flex;
                 align-items: center;
@@ -115,30 +120,41 @@ export class AssistantView extends LocalizedLitElement {
         conversationStyles,
         scrollbarStyles,
         css`
-            .jump-latest {
-                position: absolute;
-                right: 12px;
-                bottom: 12px;
+            /* 笔试与面试共用同一颗向下箭头:贴底时淡下去当提示,不在底端时点击回到底端并恢复跟随。 */
+            .jump-btn {
                 display: flex;
                 align-items: center;
-                gap: 4px;
-                padding: 4px 10px;
-                border-radius: 100px;
-                border: 1px solid var(--border);
-                background: var(--bg-elevated);
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                padding: 0;
                 color: var(--text-primary);
-                font-size: var(--font-size-xs);
+                background: var(--bg-elevated);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
                 cursor: pointer;
-                box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+                transition: opacity 0.15s;
             }
 
-            .jump-latest[hidden] {
-                display: none;
+            .jump-btn:hover {
+                border-color: var(--accent);
             }
 
-            .jump-latest svg {
-                width: 12px;
-                height: 12px;
+            .jump-btn.at-bottom {
+                opacity: 0.35;
+            }
+
+            .jump-btn svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            /* 面试时它贴在转录区左下角,和手机提词页的箭头同一个位置。 */
+            .chat-jump {
+                position: absolute;
+                left: 12px;
+                bottom: 12px;
+                z-index: 2;
             }
 
             .input-bar {
@@ -341,37 +357,6 @@ export class AssistantView extends LocalizedLitElement {
                 color: var(--danger);
             }
 
-            .detail-nav {
-                display: flex;
-                align-items: center;
-                justify-content: flex-end;
-                gap: var(--space-xs);
-                padding-top: var(--space-sm);
-            }
-
-            .detail-nav button {
-                width: 26px;
-                height: 26px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: var(--radius-sm);
-                border: 1px solid var(--border);
-                background: var(--bg-elevated);
-                color: var(--text-primary);
-                font-size: var(--font-size-sm);
-                cursor: pointer;
-            }
-
-            .detail-nav button:hover:not(:disabled) {
-                border-color: var(--accent);
-            }
-
-            .detail-nav button:disabled {
-                opacity: 0.45;
-                cursor: default;
-            }
-
             /* 笔试:一列长滚动代替翻页。答案之间用满宽的长横线分隔。 */
             .written-shell {
                 flex: 1;
@@ -394,7 +379,8 @@ export class AssistantView extends LocalizedLitElement {
                 cursor: text;
             }
 
-            .written-answer + .written-answer {
+            /* 笔试与面试的详细列表共用:多条回答连续滚动时用满宽横线分段。 */
+            .answer-block + .answer-block {
                 margin-top: var(--space-md);
                 padding-top: var(--space-md);
                 border-top: 1px solid var(--border-strong);
@@ -483,35 +469,6 @@ export class AssistantView extends LocalizedLitElement {
                 gap: var(--space-sm);
             }
 
-            /* 和手机提词页那颗向下箭头同形:贴底时淡下去当提示,不在底端时点击回到底端并恢复跟随。 */
-            .written-jump {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 32px;
-                height: 32px;
-                padding: 0;
-                color: var(--text-primary);
-                background: var(--bg-elevated);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-md);
-                cursor: pointer;
-                transition: opacity 0.15s;
-            }
-
-            .written-jump:hover {
-                border-color: var(--accent);
-            }
-
-            .written-jump.at-bottom {
-                opacity: 0.35;
-            }
-
-            .written-jump svg {
-                width: 16px;
-                height: 16px;
-            }
-
             /* 与「截图并发送」同款外观,只是不发送、也没有点击后的波浪动画。 */
             .cache-btn {
                 position: relative;
@@ -558,12 +515,12 @@ export class AssistantView extends LocalizedLitElement {
         messages: { type: Array },
         onSendText: { type: Function },
         isAnalyzing: { type: Boolean, state: true },
-        // 详细回答以及当前显示哪一条：两者都由 app 元素持有而不是本视图，因为每次导航本视图都会被拆掉重建，而
+        // 详细回答以及当前选中的那一条：两者都由 app 元素持有而不是本视图，因为每次导航本视图都会被拆掉重建，而
         // 回答必须活下来——`messages` 放在上层也是同一个原因。
         detailMessages: { type: Array },
         detailCurrent: { type: Number },
-        onDetailPrev: { type: Function },
-        onDetailNext: { type: Function },
+        // 用户在本视图里滚到某条详细回答时回报给 app，让翻页快捷键从眼前这一条继续走。
+        onDetailFocus: { type: Function },
     };
 
     constructor() {
@@ -581,11 +538,18 @@ export class AssistantView extends LocalizedLitElement {
         this.isAnalyzing = false;
         this.detailMessages = [];
         this.detailCurrent = null;
-        this.onDetailPrev = () => {};
-        this.onDetailNext = () => {};
+        this.onDetailFocus = () => {};
         this._animFrame = null;
         this._pinned = true;
+        // 面试长滚动:左侧转录与右侧详细列表各记一个阅读位置,用 turnSeq 对齐后互相带动。
+        this._chatActive = 0;
+        this._detailActive = 0;
+        this._detailCount = 0;
         this._detailAtBottom = true;
+        // 程序化滚动另一栏时置上,免得它的 scroll 处理器又反过来推回去,滚成一个环。
+        this._peerSyncLock = false;
+        // 最近一次经本视图回报的详细回答 id,用来区分「用户滚到这里」和「快捷键选中了另一条」。
+        this._lastReportedDetailId = null;
         // 按钮上那张截图所属的轮次，在它被回答期间有效。忙碌态就跟它走：答案以这个轮次为 key 落进面板，它到达时
         // 视图里没有别的东西会动。
         this._screenTurnId = null;
@@ -608,13 +572,13 @@ export class AssistantView extends LocalizedLitElement {
         }
     }
 
-    // 面板一次只显示一条回答，所以不能搭上面那个 _syncMarkdown 的便车：它遍历的 this.messages 里根本没有详细
-    // 回答。
-    _syncDetailMarkdown() {
-        const row = this._currentDetail();
-        const id = row ? row.detailId : 0;
-        const text = row ? row.text : '';
-        syncMarkdownInto(this.shadowRoot.querySelector('[data-detail-id]'), `${id}:${text}`, text);
+    // 详细面板现在是长滚动:每条回答一个容器,所以像笔试那样一次同步全部,不能搭 _syncMarkdown 的便车
+    // (它遍历的 this.messages 里根本没有详细回答)。
+    _syncDetailListMarkdown() {
+        for (const row of this.detailMessages) {
+            const el = this.shadowRoot.querySelector(`.detail-answer[data-detail-id="${row.detailId}"] .detail-body`);
+            syncMarkdownInto(el, `${row.detailId}:${row.text}`, row.text);
+        }
     }
 
     // 笔试是长滚动:每条回答都有自己的 markdown 容器,一次同步全部。_renderedKey 仍然让没变的行不重解析。
@@ -677,33 +641,85 @@ export class AssistantView extends LocalizedLitElement {
         this.requestUpdate();
     }
 
-    // 与手机端同一条间距规则:先按固定间距排,总长超过视口 1/3 就压到 1/3。
-    _writtenNavHeight() {
-        const count = this.detailMessages.length;
+    // 与手机端同一条间距规则:先按固定间距排,总长超过视口 1/3 就压到 1/3。笔试与面试共用。
+    _navHeight(count) {
         const natural = count * 3 + Math.max(0, count - 1) * 8;
         return Math.min(natural, Math.round(window.innerHeight / 3));
     }
 
-    // 当前显示的那条；选中项过期时退回最新的一条——被保留轮次上限丢掉的那条回答不能把面板清空。
-    _currentDetail() {
-        if (!this.detailMessages.length) return null;
-        return this.detailMessages.find(row => row.detailId === this.detailCurrent) || this.detailMessages[this.detailMessages.length - 1];
+    // 转录里的「轮次」= 一条带 turnId 的面试官消息(截图那行没有 turnId,用它的 blockId)。详细回答的 turnSeq
+    // 与它们是同一个计数器,所以这个 seq 就是左右两栏对齐的钥匙。
+    _turnSeqOf(message) {
+        if (message.role !== 'interviewer') return null;
+        return message.turnId ?? message.blockId ?? null;
     }
 
-    _detailPosition() {
-        const row = this._currentDetail();
-        return row ? this.detailMessages.indexOf(row) : -1;
+    _interviewTurns() {
+        return this.messages
+            .map(message => ({ seq: this._turnSeqOf(message) }))
+            .filter(turn => turn.seq !== null);
     }
 
+    _hasInterviewNav() {
+        return this.messages.some(message => this._turnSeqOf(message) !== null);
+    }
+
+    // 元素相对滚动容器内容顶部的偏移。用 rect 相减而不是 offsetTop:offsetParent 可能是外层 flex 壳,
+    // 内边距一改就对不上。
+    _offsetWithin(container, node) {
+        return node.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    }
+
+    // 与手机端同一条高亮规则:滚动位置落在谁的地界里就点亮谁;滚到底时点亮最后一条,即使它顶不到最上沿。
+    _activeIndex(container, nodes) {
+        const top = container.scrollTop;
+        const maxTop = container.scrollHeight - container.clientHeight;
+        if (maxTop > 0 && top >= maxTop - 2) return nodes.length - 1;
+
+        let active = 0;
+        nodes.forEach((node, index) => {
+            if (this._offsetWithin(container, node) <= top + 8) active = index;
+        });
+        return active;
+    }
+
+    // 程序化滚动另一栏后短暂上锁,免得它的 scroll 事件又反过来把这一栏推走。rAF 足够覆盖同一帧里的派发。
+    _lockPeerSync() {
+        this._peerSyncLock = true;
+        requestAnimationFrame(() => {
+            this._peerSyncLock = false;
+        });
+    }
+
+    _reportDetailFocus(detailId) {
+        if (this._lastReportedDetailId === detailId) return;
+        this._lastReportedDetailId = detailId;
+        this.onDetailFocus?.(detailId);
+    }
+
+    // 转录滚动:更新高亮与贴底状态;用户往回翻时让右侧详细面板跟到同一轮。贴底时不联动——流式 token 每来
+    // 一批都会把转录瞬移到底部,跟着联动会不断把详细面板拽回最后一轮的开头。
     handleScroll() {
         const container = this.shadowRoot.querySelector('.chat-scroll');
         if (!container) return;
 
         const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
-        if (atBottom !== this._pinned) {
-            this._pinned = atBottom;
-            this.requestUpdate();
+        let changed = atBottom !== this._pinned;
+        this._pinned = atBottom;
+
+        const turns = [...container.querySelectorAll('.turn-marker')];
+        if (turns.length) {
+            const active = this._activeIndex(container, turns);
+            if (active !== this._chatActive) {
+                this._chatActive = active;
+                changed = true;
+            }
+            if (!this._peerSyncLock && !atBottom) {
+                this._syncDetailToTurn(Number(turns[active].dataset.turnSeq));
+            }
         }
+
+        if (changed) this.requestUpdate();
     }
 
     _scrollToBottom() {
@@ -713,22 +729,123 @@ export class AssistantView extends LocalizedLitElement {
         }
     }
 
-    jumpToLatest() {
-        this._pinned = true;
-        this._scrollToBottom();
-        this.requestUpdate();
-    }
-
-    // 面板没有「回到最新」按钮——一条回答没什么可迷路的——所以这里只决定流式文字要不要把视图一起往下带。
+    // 详细列表滚动:更新当前条与贴底状态;用户往回翻时把转录带到对应轮次,并回报给 app 供快捷键接续。
     handleDetailScroll() {
         const container = this.shadowRoot.querySelector('.detail-scroll');
         if (!container) return;
-        this._detailAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+        const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        let changed = atBottom !== this._detailAtBottom;
+        this._detailAtBottom = atBottom;
+
+        const rows = [...container.querySelectorAll('.detail-answer')];
+        if (!rows.length) {
+            if (changed) this.requestUpdate();
+            return;
+        }
+
+        const active = this._activeIndex(container, rows);
+        if (active !== this._detailActive) {
+            this._detailActive = active;
+            changed = true;
+        }
+
+        if (!this._peerSyncLock && !atBottom) {
+            const row = rows[active];
+            this._syncChatToTurn(Number(row.dataset.detailTurn));
+            this._reportDetailFocus(Number(row.dataset.detailId));
+        }
+
+        if (changed) this.requestUpdate();
     }
 
     _scrollDetailToBottom() {
         const container = this.shadowRoot.querySelector('.detail-scroll');
         if (container) container.scrollTop = container.scrollHeight;
+    }
+
+    // 左侧滚到哪一轮,右侧就贴到同一轮的详细回答顶部;详细回答还没到(晚于转录)就贴底。
+    _syncDetailToTurn(seq) {
+        const container = this.shadowRoot.querySelector('.detail-scroll');
+        if (!container || !this.detailMessages.length) return;
+
+        const rows = [...container.querySelectorAll('.detail-answer')];
+        const target = rows.find(row => Number(row.dataset.detailTurn) === seq);
+        this._lockPeerSync();
+        container.scrollTop = target ? this._offsetWithin(container, target) : container.scrollHeight;
+        // 同步更新贴底标记:下一次重渲若还当它贴着底,又会把人拽回列表末尾。
+        this._detailAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+
+        if (!target) return;
+        const index = rows.indexOf(target);
+        if (index !== -1 && index !== this._detailActive) {
+            this._detailActive = index;
+            this.requestUpdate();
+        }
+        this._reportDetailFocus(Number(target.dataset.detailId));
+    }
+
+    // 右侧滚到哪一轮,左侧就贴到那道问题;没有对应问题(理论上截图轮也有)就不动。
+    _syncChatToTurn(seq) {
+        const container = this.shadowRoot.querySelector('.chat-scroll');
+        const node = container?.querySelector(`.turn-marker[data-turn-seq="${seq}"]`);
+        if (!container || !node) return;
+
+        this._lockPeerSync();
+        container.scrollTop = this._offsetWithin(container, node);
+        this._pinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        const turns = [...container.querySelectorAll('.turn-marker')];
+        const index = turns.indexOf(node);
+        if (index !== -1 && index !== this._chatActive) {
+            this._chatActive = index;
+            this.requestUpdate();
+        }
+    }
+
+    // 快捷键选中一条详细回答:右侧滚到它,左侧跟到同一轮。
+    _scrollDetailToRow(detailId, syncChat = true) {
+        const container = this.shadowRoot.querySelector('.detail-scroll');
+        const target = container?.querySelector(`.detail-answer[data-detail-id="${detailId}"]`);
+        if (!container || !target) return;
+
+        const rows = [...container.querySelectorAll('.detail-answer')];
+        const index = rows.indexOf(target);
+        this._lockPeerSync();
+        container.scrollTop = this._offsetWithin(container, target);
+        this._detailAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        if (index !== -1) {
+            this._detailActive = index;
+            const seq = Number(target.dataset.detailTurn);
+            if (syncChat && seq) this._syncChatToTurn(seq);
+        }
+        this.requestUpdate();
+    }
+
+    // 点左侧导航:两栏一起跳到同一轮。跳转即停止跟随,否则下一批流式 token 又把人拽回末尾。
+    _jumpToTurn(seq, index) {
+        const container = this.shadowRoot.querySelector('.chat-scroll');
+        const node = container?.querySelector(`.turn-marker[data-turn-seq="${seq}"]`);
+        if (!container || !node) return;
+
+        this._pinned = false;
+        this._chatActive = index;
+        container.scrollTop = this._offsetWithin(container, node);
+        this._syncDetailToTurn(seq);
+        // 内容不足一屏时 scrollTop 会被夹住,此刻其实就贴底;按真实位置重算,箭头才不会停成「可下拉」的样子。
+        this._pinned = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        this.requestUpdate();
+    }
+
+    // 左侧底部的向下箭头:两栏一起回到底端并恢复跟随。
+    _jumpInterviewToBottom() {
+        this._pinned = true;
+        this._detailAtBottom = true;
+        this._chatActive = Math.max(0, this._interviewTurns().length - 1);
+        this._detailActive = Math.max(0, this.detailMessages.length - 1);
+        this._lockPeerSync();
+        this._scrollToBottom();
+        this._scrollDetailToBottom();
+        this.requestUpdate();
     }
 
     scrollResponseUp() {
@@ -1012,6 +1129,39 @@ export class AssistantView extends LocalizedLitElement {
         }
     }
 
+    // 面试长滚动的每帧收尾:同步 markdown、贴底跟随,并把快捷键选中的回答滚进视野。
+    _syncInterview(changedProperties) {
+        this._syncMarkdown();
+        this._syncDetailListMarkdown();
+
+        // 用瞬移而不是平滑滚动：每个 token 触发一次平滑滚动永远追不上自己，还会和上一次动画互相打断。
+        if (this._pinned) this._scrollToBottom();
+
+        const rows = this.detailMessages;
+        if (this._detailCount !== rows.length) {
+            this._detailCount = rows.length;
+            if (!rows.length) {
+                this._detailActive = 0;
+                this._detailAtBottom = true;
+            } else if (this._detailAtBottom) {
+                const last = rows[rows.length - 1];
+                // 还在流式的回答跟随底部；整条到达的完成回答停在开头，和以前「已完成就回到顶部」一致。
+                // 新行不联动左侧:转录此时已经贴底，拽到问题顶部反而把最新内容挤出视野。
+                if (last.final) this._scrollDetailToRow(last.detailId, false);
+                else this._scrollDetailToBottom();
+                this._detailActive = rows.length - 1;
+            }
+        } else if (this._detailAtBottom) {
+            this._scrollDetailToBottom();
+        }
+
+        // 翻页快捷键变成「滚到上一条/下一条详细回答」：app 只改 detailCurrent，这里负责把它滚进视野。
+        // 本视图上报过的滚动不算，否则用户每滚一下都会被拽回同一条的顶部。
+        if (changedProperties.has('detailCurrent') && this.detailCurrent !== null && this.detailCurrent !== this._lastReportedDetailId) {
+            this._scrollDetailToRow(this.detailCurrent);
+        }
+    }
+
     updated(changedProperties) {
         super.updated(changedProperties);
 
@@ -1026,27 +1176,7 @@ export class AssistantView extends LocalizedLitElement {
             // 用瞬移而不是平滑滚动:每个 token 触发一次平滑滚动永远追不上自己。
             if (this._writtenPinned) this._scrollWrittenToBottom();
         } else {
-            this._syncMarkdown();
-            this._syncDetailMarkdown();
-
-            // 用瞬移而不是平滑滚动：每个 token 触发一次平滑滚动永远追不上自己，还会和上一次动画互相打断。
-            if (this._pinned) {
-                this._scrollToBottom();
-            }
-
-            const detail = this._currentDetail();
-            if (detail) {
-                if (this._lastDetailId !== detail.detailId) {
-                    // 换到另一条回答时总是从它的一头开始：还在流式就停在底部，已完成就回到顶部按顺序读。
-                    this._lastDetailId = detail.detailId;
-                    this._detailAtBottom = !detail.final;
-                    const container = this.shadowRoot.querySelector('.detail-scroll');
-                    if (container) container.scrollTop = detail.final ? 0 : container.scrollHeight;
-                } else if (!detail.final && this._detailAtBottom) {
-                    // 只有正在变长的回答把视图一起往下带，而且只在这条回答仍然贴底时——用户往回翻过就不该被拽回底部。
-                    this._scrollDetailToBottom();
-                }
-            }
+            this._syncInterview(changedProperties);
         }
 
         if (changedProperties.has('isAnalyzing')) {
@@ -1067,8 +1197,10 @@ export class AssistantView extends LocalizedLitElement {
 
     renderMessage(message) {
         if (message.role === 'interviewer') {
+            // 带轮次序号的行是左右两栏联动的锚点:turnId 来自普通提问,blockId 来自截图那行。
+            const seq = this._turnSeqOf(message);
             return html`
-                <div class="message-row interviewer">
+                <div class="message-row interviewer ${seq !== null ? 'turn-marker' : ''}" data-turn-seq=${seq ?? ''}>
                     <div class="message-body plain">${message.text || '…'}</div>
                 </div>
             `;
@@ -1090,51 +1222,70 @@ export class AssistantView extends LocalizedLitElement {
         `;
     }
 
-    renderDetailPane() {
-        const detail = this._currentDetail();
-        if (!detail) return html``;
-
-        const position = this._detailPosition();
+    // 面试的详细面板改成连续长滚动:所有回答按顺序排开,不再一次只显示一条、用 ‹ › 翻页。
+    renderDetailAnswer(row) {
         const notes = [];
-        if (detail.usedKnowledge && detail.usedKnowledge.length) {
-            notes.push(html`<div class="detail-note">Reference: ${detail.usedKnowledge.join(', ')}</div>`);
+        if (row.usedKnowledge && row.usedKnowledge.length) {
+            notes.push(html`<div class="detail-note">Reference: ${row.usedKnowledge.join(', ')}</div>`);
         }
-        if (detail.truncated) {
+        if (row.truncated) {
             notes.push(html`<div class="detail-note">Answer cut off at the length limit</div>`);
         }
-        if (detail.error) {
-            notes.push(html`<div class="detail-note danger">${detail.error}</div>`);
+        if (row.error) {
+            notes.push(html`<div class="detail-note danger">${row.error}</div>`);
         }
+
+        return html`
+            <div class="detail-answer answer-block" data-detail-id=${row.detailId} data-detail-turn=${row.turnSeq ?? ''}>
+                ${row.question ? html`<div class="detail-question">${row.question}</div>` : ''}
+                <div class="detail-body message-body markdown ${row.final ? '' : 'streaming'}"></div>
+                ${notes}
+            </div>
+        `;
+    }
+
+    renderDetailPane() {
+        const rows = this.detailMessages;
+        if (!rows.length) return html``;
 
         return html`
             <div class="detail-head">
                 <span>Detailed</span>
-                <span>${position + 1} / ${this.detailMessages.length}</span>
+                <span>${Math.min(this._detailActive + 1, rows.length)} / ${rows.length}</span>
             </div>
 
-            <div class="detail-scroll" @scroll=${this.handleDetailScroll}>
-                ${detail.question ? html`<div class="detail-question">${detail.question}</div>` : ''}
-                <div class="detail-body message-body markdown ${detail.final ? '' : 'streaming'}" data-detail-id=${detail.detailId}></div>
-                ${notes}
-            </div>
-
-            <div class="detail-nav">
-                <button ?disabled=${position <= 0} @click=${() => this.onDetailPrev()} title="Previous detailed answer">‹</button>
-                <button ?disabled=${position >= this.detailMessages.length - 1} @click=${() => this.onDetailNext()} title="Next detailed answer">
-                    ›
-                </button>
-            </div>
+            <div class="detail-scroll" @scroll=${this.handleDetailScroll}>${rows.map(row => this.renderDetailAnswer(row))}</div>
         `;
     }
 
     // 笔试只显示答案:固定问句、图片概括和编号都不渲染,多段答案靠 CSS 的长横线分隔。
     renderWrittenAnswer(row) {
         return html`
-            <div class="written-answer">
+            <div class="written-answer answer-block">
                 <div class="detail-body message-body markdown ${row.final ? '' : 'streaming'}" data-written-id=${row.detailId}></div>
                 ${row.truncated ? html`<div class="detail-note">Answer cut off at the length limit</div>` : ''}
                 ${row.error ? html`<div class="detail-note danger">${row.error}</div>` : ''}
             </div>
+        `;
+    }
+
+    // 左侧导航:一道问题一根短横线,和手机提词页同一套样式。条数来自转录里带轮次序号的行。
+    renderInterviewNav() {
+        const turns = this._interviewTurns();
+        if (!turns.length) return html``;
+
+        return html`
+            <nav class="written-nav" style="height:${this._navHeight(turns.length)}px" aria-label=${t('Turns', '轮次')}>
+                ${turns.map(
+                    (turn, index) => html`
+                        <button
+                            type="button"
+                            class="nav-dash ${index === this._chatActive ? 'active' : ''}"
+                            @click=${() => this._jumpToTurn(turn.seq, index)}
+                        ></button>
+                    `
+                )}
+            </nav>
         `;
     }
 
@@ -1161,7 +1312,7 @@ export class AssistantView extends LocalizedLitElement {
                 ${
                     rows.length
                         ? html`
-                              <nav class="written-nav" style="height:${this._writtenNavHeight()}px" aria-label=${t('Answers', '回答')}>
+                              <nav class="written-nav" style="height:${this._navHeight(rows.length)}px" aria-label=${t('Answers', '回答')}>
                                   ${rows.map(
                                       (row, index) => html`
                                           <button
@@ -1179,7 +1330,7 @@ export class AssistantView extends LocalizedLitElement {
                 <div class="written-actions">
                     <button
                         type="button"
-                        class="written-jump ${this._writtenPinned ? 'at-bottom' : ''}"
+                        class="written-jump jump-btn ${this._writtenPinned ? 'at-bottom' : ''}"
                         title=${t('Jump to latest', '跳到最新')}
                         aria-label=${t('Jump to latest', '跳到最新')}
                         @click=${() => this._jumpWrittenToBottom()}
@@ -1249,10 +1400,21 @@ export class AssistantView extends LocalizedLitElement {
                         ${
                             this.messages.length === 0
                                 ? html`<div class="chat-empty">Listening to the interview...</div>`
-                                : html`<div class="chat-list">${this.messages.map(message => this.renderMessage(message))}</div>`
+                                : html`<div class="chat-list ${this._hasInterviewNav() ? 'with-nav' : ''}">
+                                      ${this.messages.map(message => this.renderMessage(message))}
+                                  </div>`
                         }
                     </div>
-                    <button class="jump-latest" ?hidden=${this._pinned} @click=${this.jumpToLatest} title="Jump to latest">
+
+                    ${this.renderInterviewNav()}
+
+                    <button
+                        type="button"
+                        class="chat-jump jump-btn ${this._pinned ? 'at-bottom' : ''}"
+                        title=${t('Jump to latest', '跳到最新')}
+                        aria-label=${t('Jump to latest', '跳到最新')}
+                        @click=${() => this._jumpInterviewToBottom()}
+                    >
                         <svg
                             xmlns="http://www.w3.org/2000/svg"
                             viewBox="0 0 24 24"
@@ -1262,9 +1424,8 @@ export class AssistantView extends LocalizedLitElement {
                             stroke-linecap="round"
                             stroke-linejoin="round"
                         >
-                            <path d="M12 5v14M19 12l-7 7-7-7" />
+                            <path d="M6 9l6 6 6-6" />
                         </svg>
-                        Latest
                     </button>
                 </div>
 
