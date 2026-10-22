@@ -293,6 +293,16 @@ function getSessionPath(sessionId) {
     return path.join(getHistoryDir(), `${id}.json`);
 }
 
+// 会话名是用户输入的,只做收敛而不是清洗:折叠空白、截断长度、空串视为「没有名字」(列表回退到档位名)。
+// 80 个字符足够描述一场面试,又不会让导出的文件名长到 Windows 路径上限。
+const SESSION_TITLE_MAX_LENGTH = 80;
+
+function normalizeSessionTitle(value) {
+    if (value == null) return null;
+    const title = String(value).replace(/\s+/g, ' ').trim();
+    return title ? title.slice(0, SESSION_TITLE_MAX_LENGTH) : null;
+}
+
 function saveSession(sessionId, data) {
     const sessionPath = getSessionPath(sessionId);
     if (!sessionPath) return false;
@@ -300,10 +310,15 @@ function saveSession(sessionId, data) {
     // Load existing session to preserve metadata
     const existingSession = readJsonFile(sessionPath, null);
 
+    // 以磁盘上的旧记录为底再覆盖本次变动的字段:用户起的名字、以及旧版本写下的、本函数不认识的字段
+    // (screenAnalysisHistory 等)都不会因为一次普通保存被抹掉。
     const sessionData = {
+        ...(existingSession || {}),
         sessionId: String(sessionId),
         createdAt: existingSession?.createdAt || parseInt(sessionId),
         lastUpdated: Date.now(),
+        // 用户可见的会话名；null 表示历史页回退到档位名。
+        title: data.title !== undefined ? normalizeSessionTitle(data.title) : (existingSession?.title ?? null),
         // Profile context - set once when session starts
         profile: data.profile || existingSession?.profile || null,
         customPrompt: data.customPrompt || existingSession?.customPrompt || null,
@@ -316,6 +331,19 @@ function saveSession(sessionId, data) {
     };
     const written = writeJsonFile(sessionPath, sessionData);
     // 会话内容变了，history 摘要列表作废，下一次 getAllSessions 重建。
+    if (written) sessionsSummaryCache = null;
+    return written;
+}
+
+// 重命名只动 title,不碰 lastUpdated:它记的是会话内容最后一次增长的时间,改名不是新的发言。
+function renameSession(sessionId, title) {
+    const sessionPath = getSessionPath(sessionId);
+    if (!sessionPath) return false;
+
+    const existingSession = readJsonFile(sessionPath, null);
+    if (!existingSession) return false;
+
+    const written = writeJsonFile(sessionPath, { ...existingSession, title: normalizeSessionTitle(title) });
     if (written) sessionsSummaryCache = null;
     return written;
 }
@@ -369,6 +397,7 @@ function getAllSessions() {
                             Object.values(value).forEach(collectSearchableValues);
                         }
                     };
+                    collectSearchableValues(data.title);
                     collectSearchableValues(data.customPrompt);
                     collectSearchableValues(data.conversationHistory);
                     collectSearchableValues(data.detailHistory);
@@ -378,6 +407,7 @@ function getAllSessions() {
                         sessionId,
                         createdAt: data.createdAt,
                         lastUpdated: data.lastUpdated,
+                        title: data.title || null,
                         messageCount: data.conversationHistory?.length || 0,
                         detailCount: data.detailHistory?.length || 0,
                         profile: data.profile || null,
@@ -500,6 +530,7 @@ module.exports = {
 
     // History
     saveSession,
+    renameSession,
     getSession,
     getAllSessions,
     deleteSession,

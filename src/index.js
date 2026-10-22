@@ -127,6 +127,40 @@ app.on('activate', () => {
     }
 });
 
+// 导出文件名:用户起的会话名优先;没有名字就用「档位-日期」,和历史列表上看到的那行一致。
+// 用白名单收字符(字母、数字、空格、下划线、点、连字符):Windows 的非法字符 \\ / : * ? " < > |、
+// 控制字符、emoji 都在白名单外,统一换成连字符;首尾的点和空格也要去掉,Windows 建不了这样的文件。
+const PROFILE_FILE_LABELS = {
+    interview: ['求职面试', 'Job Interview'],
+    sales: ['销售通话', 'Sales Call'],
+    meeting: ['商务会议', 'Business Meeting'],
+    presentation: ['演示汇报', 'Presentation'],
+    negotiation: ['谈判', 'Negotiation'],
+    exam: ['考试助手', 'Exam Assistant'],
+};
+
+function sanitizeFileName(name) {
+    return (
+        String(name)
+            .replace(/[^\p{L}\p{N} _.-]/gu, '-')
+            .replace(/\s+/g, ' ')
+            .replace(/^[.\s]+|[.\s]+$/g, '')
+            .slice(0, 80) || 'session'
+    );
+}
+
+function sessionFileBase(session) {
+    const title = typeof session.title === 'string' ? session.title.trim() : '';
+    if (title) return sanitizeFileName(title);
+
+    const chinese = storage.getPreferences().uiLanguage !== 'en-US';
+    const labels = PROFILE_FILE_LABELS[session.profile];
+    const label = labels ? labels[chinese ? 0 : 1] : 'Session';
+    const date = new Date(session.createdAt || Date.now());
+    const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return sanitizeFileName(`${label}-${stamp}`);
+}
+
 function setupStorageIpcHandlers() {
     // ============ CONFIG ============
     ipcMain.handle('storage:get-config', async () => {
@@ -304,6 +338,16 @@ function setupStorageIpcHandlers() {
         }
     });
 
+    ipcMain.handle('storage:rename-session', async (event, sessionId, title) => {
+        try {
+            const success = storage.renameSession(sessionId, title);
+            return { success };
+        } catch (error) {
+            console.error('Error renaming session:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('storage:save-session', async (event, sessionId, data) => {
         try {
             storage.saveSession(sessionId, data);
@@ -351,7 +395,8 @@ function setupStorageIpcHandlers() {
             if (sessions.length === 1) {
                 const result = await dialog.showSaveDialog(mainWindow, {
                     title: '导出会话',
-                    defaultPath: `session-${sessions[0].sessionId}.json`,
+                    // 默认文件名就是历史列表上那个名字,缀上会话 id:同名会话也不会互相覆盖。
+                    defaultPath: `${sessionFileBase(sessions[0])}-${sessions[0].sessionId}.json`,
                     filters: [{ name: 'JSON', extensions: ['json'] }],
                 });
                 if (result.canceled || !result.filePath) {
@@ -371,7 +416,8 @@ function setupStorageIpcHandlers() {
 
             const dir = result.filePaths[0];
             sessions.forEach(session => {
-                fs.writeFileSync(path.join(dir, `${session.sessionId}.json`), JSON.stringify(session, null, 2), 'utf8');
+                // 会话名 + 会话 id:名字重复也各写各的文件。
+                fs.writeFileSync(path.join(dir, `${sessionFileBase(session)}-${session.sessionId}.json`), JSON.stringify(session, null, 2), 'utf8');
             });
             return { success: true, count: sessions.length, dir };
         } catch (error) {
@@ -533,6 +579,16 @@ function setupTeleprompterIpcHandlers() {
             return { success: true, data: teleprompter.getStatus() };
         } catch (error) {
             console.error('Error reading teleprompter status:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    // 「电脑+移动端」页每次切入都跑一遍自检:地址、防火墙、服务状态都可能在上一次之后变过。
+    ipcMain.handle('teleprompter:self-check', async () => {
+        try {
+            return { success: true, data: await teleprompter.selfCheck() };
+        } catch (error) {
+            console.error('Error running teleprompter self-check:', error);
             return { success: false, error: error.message };
         }
     });

@@ -156,6 +156,9 @@ const storage = {
     async saveSession(sessionId, data) {
         return ipcRenderer.invoke('storage:save-session', sessionId, data);
     },
+    async renameSession(sessionId, title) {
+        return ipcRenderer.invoke('storage:rename-session', sessionId, title);
+    },
     async deleteSession(sessionId) {
         return ipcRenderer.invoke('storage:delete-session', sessionId);
     },
@@ -197,6 +200,11 @@ const teleprompter = {
     async getStatus() {
         const result = await ipcRenderer.invoke('teleprompter:get-status');
         return result.success ? result.data : { running: false, port: null, url: '', code: '' };
+    },
+    // 返 null 表示自检本身没跑成(IPC/脚本出错);调用方应按「放行」处理,不要把用户挡在配对码外面。
+    async selfCheck() {
+        const result = await ipcRenderer.invoke('teleprompter:self-check');
+        return result.success ? result.data : null;
     },
     async regenerateCode() {
         const result = await ipcRenderer.invoke('teleprompter:regenerate-code');

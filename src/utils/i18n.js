@@ -37,6 +37,7 @@ const zh = {
     'Deselect all': '取消全选',
     Clear: '清除',
     'Export JSON': '导出 JSON',
+    Rename: '重命名',
     Delete: '删除',
     Cancel: '取消',
     Context: '上下文',
@@ -121,6 +122,9 @@ const zh = {
     'Thinking in the screenshot reply': '截图回答启用思考',
     'Thinking before answering trades a second of wait for a better answer. Leave it off in the fast reply, which is read out the moment it appears, and on in the detailed one, which is read in the gap afterwards. The screenshot reply has its own switch because it is the one request carrying an image, and its thinking is spent inside the request timeout — a screenshot of a whole problem statement can run out the clock and come back empty. Takes effect on the next session.':
         '回答前思考会增加少量等待，但通常能提高质量。建议简短回答关闭、详细回答开启。截图回答单独控制，因为图片请求的思考也占用超时时间；复杂截图可能在输出正文前就耗尽时间。下次会话生效。',
+    'Disconnect transcription while paused': '面试暂停后断开连接',
+    'Controls what the pause button at the top left of a session does. When on, resuming takes about 2 seconds to reconnect; when off, the paused session keeps spending speech-recognition tokens.':
+        '影响会话左上角的暂停键效果。如果开启，继续面试后会产生 2 秒左右的连接延迟；如果关闭可以无缝继续面试，但在暂停期间仍会产生语音识别 Token 消耗。',
     'Enable auto screenshot after starting a written test': '进入笔试后开启自动截图',
     'Whether a written test starts taking screenshots by itself. The pause button at the top left stops and resumes it at any time. Note: each screenshot consumes a small amount of tokens, so enable it with care.':
         '开始笔试时是否自动截图；左上角的暂停按钮可随时停止或继续。注意，每次截图都将耗费一点 Token，请谨慎开启。',
@@ -360,21 +364,29 @@ export function localizeTree(root) {
     while ((node = walker.nextNode())) {
         if (
             node.parentElement?.closest(
-                'style, script, .message-body, .context-value, .preview, .entry-name, .entry-desc, .dir-path, [data-no-localize]'
+                'style, script, .message-body, .context-value, .preview, .entry-name, .entry-desc, .dir-path, .session-name, [data-no-localize]'
             )
         ) {
             continue;
         }
         node.nodeValue = translateValue(node.nodeValue);
     }
-    root.querySelectorAll('[placeholder], [title], [aria-label]').forEach(element => {
-        for (const attribute of ['placeholder', 'title', 'aria-label']) {
+    root.querySelectorAll('[placeholder], [aria-label]').forEach(element => {
+        for (const attribute of ['placeholder', 'aria-label']) {
             if (element.hasAttribute(attribute)) element.setAttribute(attribute, translateValue(element.getAttribute(attribute)));
         }
     });
 }
 
 const baseStyles = css`
+    /* 鼠标指针本身会被录屏软件单独画进画面：悬停在按钮上变成小手、在正文上变成 I 形光标，
+       都会在面试官那边暴露「这里藏着一个看不见的窗口」。统一钉成默认箭头，形状永远不随控件变。 */
+    *,
+    *::before,
+    *::after {
+        cursor: default !important;
+    }
+
     * {
         scrollbar-width: thin;
         scrollbar-color: var(--scrollbar-thumb, var(--border-strong)) transparent;

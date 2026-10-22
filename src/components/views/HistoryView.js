@@ -81,9 +81,62 @@ export class HistoryView extends LocalizedLitElement {
                 gap: 2px;
             }
 
-            .session-profile {
+            /* 名字和它的铅笔在同一个不换行的行里:长名字截断,铅笔始终可见(这是隐身上加唯一的改名入口)。 */
+            .name-row {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+            }
+
+            .session-name {
                 color: var(--text-primary);
                 font-size: var(--font-size-sm);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .name-edit {
+                border: none;
+                background: none;
+                padding: 2px;
+                color: var(--text-muted);
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                flex-shrink: 0;
+                opacity: 0.5;
+                transition:
+                    opacity var(--transition),
+                    color var(--transition);
+            }
+
+            .name-edit:hover {
+                opacity: 1;
+                color: var(--text-primary);
+            }
+
+            .name-input {
+                flex: 1;
+                min-width: 0;
+                background: var(--bg-elevated);
+                color: var(--text-primary);
+                border: 1px solid var(--accent);
+                border-radius: var(--radius-sm);
+                padding: 4px 8px;
+                font-size: var(--font-size-sm);
+                font-family: var(--font);
+            }
+
+            .name-input:focus {
+                outline: none;
+                box-shadow: 0 0 0 1px var(--accent);
+            }
+
+            .detail-top .session-name {
+                font-size: var(--font-size-md);
+                font-weight: var(--font-weight-semibold);
             }
 
             .session-date {
@@ -394,6 +447,7 @@ export class HistoryView extends LocalizedLitElement {
         statusMessage: { type: String },
         statusType: { type: String },
         showContext: { type: Boolean },
+        editingId: { type: String },
     };
 
     constructor() {
@@ -408,6 +462,7 @@ export class HistoryView extends LocalizedLitElement {
         this.statusMessage = '';
         this.statusType = '';
         this.showContext = false;
+        this.editingId = null;
         this.loadSessions();
     }
 
@@ -475,10 +530,77 @@ export class HistoryView extends LocalizedLitElement {
         this.statusMessage = '';
     }
 
-    // 行主体打开会话；里面的复选框是唯一不该打开的那次点击。
+    // 行主体打开会话；复选框和改名控件是不该打开的那几次点击。
     handleCardClick(event, sessionId) {
-        if (event.target.closest('.session-check')) return;
+        if (event.target.closest('.session-check, .name-edit, .name-input')) return;
         this.openSession(sessionId);
+    }
+
+    // 用户起的名字为空时回退到档位名：旧会话没有 title，列表看起来仍和以前一样。
+    _getSessionName(session) {
+        return session.title || this._getProfileLabel(session);
+    }
+
+    startRename(event, session) {
+        event.stopPropagation();
+        this.editingId = session.sessionId;
+        this._focusedRenameId = null;
+        this.requestUpdate();
+    }
+
+    handleRenameKeydown(event, session) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            this.commitRename(session, event.target.value);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            this.editingId = null;
+            this.requestUpdate();
+        }
+    }
+
+    // 失焦即保存：改名没有「确定」按钮，Esc 才是取消。Enter 提交后输入框被移除，随之而来的 blur 会因为
+    // editingId 已变而直接返回。
+    async commitRename(session, value) {
+        if (this.editingId !== session.sessionId) return;
+
+        const sessionId = session.sessionId;
+        const title = String(value == null ? '' : value)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 80);
+        this.editingId = null;
+        this._focusedRenameId = null;
+
+        this.sessions = this.sessions.map(item => (item.sessionId === sessionId ? { ...item, title: title || null } : item));
+        if (this.selectedSession?.sessionId === sessionId) {
+            this.selectedSession = { ...this.selectedSession, title: title || null };
+        }
+        this.requestUpdate();
+
+        try {
+            const result = await offerHunter.storage.renameSession(sessionId, title);
+            if (result?.success === false) {
+                this.showStatus(isChinese() ? '重命名失败：会话已被删除或无法写入。' : 'Rename failed: the session was deleted or could not be written.');
+            }
+        } catch (error) {
+            console.error('Error renaming session:', error);
+            this.showStatus(isChinese() ? `重命名失败：${error.message}` : `Rename failed: ${error.message}`, 'error');
+        }
+    }
+
+    // 每次重渲染后把焦点交给正在编辑的输入框。守卫 _focusedRenameId 防止后续无关更新反复抢焦点。
+    _syncRenameFocus() {
+        if (!this.editingId) {
+            this._focusedRenameId = null;
+            return;
+        }
+        if (this._focusedRenameId === this.editingId) return;
+        const input = this.renderRoot.querySelector('.name-input');
+        if (!input) return;
+        this._focusedRenameId = this.editingId;
+        input.focus();
+        input.select();
     }
 
     showStatus(message, type) {
@@ -600,7 +722,13 @@ export class HistoryView extends LocalizedLitElement {
         if (!this.searchQuery.trim()) return this.sessions;
         const q = this.searchQuery.trim().toLocaleLowerCase();
         return this.sessions.filter(session => {
-            const searchableContent = [this.getSessionPreview(session), this.formatDate(session.createdAt), session.customPrompt, session.searchText]
+            const searchableContent = [
+                this._getSessionName(session),
+                this.getSessionPreview(session),
+                this.formatDate(session.createdAt),
+                session.customPrompt,
+                session.searchText,
+            ]
                 .filter(Boolean)
                 .join('\n')
                 .toLocaleLowerCase();
@@ -692,6 +820,8 @@ export class HistoryView extends LocalizedLitElement {
     // 录下来的会话只渲染一次，memo 让选中和搜索都不会重解析没变过的内容。
     updated() {
         super.updated();
+        // 列表和详情都可能处于改名状态，所以焦点处理放在「没有选中会话就返回」之前。
+        this._syncRenameFocus();
         if (!this.selectedSession) return;
 
         for (const group of this._timeline || []) {
@@ -806,6 +936,38 @@ export class HistoryView extends LocalizedLitElement {
         `;
     }
 
+    // 列表行和详情页共用同一个名字块：显示态是「名字 + 铅笔」，编辑态换成输入框。
+    renderNameBlock(session) {
+        if (this.editingId === session.sessionId) {
+            return html`
+                <div class="name-row">
+                    <input
+                        class="name-input"
+                        type="text"
+                        maxlength="80"
+                        .value=${session.title || ''}
+                        placeholder=${this._getProfileLabel(session)}
+                        @click=${event => event.stopPropagation()}
+                        @keydown=${event => this.handleRenameKeydown(event, session)}
+                        @blur=${event => this.commitRename(session, event.target.value)}
+                    />
+                </div>
+            `;
+        }
+
+        return html`
+            <div class="name-row">
+                <span class="session-name">${this._getSessionName(session)}</span>
+                <button class="name-edit" @click=${event => this.startRename(event, session)}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                </button>
+            </div>
+        `;
+    }
+
     renderListView() {
         const filteredSessions = this.getFilteredSessions();
         return html`
@@ -853,7 +1015,7 @@ export class HistoryView extends LocalizedLitElement {
                                               @change=${() => this.toggleSelect(session.sessionId)}
                                           />
                                           <div class="session-left">
-                                              <span class="session-profile">${this._getProfileLabel(session)}</span>
+                                              ${this.renderNameBlock(session)}
                                               <span class="session-date"
                                                   >${this.formatDate(session.createdAt)} · ${this.formatTime(session.createdAt)}</span
                                               >
@@ -939,9 +1101,9 @@ export class HistoryView extends LocalizedLitElement {
                         <polyline points="15 18 9 12 15 6" />
                     </svg>
                 </button>
+                ${this.renderNameBlock(this.selectedSession)}
                 <span class="detail-info"
-                    >${this._getProfileLabel(this.selectedSession)} · ${this.formatDate(this.selectedSession.createdAt)} ·
-                    ${this.formatTime(this.selectedSession.createdAt)}</span
+                    >${this.formatDate(this.selectedSession.createdAt)} · ${this.formatTime(this.selectedSession.createdAt)}</span
                 >
             </div>
             <section class="details-scroll">${this.renderContextStrip()} ${this.renderTimeline()}</section>

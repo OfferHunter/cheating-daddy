@@ -387,7 +387,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
         this._msgSeq = 0;
-        // 软暂停：主进程持续给识别器喂静音，所以恢复是瞬时的，什么都不用重连。
+        // 暂停期间是否重连由设置里的 pauseDisconnectsAsr 决定（默认断开），这里只镜像按钮状态。
         this._paused = false;
         // 低于该序号的轮次主进程已经忘了。只用来拒绝为「清空之前派发的轮次」开新气泡——已存在的气泡照旧更新，
         // 因为它可能正在流式，冻住它恰恰就是那个必须避免的截断。
@@ -1046,7 +1046,6 @@ export class OfferHunterApp extends LocalizedLitElement {
                             <button
                                 class="nav-item ${this.currentView === item.id ? 'active' : ''}"
                                 @click=${() => this.navigate(item.id)}
-                                title=${item.label}
                             >
                                 ${item.icon} ${item.label}
                             </button>
@@ -1065,7 +1064,7 @@ export class OfferHunterApp extends LocalizedLitElement {
     renderWindowButtons() {
         return html`
             <div class="window-controls">
-                <button class="icon-btn" @click=${() => this.handleHideToggle()} title="Hide window">
+                <button class="icon-btn" @click=${() => this.handleHideToggle()}>
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
                         viewBox="0 0 24 24"
@@ -1078,7 +1077,7 @@ export class OfferHunterApp extends LocalizedLitElement {
                         <path d="M5 12h14" />
                     </svg>
                 </button>
-                <button class="icon-btn danger" @click=${() => this.handleQuit()} title="Quit">
+                <button class="icon-btn danger" @click=${() => this.handleQuit()}>
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
                         viewBox="0 0 24 24"
@@ -1101,7 +1100,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         return html`
             <div class="live-bar">
                 <div class="live-bar-left">
-                    <button class="icon-btn" @click=${() => this.handleClose()} title="End session">
+                    <button class="icon-btn" @click=${() => this.handleClose()}>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path
                                 fill-rule="evenodd"
@@ -1113,7 +1112,6 @@ export class OfferHunterApp extends LocalizedLitElement {
                     <button
                         class="icon-btn ${this._paused ? 'active' : ''}"
                         @click=${() => this.togglePause()}
-                        title=${this._paused ? 'Resume' : 'Pause'}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                             <rect x="7" y="5" width="3.4" height="14" rx="1" />
@@ -1124,7 +1122,7 @@ export class OfferHunterApp extends LocalizedLitElement {
                         // 笔试没有对话转录，模型上下文里也从不写入截图轮，清空上下文在这里是个无效按钮。
                         this.sessionMode === 'written'
                             ? ''
-                            : html`<button class="icon-btn" @click=${() => this.handleClearContext()} title="Clear context">
+                            : html`<button class="icon-btn" @click=${() => this.handleClearContext()}>
                                   <!-- 和手机提词页那颗「清空上下文」用同一个扫帚图标,两边一眼对得上。 -->
                                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="currentColor">
                                       <path

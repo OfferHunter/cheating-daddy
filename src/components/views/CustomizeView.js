@@ -28,6 +28,7 @@ const SETTINGS_KEYS = [
     'detailThinking',
     'screenshotThinking',
     'screenshotSummary',
+    'pauseDisconnectsAsr',
     'writtenAutoScreenshot',
     'writtenScreenshotIntervalSec',
     'nonFocusableSession',
@@ -288,6 +289,7 @@ export class CustomizeView extends LocalizedLitElement {
         detailThinking: { type: Boolean },
         screenshotThinking: { type: Boolean },
         screenshotSummary: { type: Boolean },
+        pauseDisconnectsAsr: { type: Boolean },
         writtenAutoScreenshot: { type: Boolean },
         writtenScreenshotIntervalSec: { type: Number },
         nonFocusableSession: { type: Boolean },
@@ -436,6 +438,11 @@ export class CustomizeView extends LocalizedLitElement {
     async handleScreenshotSummaryChange(checked) {
         this.screenshotSummary = checked;
         await offerHunter.storage.updatePreference('screenshotSummary', checked);
+    }
+
+    async handlePauseDisconnectsAsrChange(checked) {
+        this.pauseDisconnectsAsr = checked;
+        await offerHunter.storage.updatePreference('pauseDisconnectsAsr', checked);
     }
 
     async handleWrittenAutoScreenshotChange(checked) {
@@ -780,6 +787,19 @@ export class CustomizeView extends LocalizedLitElement {
                             steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still
                             mid-sentence, whatever the level does.
                         </div>
+                    </div>
+                    <label class="toggle-row">
+                        <input
+                            class="toggle-input"
+                            type="checkbox"
+                            .checked=${this.pauseDisconnectsAsr}
+                            @change=${e => this.handlePauseDisconnectsAsrChange(e.target.checked)}
+                        />
+                        <span class="toggle-label">Disconnect transcription while paused</span>
+                    </label>
+                    <div class="form-help">
+                        Controls what the pause button at the top left of a session does. When on, resuming takes about 2 seconds to reconnect; when
+                        off, the paused session keeps spending speech-recognition tokens.
                     </div>
                 </div>
             </section>

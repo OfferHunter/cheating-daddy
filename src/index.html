@@ -196,6 +196,19 @@
         <script type="module" src="components/app/OfferHunterApp.js"></script>
 
         <offer-hunter-app id="offerHunter"></offer-hunter-app>
+        <script>
+            // 原生 title 提示框是系统另开的窗口，不受主窗口屏幕捕获保护；悬停时先摘掉，
+            // 连 markdown 回答里生成的链接标题也一并覆盖，任何来源都不会再弹提示。
+            document.addEventListener(
+                'pointerover',
+                event => {
+                    for (const node of event.composedPath()) {
+                        if (node.nodeType === Node.ELEMENT_NODE && node.hasAttribute('title')) node.removeAttribute('title');
+                    }
+                },
+                true
+            );
+        </script>
         <script src="utils/renderer.js"></script>
     </body>
 </html>

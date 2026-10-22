@@ -8,10 +8,43 @@ const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { execFile } = require('node:child_process');
 const { WebSocketServer } = require('ws');
 const storage = require('../storage');
 
 const DEFAULT_PORT = 8765;
+// 自检要读 Windows 防火墙规则。NetSecurity 那套 cmdlet 查一次要 5 秒以上(还要加载模块),而注册表里是
+// 同一份数据,0.5 秒就读完;键名和值格式与系统语言无关,中文/英文系统解析结果一致。
+const FIREWALL_POLICY_KEY = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy';
+const FIREWALL_PROBE_TIMEOUT_MS = 8000;
+// 一张真实的 Wi-Fi 卡 + 一张 VMware/Hyper-V/WSL/VPN 虚拟卡是常态。地址排序把真实网卡放前面,虚拟网卡和
+// 169.254 的自动私有地址放最后——后者手机永远到不了,只配当「换一个试试」的候选。
+const WIFI_ADAPTER_RE = /wi-?fi|wlan|wireless|无线/i;
+const ETHERNET_ADAPTER_RE = /ethernet|以太网/i;
+const VIRTUAL_ADAPTER_RE = /vmware|vmnet|virtualbox|vbox|hyper-?v|vethernet|docker|wsl|tailscale|zerotier|vpn|npcap|bluetooth|virtual|loopback/i;
+const LINK_LOCAL_RE = /^169\.254\./;
+
+const FIREWALL_PROBE_SCRIPT = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    `$base = '${FIREWALL_POLICY_KEY}'`,
+    '$profiles = [ordered]@{}',
+    "foreach ($pair in @(@('Domain', 'DomainProfile'), @('Private', 'StandardProfile'), @('Public', 'PublicProfile'))) {",
+    "    $value = (Get-ItemProperty -Path ($base + '\\' + $pair[1]) -Name EnableFirewall).EnableFirewall",
+    '    $profiles[$pair[0]] = ($value -eq 1)',
+    '}',
+    '$rules = @()',
+    "$props = Get-ItemProperty -Path ($base + '\\FirewallRules')",
+    'foreach ($prop in $props.PSObject.Properties) {',
+    "    if ($prop.Name.StartsWith('PS')) { continue }",
+    '    $raw = [string]$prop.Value',
+    "    if ($raw -notmatch '(^|\\|)Dir=In(\\||$)') { continue }",
+    "    if ($raw -notmatch '(^|\\|)Active=TRUE(\\||$)') { continue }",
+    "    if ($raw -notmatch '(^|\\|)Action=Allow(\\||$)') { continue }",
+    '    $rules += $raw',
+    '}',
+    '$networks = @(Get-NetConnectionProfile | ForEach-Object { [pscustomobject]@{ alias = $_.InterfaceAlias; category = [string]$_.NetworkCategory } })',
+    '[pscustomobject]@{ profiles = $profiles; networks = $networks; rules = $rules } | ConvertTo-Json -Compress -Depth 4',
+].join('\n');
 // 首选端口被占时往后顺延试多少个相邻端口,试完仍不行才退到系统临时端口。
 const PORT_SCAN_SPAN = 10;
 // 连续猜错这么多次就换码并锁一段时间。配对码只有 6 位,同网段暴力猜的门槛全靠这里。
@@ -101,16 +134,163 @@ function themeCss() {
     return `:root{color-scheme:${prefersDark(themeTokens) ? 'dark' : 'light'};${decls}}`;
 }
 
-function getLanUrl() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        for (const entry of interfaces[name] || []) {
-            if (entry.family === 'IPv4' && !entry.internal) {
-                return `http://${entry.address}:${port}`;
-            }
+function adapterRank(name, address) {
+    if (LINK_LOCAL_RE.test(address)) return 4;
+    if (VIRTUAL_ADAPTER_RE.test(name)) return 3;
+    if (WIFI_ADAPTER_RE.test(name)) return 0;
+    if (ETHERNET_ADAPTER_RE.test(name)) return 1;
+    return 2;
+}
+
+// 所有可能被手机访问到的地址,而不是只取第一个。机器上同时有 Wi-Fi、有线、VMware/WSL/VPN 网卡时,
+// 任何一个自动选择都可能挑错;列出来让用户从第一个开始试,比猜错一次就判定「连不上」可靠。
+function listLanAddresses() {
+    const found = [];
+    for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+        for (const entry of entries || []) {
+            if (entry.family !== 'IPv4' || entry.internal) continue;
+            if (found.some(item => item.address === entry.address)) continue;
+            found.push({ name, address: entry.address });
         }
     }
-    return `http://localhost:${port}`;
+    found.sort((a, b) => adapterRank(a.name, a.address) - adapterRank(b.name, b.address));
+    return found.map(item => ({ ...item, url: `http://${item.address}:${port}` }));
+}
+
+function runFirewallProbe() {
+    return new Promise(resolve => {
+        execFile(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', FIREWALL_PROBE_SCRIPT],
+            { windowsHide: true, timeout: FIREWALL_PROBE_TIMEOUT_MS, maxBuffer: 4 << 20, encoding: 'utf8' },
+            (error, stdout) => {
+                // 探测失败只说明「不知道」,不说明「连不上」。宁可放行让用户自己试地址,也不要用一次失败的
+                // 探测把人挡在配对码前面——检测脚本本身出问题的概率远高于防火墙配置错误的概率。
+                if (error) {
+                    console.warn('[Teleprompter] firewall probe failed:', error.message);
+                    resolve(null);
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(stdout));
+                } catch {
+                    resolve(null);
+                }
+            }
+        );
+    });
+}
+
+function parseFirewallRule(raw) {
+    // pfn/svc 也要记:没有 App 但有 PFN 的规则是某个 UWP 包专用的,不是「任意程序」——漏了这条会把
+    // 系统自带的包规则当成放行本程序,自检就永远通过,失去意义。
+    const rule = { profiles: [], app: null, pfn: null, service: null, ports: null, protocol: null };
+    for (const field of String(raw).split('|')) {
+        const eq = field.indexOf('=');
+        if (eq < 1) continue;
+        const key = field.slice(0, eq).toLowerCase();
+        const value = field.slice(eq + 1);
+        if (key === 'profile') rule.profiles.push(value.toLowerCase());
+        else if (key === 'app') rule.app = value;
+        else if (key === 'pfn') rule.pfn = value;
+        else if (key === 'svc') rule.service = value;
+        else if (key === 'lport') rule.ports = value;
+        else if (key === 'protocol') rule.protocol = value;
+    }
+    return rule;
+}
+
+function portListIncludes(list, port) {
+    const text = String(list).trim().toLowerCase();
+    if (text === 'any' || text === '*') return true;
+    for (const part of text.split(',')) {
+        const item = part.trim();
+        const dash = item.indexOf('-');
+        if (dash > 0) {
+            const from = Number(item.slice(0, dash));
+            const to = Number(item.slice(dash + 1));
+            if (Number.isFinite(from) && Number.isFinite(to) && port >= from && port <= to) return true;
+        } else if (Number(item) === port) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 一条入站放行规则是否覆盖「手机从 category 这类网络访问 port」。规则里没有 Profile 就是不限网络类型,
+// 没有 App 就是不限程序;Protocol 缺省同样表示任意协议。
+function ruleAllows(rule, category, exe, port) {
+    if (rule.profiles.length && !rule.profiles.includes(category.toLowerCase())) return false;
+    const protocol = (rule.protocol || '').toLowerCase();
+    if (protocol && !['6', 'tcp', 'any', '256'].includes(protocol)) return false;
+    if (rule.ports && !portListIncludes(rule.ports, port)) return false;
+    if (!rule.app) return !rule.pfn && !rule.service;
+    const normalize = value => value.replace(/^"|"$/g, '').replace(/\//g, '\\').toLowerCase();
+    return normalize(rule.app) === normalize(exe);
+}
+
+// 进入「电脑+移动端」页时的自检:服务在跑、有局域网地址、防火墙放行。前两条是本机就能确定的;防火墙
+// 只对 Windows 做,而且只检查「手机可能进来的那几张网卡」对应的网络类型(公用/专用),不同网卡的类型
+// 互相独立,不能拿另一张卡的放行规则来证明这张卡通。AP 隔离发生在路由器上,电脑侧探测不到,不在这里判断。
+async function selfCheck() {
+    const running = Boolean(port);
+    const paired = [...clients].some(client => client.authed && client.ws.readyState === 1);
+    const addresses = running ? listLanAddresses() : [];
+    const result = {
+        ok: false,
+        running,
+        paired,
+        urls: addresses.map(item => item.url),
+        failures: [],
+        firewall: 'skipped',
+        networkCategories: [],
+    };
+
+    if (!running) result.failures.push('service-down');
+    else if (!addresses.length) result.failures.push('no-lan-address');
+
+    // 手机已经连上,就不该再被防火墙探测拦住;探测本身也可能误判,所以这三种情况直接按「服务可用」处理。
+    if (!running || !addresses.length || paired || process.platform !== 'win32') {
+        result.ok = result.failures.length === 0;
+        if (running && addresses.length) result.firewall = 'unknown';
+        return result;
+    }
+
+    const probe = await runFirewallProbe();
+    if (!probe) {
+        result.firewall = 'unknown';
+        result.ok = true;
+        return result;
+    }
+
+    // 只认和候选地址同一张网卡的网络类型。虚拟网卡/已断开网卡的残留地址查不到网络配置,查不到就放行。
+    // 域网络在连接配置里叫 DomainAuthenticated,防火墙配置里叫 Domain,不归一化会永远匹配不上规则。
+    const interfaces = new Set(addresses.map(item => item.name));
+    const categories = [
+        ...new Set(
+            probe.networks
+                .filter(item => interfaces.has(item.alias))
+                .map(item => (item.category === 'DomainAuthenticated' ? 'Domain' : item.category))
+        ),
+    ];
+    result.networkCategories = categories;
+    if (!categories.length) {
+        result.firewall = 'unknown';
+        result.ok = true;
+        return result;
+    }
+
+    const rules = (probe.rules || []).map(parseFirewallRule);
+    const exe = process.execPath;
+    const reachable = categories.some(category => {
+        if (probe.profiles[category] === false) return true;
+        return rules.some(rule => ruleAllows(rule, category, exe, port));
+    });
+
+    result.firewall = reachable ? 'pass' : 'blocked';
+    if (!reachable) result.failures.push('firewall');
+    result.ok = reachable;
+    return result;
 }
 
 // 长效令牌存在 config.json:它是局域网共享秘密,配对一次之后手机不用再输码。credential.json 里的 API Key
@@ -354,7 +534,7 @@ async function startTeleprompter() {
     wss = socketServer;
     if (port !== preferred) storage.updateConfig('teleprompterPort', port);
 
-    console.log('Teleprompter listening on', getLanUrl());
+    console.log('Teleprompter listening on', listLanAddresses().map(item => item.url));
     return getStatus();
 }
 
@@ -407,10 +587,11 @@ function getStatus() {
     // paired:当前有没有已鉴权的手机连着。桌面主页靠它决定「开始面试 / 开始笔试」能不能按——这一模式里手机才是显示端,
     // 没配对就开会话等于对着一个没人看的窗口说话。
     const paired = [...clients].some(client => client.authed && client.ws.readyState === 1);
+    const addresses = port ? listLanAddresses() : [];
     return {
         running: Boolean(port),
         port,
-        url: port ? getLanUrl() : '',
+        urls: addresses.map(item => item.url),
         code: pairingCode || '',
         paired,
     };
@@ -422,4 +603,4 @@ function regenerateCode() {
     return getStatus();
 }
 
-module.exports = { startTeleprompter, stopTeleprompter, broadcast, getStatus, regenerateCode, setCommandHandler, setTheme };
+module.exports = { startTeleprompter, stopTeleprompter, broadcast, getStatus, selfCheck, regenerateCode, setCommandHandler, setTheme };

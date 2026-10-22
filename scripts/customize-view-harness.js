@@ -36,6 +36,7 @@ const PAGE = `<!doctype html>
     const DEFAULTS = {
         uiLanguage: 'zh-CN', customPrompt: '', promptOverrides: {}, knowledgeDir: '',
         detailMode: true, briefThinking: false, detailThinking: false, screenshotThinking: true, screenshotSummary: true,
+        pauseDisconnectsAsr: true,
         selectedLanguage: 'cmn-CN', selectedImageQuality: 'medium',
         audioInputDeviceId: 'default', fontSize: 16,
         backgroundTransparency: 0.48, textTransparency: 0.83,
@@ -193,6 +194,31 @@ app.whenReady().then(async () => {
         })()`);
         await wait(150);
         check('written auto-screenshot toggle persisted', (await exec(`window.__storedPrefs.writtenAutoScreenshot`)) === false);
+
+        // 音频输入块里的「面试暂停后断开连接」开关:默认开启,描述是约定的那句话,关闭后落盘。
+        await exec(
+            `window.__audio = () => [...window.__root().querySelectorAll('.surface')].find(s => s.querySelector('.surface-title')?.textContent.trim() === '音频输入'); void 0`
+        );
+        check('audio section rendered', await exec(`!!window.__audio()`));
+        check(
+            'pause-disconnect toggle reads 面试暂停后断开连接',
+            (await exec(`[...window.__audio().querySelectorAll('.toggle-label')].map(el => el.textContent.trim()).includes('面试暂停后断开连接')`))
+        );
+        check(
+            'pause-disconnect toggle is on by default',
+            (await exec(`window.__audio().querySelector('.toggle-label').closest('.toggle-row').querySelector('input').checked`)) === true
+        );
+        check(
+            'pause-disconnect description is the agreed sentence',
+            (await exec(`[...window.__audio().querySelectorAll('.form-help')].map(el => el.textContent.replace(/\\s+/g, ' ').trim()).includes('影响会话左上角的暂停键效果。如果开启，继续面试后会产生 2 秒左右的连接延迟；如果关闭，在暂停期间仍会产生语音识别 Token 消耗。')`))
+        );
+        await exec(`(() => {
+            const toggle = window.__audio().querySelector('.toggle-row input[type=checkbox]');
+            toggle.checked = false;
+            toggle.dispatchEvent(new Event('change'));
+        })()`);
+        await wait(150);
+        check('pause-disconnect toggle persisted', (await exec(`window.__storedPrefs.pauseDisconnectsAsr`)) === false);
 
         // 快捷键表:截图动作改成了合并名,缓存动作有了自己的默认键。
         const keybindRows = await exec(`[...window.__root().querySelectorAll('.keybind-row')].map(row => [

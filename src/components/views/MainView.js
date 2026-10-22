@@ -227,6 +227,21 @@ export class MainView extends LocalizedLitElement {
             color: var(--text-muted);
         }
 
+        .pair-label-hint {
+            margin-left: var(--space-xs);
+            font-size: var(--font-size-xs);
+            color: var(--text-muted);
+        }
+
+        /* 这一页真正要用户做的事只有「打开网址、输码」,单独一行居中的标题比夹在说明小字里更容易被看到。 */
+        .pair-prompt {
+            text-align: center;
+            font-size: var(--font-size-base);
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+
         .pair-row {
             display: flex;
             align-items: center;
@@ -313,11 +328,12 @@ export class MainView extends LocalizedLitElement {
         onOpenConfig: { type: Function },
         isInitializing: { type: Boolean },
         pageIndex: { type: Number },
-        teleprompterUrl: { type: String },
+        teleprompterUrls: { type: Array },
         teleprompterCode: { type: String },
         teleprompterRunning: { type: Boolean },
         teleprompterPaired: { type: Boolean },
-        teleprompterCopied: { type: Boolean },
+        teleprompterCopied: { type: String },
+        teleprompterCheck: { type: Object },
     };
 
     constructor() {
@@ -326,11 +342,13 @@ export class MainView extends LocalizedLitElement {
         this.onOpenConfig = () => {};
         this.isInitializing = false;
         this.pageIndex = 0;
-        this.teleprompterUrl = '';
+        this.teleprompterUrls = [];
         this.teleprompterCode = '';
         this.teleprompterRunning = false;
         this.teleprompterPaired = false;
-        this.teleprompterCopied = false;
+        this.teleprompterCopied = '';
+        this.teleprompterCheck = null;
+        this._checkSeq = 0;
     }
 
     connectedCallback() {
@@ -338,6 +356,13 @@ export class MainView extends LocalizedLitElement {
         // 配对是主进程那边的状态,渲染端没有事件可听,轮询最省事:主页在会话开始前才挂着,这点开销可忽略。
         this._refreshTeleprompter();
         this._teleprompterTimer = setInterval(() => this._refreshTeleprompter(), 1500);
+        if (MODE_PAGES[this.pageIndex] === 'desktopPhone') this._runSelfCheck();
+    }
+
+    // 每次切进「电脑+移动端」都重新自检:网络可能刚换过(比如刚连上手机热点),旧结果不能沿用。
+    updated(changed) {
+        super.updated(changed);
+        if (changed.has('pageIndex') && MODE_PAGES[this.pageIndex] === 'desktopPhone') this._runSelfCheck();
     }
 
     disconnectedCallback() {
@@ -351,22 +376,36 @@ export class MainView extends LocalizedLitElement {
         const status = await window.offerHunter.teleprompter.getStatus();
         if (!status) return;
         this.teleprompterRunning = Boolean(status.running);
-        this.teleprompterUrl = status.url || '';
+        this.teleprompterUrls = Array.isArray(status.urls) ? status.urls : [];
         this.teleprompterCode = status.code || '';
         this.teleprompterPaired = Boolean(status.paired);
     }
 
-    async _copyTeleprompterUrl() {
-        if (!this.teleprompterUrl) return;
+    // 自检要跑一次 PowerShell(约 0.5 秒),期间不显示地址和配对码;通过后再放出来。
+    async _runSelfCheck() {
+        const teleprompter = window.offerHunter?.teleprompter;
+        if (!teleprompter?.selfCheck) return;
+        const seq = (this._checkSeq += 1);
+        this.teleprompterCheck = { checking: true };
+        const result = await teleprompter.selfCheck();
+        // 连续切换页面时只认最后一次的结果,避免旧的慢结果覆盖新状态。
+        if (seq !== this._checkSeq) return;
+        // 探测本身没跑成时按放行处理:地址照常显示,不能让检测脚本的故障挡住配对。
+        this.teleprompterCheck = result || { ok: true, failures: [] };
+        if (Array.isArray(result?.urls) && result.urls.length) this.teleprompterUrls = result.urls;
+    }
+
+    async _copyTeleprompterUrl(url) {
+        if (!url) return;
         try {
-            await navigator.clipboard.writeText(this.teleprompterUrl);
+            await navigator.clipboard.writeText(url);
         } catch {
             // 剪贴板不可用也不至于卡住流程:地址本来就印在屏幕上,手抄一份即可。
         }
-        this.teleprompterCopied = true;
+        this.teleprompterCopied = url;
         clearTimeout(this._copiedTimer);
         this._copiedTimer = setTimeout(() => {
-            this.teleprompterCopied = false;
+            this.teleprompterCopied = '';
         }, 1500);
     }
 
@@ -481,6 +520,35 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
+    // 自检不过的原因,一条一行。中英文都写全,避免用户只看懂一半。
+    _checkFailureMessages(check) {
+        const failures = check.failures || [];
+        const messages = [];
+        if (failures.includes('service-down')) {
+            messages.push(t('The teleprompter service is not running. Restart the app.', '提词服务未启动，请重启应用。'));
+        }
+        if (failures.includes('no-lan-address')) {
+            messages.push(
+                t(
+                    'No local network address found — connect the computer to Wi-Fi or a wired network first.',
+                    '没有找到局域网地址，请先把电脑连接到 Wi-Fi 或有线网络。'
+                )
+            );
+        }
+        if (failures.includes('firewall')) {
+            const zoneLabels = { Public: t('Public', '公用'), Private: t('Private', '专用'), Domain: t('Domain', '域') };
+            const zones = (check.networkCategories || []).map(category => zoneLabels[category] || category).join('/');
+            messages.push(
+                t(
+                    `Windows Firewall may be blocking the phone${zones ? ` (current network type: ${zones})` : ''}. Allow this app in Windows Security → Firewall & network protection → Allow an app through firewall, then check again.`,
+                    `Windows 防火墙可能拦截了手机连接${zones ? `（当前网络类型：${zones}）` : ''}。请在「Windows 安全中心 → 防火墙和网络保护 → 允许应用通过防火墙」中为「海王AI面试助手」勾选当前网络，然后点「重新检测」。`
+                )
+            );
+        }
+        if (!messages.length) messages.push(t('Network check failed.', '网络自检未通过。'));
+        return messages;
+    }
+
     // 配对区就放在「电脑+移动端」这一页:这一模式的显示端是手机,地址和配对码必须在选它、开会话之前就看得到。
     // 只此一处渲染,不做第二份——配对码可重新生成,两份很容易显示不同的码。
     _renderPairingBox() {
@@ -490,17 +558,53 @@ export class MainView extends LocalizedLitElement {
             </div>`;
         }
 
+        const check = this.teleprompterCheck;
+        if (!check || check.checking) {
+            return html`<div class="pair-box">
+                <div class="pair-hint">${t('Checking the network…', '正在检查网络环境…')}</div>
+            </div>`;
+        }
+
+        // 自检不过就不给地址和配对码:给了也连不上,只会让用户在「输错码」和「网络不通」之间来回猜。
+        if (!check.ok) {
+            return html`<div class="pair-box">
+                <div class="pair-error">
+                    ${this._checkFailureMessages(check).map((line, index) => (index === 0 ? line : html`<br />${line}`))}
+                </div>
+                <div class="pair-row">
+                    <button class="pair-btn" @click=${this._runSelfCheck}>
+                        ${t('Check again', '重新检测')}
+                    </button>
+                </div>
+            </div>`;
+        }
+
         return html`
             <div class="pair-box">
-                <div class="pair-field">
-                    <span class="pair-label">${t('Address', '地址')}</span>
-                    <div class="pair-row">
-                        <span class="pair-value">${this.teleprompterUrl}</span>
-                        <button class="pair-btn" @click=${this._copyTeleprompterUrl}>
-                            ${this.teleprompterCopied ? t('Copied', '已复制') : t('Copy link', '复制链接')}
-                        </button>
-                    </div>
-                </div>
+                ${this.teleprompterUrls.map(
+                    (url, index) => html`
+                        <div class="pair-field">
+                            <span class="pair-label">
+                                ${t('Address', '地址')}${index + 1}${index > 0
+                                    ? html`<span class="pair-label-hint"
+                                          >${t(
+                                              'If the address above does not work, try this one',
+                                              '如果上面的地址不行就换这个试试'
+                                          )}</span
+                                      >`
+                                    : ''}
+                            </span>
+                            <div class="pair-row">
+                                <span class="pair-value">${url}</span>
+                                <button class="pair-btn" @click=${() => this._copyTeleprompterUrl(url)}>
+                                    ${this.teleprompterCopied === url
+                                        ? t('Copied', '已复制')
+                                        : t('Copy link', '复制链接')}
+                                </button>
+                            </div>
+                        </div>
+                    `
+                )}
                 <div class="pair-field">
                     <span class="pair-label">${t('Pairing code', '配对码')}</span>
                     <div class="pair-row">
@@ -514,12 +618,6 @@ export class MainView extends LocalizedLitElement {
                     ${this.teleprompterPaired
                         ? t('Phone connected', '手机已连接')
                         : t('Waiting for a phone to connect…', '等待手机连接…')}
-                </div>
-                <div class="pair-hint">
-                    ${t(
-                        'Open this address in a phone browser on the same Wi-Fi, then enter the code.',
-                        '用同一 Wi-Fi 下的手机浏览器打开上面的地址，再输入配对码。'
-                    )}
                 </div>
             </div>
         `;
@@ -544,6 +642,12 @@ export class MainView extends LocalizedLitElement {
                 )
                     .split('\n')
                     .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
+            </div>
+            <div class="pair-prompt">
+                ${t(
+                    'Open the address in a phone browser on the same Wi-Fi; once the page loads, enter the pairing code.',
+                    '请在同一 Wi-Fi 下的手机浏览器打开网址，成功加载后输入配对码'
+                )}
             </div>
             ${this._renderPairingBox()}
             ${this._renderStartButtons(this.teleprompterPaired, t('Phone not connected', '手机未连接'))}

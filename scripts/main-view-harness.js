@@ -31,7 +31,8 @@ const PAGE = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}</style></head>
 <body>
 <script>
-    window.__tp = { running: true, url: 'http://192.168.1.5:8765', code: '123456', paired: false };
+    window.__tp = { running: true, urls: ['http://192.168.1.5:8765'], code: '123456', paired: false };
+    window.__tpCheck = { ok: true, failures: [] };
     window.require = function (name) {
         if (name === './defaults') return { DEFAULT_PREFERENCES: { uiLanguage: 'zh-CN' } };
         throw new Error('unexpected require in harness: ' + name);
@@ -39,6 +40,7 @@ const PAGE = `<!doctype html>
     window.offerHunter = {
         teleprompter: {
             getStatus: async () => Object.assign({}, window.__tp),
+            selfCheck: async () => Object.assign({ urls: window.__tp.urls }, window.__tpCheck),
             regenerateCode: async () => Object.assign({}, window.__tp),
         },
     };
@@ -123,6 +125,11 @@ app.whenReady().then(async () => {
         check('desktop+phone page title has a right-side description', (await exec(`window.__q('.page-title-desc').textContent`)).trim() === '在电脑上面试/笔试，在手机、平板网页看电脑提词');
         check('desktop+phone note breaks into one line per sentence', (await exec(`window.__q('.page-note').querySelectorAll('br').length`)) === 3);
 
+        // 说明文字下方是一行居中的操作指引,原来配对框里的小字提示已删掉。
+        check(
+            'pairing prompt sits below the note',
+            (await exec(`window.__q('.pair-prompt').textContent`)).trim() === '请在同一 Wi-Fi 下的手机浏览器打开网址，成功加载后输入配对码'
+        );
         check('pairing box shows the address', (await exec(`window.__q('.pair-value').textContent`)).trim() === 'http://192.168.1.5:8765');
         check('pairing box shows the code', (await exec(`window.__q('.pair-code').textContent`)).trim() === '123456');
         check('status reads waiting before pairing', (await exec(`window.__q('.pair-status').textContent`)).includes('等待手机连接'));
@@ -180,6 +187,34 @@ app.whenReady().then(async () => {
         await exec(`window.__tp.paired = false`);
         await wait(1800);
         check('start button re-disabled when phone drops', await exec(disabled));
+
+        // 多网卡:每个候选地址都列出来,第二个带「换这个试试」的提示。
+        await exec(
+            `window.__tp.urls = ['http://192.168.1.5:8765','http://192.168.88.1:8765']; document.querySelector('main-view')._runSelfCheck()`
+        );
+        await wait(300);
+        check('every candidate address is listed', (await exec(`window.__root().querySelectorAll('.pair-value').length`)) === 2);
+        check(
+            'second address carries the fallback hint',
+            (await exec(`window.__root().querySelectorAll('.pair-label-hint')[0].textContent`)).trim() ===
+                '如果上面的地址不行就换这个试试'
+        );
+        check('first address has no fallback hint', (await exec(`window.__root().querySelectorAll('.pair-label-hint').length`)) === 1);
+
+        // 自检不过:地址和配对码都不渲染,只给原因和「重新检测」。
+        await exec(
+            `window.__tpCheck = { ok: false, failures: ['firewall'], networkCategories: ['Public'] }; document.querySelector('main-view')._runSelfCheck()`
+        );
+        await wait(300);
+        check('failed self-check hides the address', await exec(`!window.__q('.pair-value')`));
+        check('failed self-check hides the pairing code', await exec(`!window.__q('.pair-code')`));
+        check('failed self-check explains the firewall reason', (await exec(`window.__q('.pair-error').textContent`)).includes('防火墙'));
+        check('failed self-check offers a recheck button', (await exec(`window.__q('.pair-btn').textContent`)).includes('重新检测'));
+
+        // 恢复通过,确认重新检测能如实反映变化。
+        await exec(`window.__tpCheck = { ok: true, failures: [] }; document.querySelector('main-view')._runSelfCheck()`);
+        await wait(300);
+        check('address returns after a passing recheck', await exec(`!!window.__q('.pair-value')`));
 
         win.destroy();
     } catch (error) {

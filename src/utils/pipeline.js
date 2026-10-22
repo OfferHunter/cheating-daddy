@@ -139,7 +139,8 @@ let sessionGeneration = 0;
 let contextFloorSeq = 0;
 
 // 用户的暂停开关，也是 processLocalAudio 那串门槛里的又一道。置上后帧变成静音、服务端的句子事件被丢弃，
-// 所以暂停后说的话既进不了字幕也进不了轮次——而 socket 在后面照旧开着保温。
+// 所以暂停后说的话既进不了字幕也进不了轮次。socket 是否跟着断开由 pauseDisconnectsAsr 决定：默认断开，
+// 暂停期间不产生识别 token，恢复时重新握手；关着则照旧送静音帧保温，恢复瞬时但端点仍在计费。
 let paused = false;
 
 // 详细回答，与 turnLog 完全分开记。后续每个功能只读其中一份日志，两边绝不能看到对方的记录：详细记录混进
@@ -225,9 +226,9 @@ function bubbleText(source) {
     return source === CANDIDATE ? candidateSpeech.join('') + text : text;
 }
 
-// 候选人说的话短到这个程度就丢弃而不是并入：识别后，从闸门漏过去的词、一声咳嗽、一个走神的「嗯」都长得
-// 这样，而一个词的气泡纯属噪音。它从不进块，所以既不上屏也进不了提示词。面试官那路不受此限——再短的提
-// 问也是提问。
+// 候选人说的话短到这个程度就不上屏：识别后，从闸门漏过去的词、一声咳嗽、一个走神的「嗯」都长得这样，而
+// 一个词的气泡纯属噪音。它仍然并入发言块并落盘——历史是归档，导出里缺掉用户自己说过的话比多两行噪音更糟，
+// 而且它作为背景上下文无害。面试官那路不受此限——再短的提问也是提问。
 const MIN_CANDIDATE_CHARS = 4;
 
 // 所有气泡唯一的出口，所以上面那个下限只在一个地方生效。开着的块本身一定够长，所以只有背后没有块的短行
@@ -328,11 +329,6 @@ function flushTurn(source) {
     if (!isLocalActive || text.length < 2) return;
 
     if (source === CANDIDATE) {
-        if (text.length < MIN_CANDIDATE_CHARS) {
-            console.log('[Pipeline] Candidate fragment dropped:', text.length, 'chars');
-            return;
-        }
-
         // 什么都不派发：候选人说的话是下一个回答的背景，而不是要回答的问题。它并入开着的块，这里不给块
         // 设上限——块由下一个轮次整体关闭（见 commitCandidateSpeech）。
         console.log('[Pipeline] Candidate speech:', text.length, 'chars');
@@ -341,7 +337,8 @@ function flushTurn(source) {
         if (candidateHistoryOrder === null) candidateHistoryOrder = ++turnSeq;
         saveCandidateSpeech(candidateSpeech.join(''), candidateHistoryOrder);
         // 整体重发而不是只发这段碎片：气泡就是这个块，只发片段会让用户已经读到的文字可见地缩回去。块只
-        // 由上面 push 的碎片构成，从不从气泡反向拼，所以那个长度下限在这里咬不到。
+        // 由上面 push 的碎片构成，从不从气泡反向拼，所以那个长度下限在这里咬不到。低于下限的短句由
+        // sendBubble 压住不上屏，但仍然已经落盘（见 MIN_CANDIDATE_CHARS）。
         sendBubble('transcription-final', source);
         return;
     }
@@ -902,6 +899,16 @@ function startAsrClients() {
     }
 }
 
+// 暂停时把两路识别器一起关掉，暂停期间就没有 socket 在计费。先摘掉引用再 close：finish 会同步回调
+// onState('closed')，而那时 streams 里已经不该再有这一路。
+function closeAsrClients() {
+    for (const source of [INTERVIEWER, CANDIDATE]) {
+        const client = streams[source].asr;
+        streams[source].asr = null;
+        if (client) client.close();
+    }
+}
+
 function resetAudioState() {
     for (const source of [INTERVIEWER, CANDIDATE]) {
         const state = streams[source];
@@ -1086,12 +1093,18 @@ function setPaused(value) {
     paused = next;
     console.log('[Pipeline] Paused:', paused);
 
+    // 笔试没有识别器，暂停只停自动截图，这个开关与它无关。恢复时重新起 socket 会先报 Connecting...，
+    // 由识别器自己的状态回调接管状态行，所以这里不再额外刷新。
+    const disconnects = sessionMode === 'interview' && getPreferences().pauseDisconnectsAsr !== false;
+
     if (paused) {
         suspendPendingText();
         sendToRenderer('update-status', 'Paused');
+        if (disconnects) closeAsrClients();
     } else if (isLocalActive) {
+        if (disconnects) startAsrClients();
         // 笔试恢复后状态取决于还有没有回答在流；面试在空闲时仍然是 Listening...。
-        updateStreamingStatus();
+        else updateStreamingStatus();
     }
 }
 

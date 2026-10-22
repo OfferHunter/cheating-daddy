@@ -605,7 +605,6 @@ export class OnboardingView extends LocalizedLitElement {
                         <div class="machine-code" data-no-localize>${this._machineCode || '...'}</div>
                         <button
                             class="btn-copy"
-                            title=${this._copied ? 'Copied' : 'Copy'}
                             aria-label=${this._copied ? 'Copied' : 'Copy'}
                             @click=${this.copyMachineCode}
                         >

@@ -1331,7 +1331,6 @@ export class AssistantView extends LocalizedLitElement {
                     <button
                         type="button"
                         class="written-jump jump-btn ${this._writtenPinned ? 'at-bottom' : ''}"
-                        title=${t('Jump to latest', '跳到最新')}
                         aria-label=${t('Jump to latest', '跳到最新')}
                         @click=${() => this._jumpWrittenToBottom()}
                     >
@@ -1411,7 +1410,6 @@ export class AssistantView extends LocalizedLitElement {
                     <button
                         type="button"
                         class="chat-jump jump-btn ${this._pinned ? 'at-bottom' : ''}"
-                        title=${t('Jump to latest', '跳到最新')}
                         aria-label=${t('Jump to latest', '跳到最新')}
                         @click=${() => this._jumpInterviewToBottom()}
                     >
@@ -1434,7 +1432,6 @@ export class AssistantView extends LocalizedLitElement {
                     ?hidden=${this.detailMessages.length === 0}
                     role="separator"
                     aria-orientation="vertical"
-                    title="Drag to resize the detailed answers"
                     @pointerdown=${this._onSplitPointerDown}
                     @pointermove=${this._onSplitPointerMove}
                     @pointerup=${this._onSplitPointerUp}

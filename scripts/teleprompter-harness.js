@@ -416,6 +416,10 @@ app.whenReady().then(async () => {
         // 翻到顶部 → 停止跟随;再来新内容不应把画面拽回去
         // 注意:隐藏窗口(show:false)里程序化改 scrollTop 有时不派发 scroll 事件,页面就以为还贴着底、
         // 继续跟随。真实用户滚动一定会发 scroll,所以这里补发一次,让模拟和真实滚动等价,免得整条用例随机翻车。
+        // 页面用 rAF 复位 suppressScroll(程序化贴底期间忽略 scroll 事件)。隐藏窗口里帧可能来得很稀,
+        // 模拟滚动前先等到一帧,否则这次 scroll 会被当成程序化滚动丢掉,following 仍为 true、新内容又把
+        // 画面拽回底端。真实用户滚动本身就在帧里发生,所以这步只是让模拟和真实等价。
+        await exec(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
         await exec(`(() => { const f = document.getElementById('feed'); f.scrollTop = 0; f.dispatchEvent(new Event('scroll')); })()`);
         await wait(200);
         teleprompter.broadcast('transcription-final', { text: '翻上去之后的新问题', speaker: 'interviewer', turnId: 2000 });
