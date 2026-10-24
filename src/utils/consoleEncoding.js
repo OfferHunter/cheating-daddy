@@ -10,7 +10,7 @@ function enableUtf8Console() {
     try {
         spawnSync('chcp.com', ['65001'], { stdio: 'ignore' });
     } catch (error) {
-        console.warn('Could not switch the console to UTF-8:', error.message);
+        console.warn('Could not switch the console to UTF-8:', error);
     }
 }
 

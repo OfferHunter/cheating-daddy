@@ -2,6 +2,7 @@ const { DEFAULT_PREFERENCES } = require('./defaults');
 const { ipcRenderer } = require('electron');
 // 渲染端的相对路径以 index.html 所在目录 (src/) 为基准，而不是本文件所在目录。
 const { getDefaultKeybinds, getKeybindActions } = require('./utils/keybinds');
+const { describeError, isErrorLike } = require('./utils/errorText');
 
 let mediaStream = null;
 let screenshotInterval = null;
@@ -63,7 +64,8 @@ Object.entries(LOG_LEVELS).forEach(([method, level]) => {
         try {
             const text = args
                 .map(arg => {
-                    if (arg instanceof Error) return arg.stack || `${arg.name}: ${arg.message}`;
+                    // 与主进程 logger 同一套格式：cause 链和 code 等字段不能在这里丢掉。
+                    if (isErrorLike(arg)) return describeError(arg);
                     if (typeof arg === 'string') return arg;
                     return JSON.stringify(arg);
                 })
@@ -78,11 +80,16 @@ Object.entries(LOG_LEVELS).forEach(([method, level]) => {
 // startCapture 是不 await 也不 catch 地调用的，采集失败会变成无人处理的 rejection。兜住它——不然
 // 「截图没反应」在主进程日志里连一条错误都没有。
 window.addEventListener('error', event => {
-    console.error('[Renderer] window error:', event.message, `${event.filename}:${event.lineno}:${event.colno}`);
+    // event.error 才是真正的 Error 对象（可能带 cause）；message 只是它的字符串投影。
+    if (event.error) {
+        console.error('[Renderer] window error:', `${event.filename}:${event.lineno}:${event.colno}`, event.error);
+    } else {
+        console.error('[Renderer] window error:', event.message, `${event.filename}:${event.lineno}:${event.colno}`);
+    }
 });
 window.addEventListener('unhandledrejection', event => {
-    const reason = event.reason;
-    console.error('[Renderer] unhandled rejection:', reason && (reason.stack || reason.message || String(reason)));
+    // 交整个 reason 给转发器，别提前拍成字符串——那样 cause 链在落盘前就没了。
+    console.error('[Renderer] unhandled rejection:', event.reason);
 });
 
 const storage = {
@@ -328,7 +335,7 @@ async function logPermissionStates() {
             const status = await navigator.permissions.query({ name });
             console.log(`[Capture] permission ${name}: ${status.state}`);
         } catch (error) {
-            console.log(`[Capture] permission ${name}: query failed (${error.message})`);
+            console.log(`[Capture] permission ${name}: query failed`, error);
         }
     }
 }
@@ -933,7 +940,7 @@ async function startMicMeter(deviceId, generation) {
     try {
         stream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(deviceId));
     } catch (error) {
-        console.warn('Microphone level meter unavailable:', error.message);
+        console.warn('Microphone level meter unavailable:', error);
         return false;
     }
 
@@ -956,7 +963,7 @@ async function startSystemMeter(generation) {
             audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         });
     } catch (error) {
-        console.warn('Speaker level meter unavailable:', error.message);
+        console.warn('Speaker level meter unavailable:', error);
         return false;
     }
 

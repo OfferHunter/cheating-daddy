@@ -74,7 +74,7 @@ function readJsonFile(filePath, defaultValue) {
             value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         }
     } catch (error) {
-        console.warn(`Error reading ${filePath}:`, error.message);
+        console.warn(`Error reading ${filePath}:`, error);
         return defaultValue;
     }
     jsonCache.set(filePath, value);
@@ -98,7 +98,7 @@ function writeJsonFile(filePath, data) {
         jsonCache.set(filePath, data);
         return true;
     } catch (error) {
-        console.error(`Error writing ${filePath}:`, error.message);
+        console.error(`Error writing ${filePath}:`, error);
         return false;
     }
 }
@@ -420,7 +420,7 @@ function getAllSessions() {
             .filter(Boolean);
         return sessionsSummaryCache;
     } catch (error) {
-        console.error('Error reading sessions:', error.message);
+        console.error('Error reading sessions:', error);
         return [];
     }
 }
@@ -436,7 +436,7 @@ function deleteSession(sessionId) {
             return true;
         }
     } catch (error) {
-        console.error('Error deleting session:', error.message);
+        console.error('Error deleting session:', error);
     }
     return false;
 }
@@ -455,7 +455,7 @@ function deleteAllSessions() {
         sessionsSummaryCache = null;
         return true;
     } catch (error) {
-        console.error('Error deleting all sessions:', error.message);
+        console.error('Error deleting all sessions:', error);
         return false;
     }
 }
@@ -476,7 +476,7 @@ function clearAllData() {
             }
         }
     } catch (error) {
-        console.error('Error clearing history:', error.message);
+        console.error('Error clearing history:', error);
     }
     sessionsSummaryCache = null;
 

@@ -70,7 +70,7 @@ function logEnvironment() {
         try {
             console.log(`[Perm] ${mediaType}: ${systemPreferences.getMediaAccessStatus(mediaType)}`);
         } catch (error) {
-            console.log(`[Perm] ${mediaType}: unavailable (${error.message})`);
+            console.log(`[Perm] ${mediaType}: unavailable`, error);
         }
     }
 }
@@ -615,26 +615,26 @@ function setupTeleprompterIpcHandlers() {
         if (action === 'screenshot') {
             win.webContents
                 .executeJavaScript('window.captureManualScreenshot && window.captureManualScreenshot()', true)
-                .catch(error => console.error('Teleprompter screenshot command failed:', error.message));
+                .catch(error => console.error('Teleprompter screenshot command failed:', error));
         } else if (action === 'screenshot-to-cache') {
             // 只抓当前帧攒进缓存,不发送——笔试长题目分屏时先存起来,攒够再一次性发送。
             win.webContents
                 .executeJavaScript('window.captureScreenshotToCache && window.captureScreenshotToCache()', true)
-                .catch(error => console.error('Teleprompter cache screenshot command failed:', error.message));
+                .catch(error => console.error('Teleprompter cache screenshot command failed:', error));
         } else if (action === 'clear-context') {
             win.webContents
                 .executeJavaScript(
                     'window.offerHunter && window.offerHunter.element && window.offerHunter.element().handleClearContext()',
                     true
                 )
-                .catch(error => console.error('Teleprompter clear-context command failed:', error.message));
+                .catch(error => console.error('Teleprompter clear-context command failed:', error));
         } else if (action === 'toggle-pause') {
             win.webContents
                 .executeJavaScript(
                     'window.offerHunter && window.offerHunter.element && window.offerHunter.element().togglePause()',
                     true
                 )
-                .catch(error => console.error('Teleprompter toggle-pause command failed:', error.message));
+                .catch(error => console.error('Teleprompter toggle-pause command failed:', error));
         } else if (action === 'end-session') {
             // 走 endSession 而不是关闭按钮那个 handleClose:后者在非实时页会转成退出应用,手机误触就把桌面
             // 程序杀掉了。endSession 只认实时会话,收尾并回到主页,否则什么都不做。
@@ -643,7 +643,7 @@ function setupTeleprompterIpcHandlers() {
                     'window.offerHunter && window.offerHunter.element && window.offerHunter.element().endSession()',
                     true
                 )
-                .catch(error => console.error('Teleprompter end-session command failed:', error.message));
+                .catch(error => console.error('Teleprompter end-session command failed:', error));
         }
     });
 }

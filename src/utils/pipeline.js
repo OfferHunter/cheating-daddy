@@ -871,7 +871,7 @@ function startAsrClient(source) {
         onError: error => {
             // ASR 客户端内部的重连退避已经用尽，这一路没有识别器了。会话继续，错误照报；音频被丢弃而不
             // 是送进一个死 socket。此时 socket 已经不在了。
-            console.error(`[Pipeline] Streaming ASR failed (${source}):`, error.message);
+            console.error(`[Pipeline] Streaming ASR failed (${source}):`, error);
             streams[source].asr = null;
             // 这一路挂着的文本再也不会有人来定稿，而说话人闸门会读它。留着的话，一个死掉的面试官 socket
             // 会把麦克风关到会话结束。

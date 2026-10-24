@@ -167,7 +167,7 @@ function runFirewallProbe() {
                 // 探测失败只说明「不知道」,不说明「连不上」。宁可放行让用户自己试地址,也不要用一次失败的
                 // 探测把人挡在配对码前面——检测脚本本身出问题的概率远高于防火墙配置错误的概率。
                 if (error) {
-                    console.warn('[Teleprompter] firewall probe failed:', error.message);
+                    console.warn('[Teleprompter] firewall probe failed:', error);
                     resolve(null);
                     return;
                 }
@@ -528,7 +528,7 @@ async function startTeleprompter() {
     const socketServer = new WebSocketServer({ server: instance });
     socketServer.on('connection', handleSocket);
     // 这个监听不只是为了记日志:缺了它,ws 转发的任何底层 error 都会被 EventEmitter 抛出,掀翻退出流程。
-    socketServer.on('error', error => console.error('[Teleprompter] socket server error:', error.message));
+    socketServer.on('error', error => console.error('[Teleprompter] socket server error:', error));
 
     server = instance;
     wss = socketServer;

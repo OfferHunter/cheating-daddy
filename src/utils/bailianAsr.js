@@ -261,7 +261,7 @@ function createBailianAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
         });
 
         socket.on('error', error => {
-            console.error('[Bailian] socket error:', error.message);
+            console.error('[Bailian] socket error:', error);
         });
 
         socket.on('close', () => {

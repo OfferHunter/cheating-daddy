@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const util = require('util');
 const { getConfigDir } = require('../storage');
+const { describeError, isErrorLike } = require('./errorText');
 
 // 打包后没有终端，主进程的 console.* 全部无处可看——故障机上唯一能带回来的证据就是文件。所以这里不新增
 // 一套 log.info()/log.error() 调用点，而是直接接管 console：现有成百条 console.* 一行不改就都落盘了。
@@ -35,10 +36,11 @@ function rotateIfNeeded(filePath) {
     }
 }
 
-// Error 取 stack（含错误名，NotAllowedError / NotFoundError 这类名字本身就是诊断关键），其余交给
-// util.inspect——它能吃循环引用，JSON.stringify 会当场抛。
+// Error 走 describeError：除了 stack（含错误名，NotAllowedError / NotFoundError 这类名字本身就是诊断关键），
+// 还展开 cause 链和 code/errno 等字段——`fetch failed` 的真正原因只在那里。其余交给 util.inspect，它能吃
+// 循环引用，JSON.stringify 会当场抛。
 function stringify(value) {
-    if (value instanceof Error) return value.stack || `${value.name}: ${value.message}`;
+    if (isErrorLike(value)) return describeError(value);
     if (typeof value === 'string') return value;
     return util.inspect(value, { depth: 5, breakLength: Infinity, maxArrayLength: 100 });
 }

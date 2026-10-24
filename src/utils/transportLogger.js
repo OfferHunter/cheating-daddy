@@ -15,7 +15,7 @@ function startTransportLog(sessionId) {
     currentLogPath = path.join(logsDirectory, `${sessionId}.json`);
     logStream = fs.createWriteStream(currentLogPath, { flags: 'w' });
     logStream.on('error', function (error) {
-        console.error('Transport log stream error:', error.message);
+        console.error('Transport log stream error:', error);
     });
     isFirstEvent = true;
     logStream.write('[\n');
@@ -39,7 +39,7 @@ function logTransportEvent(type, data) {
         logStream.write(prefix + JSON.stringify(event));
         isFirstEvent = false;
     } catch (error) {
-        console.error('Failed to write transport log event:', error.message);
+        console.error('Failed to write transport log event:', error);
     }
 }
 

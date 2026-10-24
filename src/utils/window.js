@@ -117,7 +117,7 @@ function createWindow(sendToRenderer) {
         try {
             mainWindow.setSkipTaskbar(true);
         } catch (error) {
-            console.warn('Could not hide from taskbar:', error.message);
+            console.warn('Could not hide from taskbar:', error);
         }
     }
 
@@ -125,7 +125,7 @@ function createWindow(sendToRenderer) {
         try {
             mainWindow.setHiddenInMissionControl(true);
         } catch (error) {
-            console.warn('Could not hide from Mission Control:', error.message);
+            console.warn('Could not hide from Mission Control:', error);
         }
     }
 

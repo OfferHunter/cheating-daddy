@@ -270,7 +270,7 @@ function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
         });
 
         socket.on('error', error => {
-            console.error('[Tencent] socket error:', error.message);
+            console.error('[Tencent] socket error:', error);
         });
 
         socket.on('close', () => {

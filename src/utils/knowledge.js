@@ -147,7 +147,7 @@ function readEntry(dir, name) {
 
         return { id, name: entryName, description, file: name, body };
     } catch (error) {
-        console.warn('[Knowledge] Cannot read entry:', name, error.message);
+        console.warn('[Knowledge] Cannot read entry:', name, error);
         return null;
     }
 }
@@ -160,7 +160,7 @@ function listKnowledgeEntries(dir) {
     try {
         names = fs.readdirSync(dir, { withFileTypes: true });
     } catch (error) {
-        console.warn('[Knowledge] Cannot read directory:', dir, error.message);
+        console.warn('[Knowledge] Cannot read directory:', dir, error);
         return [];
     }
 
