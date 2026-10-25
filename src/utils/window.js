@@ -157,6 +157,17 @@ function createWindow(sendToRenderer) {
     return mainWindow;
 }
 
+// 隐藏窗口。Win 上内容保护(WDA_EXCLUDEFROMCAPTURE)如果跟着窗口一起进入隐藏状态,下次 show 后 DWM 会把它
+// 降级成「黑块」:截图里不是透明,而是一块不透明黑矩形,但 GetWindowDisplayAffinity 读出来仍然是 0x11。
+// 23H2 上稳定复现,25H2 不复现(系统 DWM 差异),相关:electron#29085、#31340。
+// 规避办法是别让「带保护的窗口」被隐藏:先在可见状态下摘掉,显示后再挂回去(见 showWindow)。
+function hideWindow(win) {
+    if (process.platform === 'win32') {
+        win.setContentProtection(false);
+    }
+    win.hide();
+}
+
 // 把窗口重新显示出来。Win 上这块透明无边框窗口被 hide() 拆掉 DWM 合成表面后,再 show() 出来会出现
 // 「画得出来、控件却点不动」(语音作答走全局快捷键+音频,不经窗口,症状就是「能说话、点不动」)。
 // 实测有效的修法只有这一步:show 之后把窗口位置抖 1px 再抖回。关键不在于挪了多少,而在于它真真正正派了一次
@@ -168,6 +179,9 @@ function createWindow(sendToRenderer) {
 function showWindow(win) {
     win.showInactive();
     if (process.platform !== 'win32') return;
+    // 摘保护只在 win32 做(见 hideWindow),所以这里也只在这挂回,两边成对:非 win 平台保护自始至终没摘过。
+    // 挂回要赶在抖位置之前，中间那几毫秒窗口是没保护的,越短越好。
+    win.setContentProtection(true);
     const [x, y] = win.getPosition();
     // 逼系统把命中区域重算一遍。
     win.setPosition(x+1, y);
@@ -227,7 +241,7 @@ function updateGlobalShortcuts(keybinds, mainWindow, sendToRenderer) {
         try {
             globalShortcut.register(keybinds.toggleVisibility, () => {
                 if (mainWindow.isVisible()) {
-                    mainWindow.hide();
+                    hideWindow(mainWindow);
                 } else {
                     showWindow(mainWindow);
                 }
@@ -464,7 +478,7 @@ function wireWindowIpc() {
             }
 
             if (win.isVisible()) {
-                win.hide();
+                hideWindow(win);
             } else {
                 showWindow(win);
             }
