@@ -29,7 +29,16 @@ const FATAL_ERROR_CODES = new Set([4001, 4002, 4003, 4004, 4005, 4007, 6001]);
 
 // 语音在 URL query 里签名：把除 signature 外的参数按字典序排好拼成不含协议头的 URL，用 SecretKey 做
 // HMAC-SHA1，Base64 后再对整个 signature 值 URL 编码。拼接串里的参数值保持原样、不预先编码。
-function buildSignedUrl({ appId, secretId, secretKey, engineModel, voiceId, maxSentenceSilenceMs }) {
+function buildSignedUrl({
+    appId,
+    secretId,
+    secretKey,
+    engineModel,
+    voiceId,
+    maxSentenceSilenceMs,
+    enableSpeakerContext,
+    speakerContextId,
+}) {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const params = {
         secretid: secretId,
@@ -45,6 +54,9 @@ function buildSignedUrl({ appId, secretId, secretKey, engineModel, voiceId, maxS
         needvad: 1,
         vad_silence_time: maxSentenceSilenceMs,
     };
+    // 说话人分离引擎可以用上下文 id 让重连后的 speaker_id 保持一致；普通引擎不认这两个参数。
+    if (enableSpeakerContext) params.enable_speaker_context = 1;
+    if (speakerContextId) params.speaker_context_id = speakerContextId;
 
     const query = Object.keys(params)
         .sort()
@@ -56,11 +68,34 @@ function buildSignedUrl({ appId, secretId, secretKey, engineModel, voiceId, maxS
     return `wss://${ENDPOINT_HOST}/asr/v2/${appId}?${query}&signature=${encodeURIComponent(signature)}`;
 }
 
-function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError } = {}) {
+function integerOr(value, fallback) {
+    if (value === null || value === undefined) return fallback;
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.trunc(number) : fallback;
+}
+
+// 说话人分离引擎把结果放在 `sentences` 里，真实结构是 [{ sentence_list: [{ sentence, sentence_type,
+// sentence_id, speaker_id, ... }] }]——文档示例不是合法 JSON，看起来像句子对象数组，实际上还多包了一层
+// sentence_list。这里把这一层剥掉，同时兼容直接给句子对象/数组的情况。
+function listSpeakerSentences(raw) {
+    if (!raw) return [];
+    const items = Array.isArray(raw) ? raw : [raw];
+    const sentences = [];
+    for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        if (Array.isArray(item.sentence_list)) sentences.push(...item.sentence_list);
+        else if (typeof item.sentence === 'string' || typeof item.text === 'string') sentences.push(item);
+    }
+    return sentences;
+}
+
+function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError, engineModel: engineModelOverride = '' } = {}) {
     let socket = null;
     let state = 'idle';
     let voiceId = null;
     let handshakeDone = false;
+    // 说话人分离引擎在握手后的消息里可能带回上下文 id，重连时带上它，speaker_id 才不会重新编号。
+    let speakerContextId = null;
     let reconnectAttempt = 0;
     let closing = false;
 
@@ -79,8 +114,8 @@ function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
         if (onState) onState(next);
     };
 
-    const notifySentence = (text, sentenceEnd) => {
-        if (onSentence && text) onSentence(text, sentenceEnd);
+    const notifySentence = (text, sentenceEnd, meta) => {
+        if (onSentence && text) onSentence(text, sentenceEnd, meta);
     };
 
     function clearTimers() {
@@ -187,10 +222,27 @@ function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
             return;
         }
 
-        const result = message.result;
-        // voice_text_str 是本句到目前为止的累计文本：slice_type 为 2 时才是这一句的定稿。空文本（例如纯静音帧
-        // 的切片）不提交。
-        if (result && typeof result.voice_text_str === 'string' && result.voice_text_str) {
+        // 普通引擎把结果放在 result 里；说话人分离引擎的 sentences 可能在顶层的 result 或直接在消息上。
+        const result = message.result && typeof message.result === 'object' ? message.result : message;
+
+        const contextId = message.speaker_context_id || result.speaker_context_id;
+        if (contextId) speakerContextId = contextId;
+
+        const speakerSentences = listSpeakerSentences(result.sentences);
+        if (speakerSentences.length) {
+            for (const item of speakerSentences) {
+                if (!item || typeof item !== 'object') continue;
+                const text = typeof item.sentence === 'string' ? item.sentence : item.text;
+                if (typeof text !== 'string' || !text) continue;
+                // sentence_type: 0 未定稿、1 定稿；speaker_id 在可靠之前是 -1。
+                notifySentence(text, integerOr(item.sentence_type, 0) === 1, {
+                    speakerId: integerOr(item.speaker_id, -1),
+                    sentenceId: integerOr(item.sentence_id, undefined),
+                });
+            }
+        } else if (typeof result.voice_text_str === 'string' && result.voice_text_str) {
+            // voice_text_str 是本句到目前为止的累计文本：slice_type 为 2 时才是这一句的定稿。空文本（例如纯静音帧
+            // 的切片）不提交。
             notifySentence(result.voice_text_str, result.slice_type === 2);
         }
 
@@ -228,7 +280,7 @@ function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
             return;
         }
 
-        const engineModel = (getConfig().tencentEngineModel || DEFAULT_CONFIG.tencentEngineModel).trim();
+        const engineModel = (engineModelOverride || getConfig().tencentEngineModel || DEFAULT_CONFIG.tencentEngineModel).trim();
         // 每次连接都要新的 voice_id，上一条连接结束后即作废。
         voiceId = randomUUID();
         handshakeDone = false;
@@ -236,7 +288,16 @@ function createTencentAsr({ maxSentenceSilenceMs, onSentence, onState, onError }
 
         let endpoint;
         try {
-            endpoint = buildSignedUrl({ appId, secretId, secretKey, engineModel, voiceId, maxSentenceSilenceMs });
+            endpoint = buildSignedUrl({
+                appId,
+                secretId,
+                secretKey,
+                engineModel,
+                voiceId,
+                maxSentenceSilenceMs,
+                enableSpeakerContext: engineModel.includes('_speaker_'),
+                speakerContextId,
+            });
         } catch (error) {
             fail(`failed to sign Tencent request: ${error.message}`);
             return;

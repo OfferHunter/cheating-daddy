@@ -3,7 +3,7 @@ import { LocalizedLitElement, t } from '../../utils/i18n.js';
 
 // 提词方式分页。加一页时：往这个数组里加一个 id，在 _renderPage 里加一个 case，文案用 t() 直接给中英两种。
 // 只有一页时两个箭头是禁用态。顺序就是箭头切换的顺序。
-const MODE_PAGES = ['desktop', 'desktopPhone'];
+const MODE_PAGES = ['desktop', 'desktopPhone', 'phone'];
 
 const chevronLeft = html`<svg
     xmlns="http://www.w3.org/2000/svg"
@@ -42,6 +42,21 @@ const desktopPhoneIcon = html`<svg xmlns="http://www.w3.org/2000/svg" width="20"
     <path
         d="M832 128a64 64 0 0 1 64 64v96a16 16 0 0 1-16 16h-32A16 16 0 0 1 832 288V208a16 16 0 0 0-16-16H144a16 16 0 0 0-16 16v416c0 8.832 7.168 16 16 16h416a16 16 0 0 1 16 16v32a16 16 0 0 1-16 16H512v128h48a16 16 0 0 1 16 16v32a16 16 0 0 1-16 16h-320a16 16 0 0 1-16-16v-32a16 16 0 0 1 16-16H448v-128H128a64 64 0 0 1-64-64V192a64 64 0 0 1 64-64h704z m64 240a64 64 0 0 1 64 64V832a64 64 0 0 1-64 64h-192a64 64 0 0 1-64-64V432a64 64 0 0 1 64-64h192z m-16 64h-160A16 16 0 0 0 704 448v368c0 8.832 7.168 16 16 16h160a16 16 0 0 0 16-16V448a16 16 0 0 0-16-16z m-48 320a16 16 0 0 1 16 16v16a16 16 0 0 1-16 16h-64a16 16 0 0 1-16-16V768a16 16 0 0 1 16-16h64z"
     />
+</svg>`;
+// 手机端面试只有一部手机：面试通话在手机上，电脑只显示提词。
+const phoneIcon = html`<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="20"
+    height="20"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+>
+    <rect x="6" y="2" width="12" height="20" rx="2" />
+    <path d="M11 18h2" />
 </svg>`;
 
 export class MainView extends LocalizedLitElement {
@@ -420,7 +435,8 @@ export class MainView extends LocalizedLitElement {
     _canStartSession() {
         const page = MODE_PAGES[this.pageIndex];
         if (page === 'desktopPhone') return this.teleprompterPaired;
-        return page === 'desktop';
+        // 手机端面试的面试通话在手机上，电脑这边不需要配对；只要有麦克风就能开始。
+        return page === 'desktop' || page === 'phone';
     }
 
     _handleStart(mode = 'interview') {
@@ -623,15 +639,15 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
-    // 电脑+移动端提词：手机负责显示，先在下面配对，连上之后「开始面试 / 开始笔试」才放行。
+    // 电脑端面试 + 手机端提词：手机负责显示，先在下面配对，连上之后「开始面试 / 开始笔试」才放行。
     _renderDesktopPhonePage() {
         return html`
             <div class="page-title">
-                ${desktopPhoneIcon}${t('Desktop + phone prompting', '电脑+移动端提词')}
+                ${desktopPhoneIcon}${t('Desktop interview + phone prompting', '电脑端面试 + 手机端提词')}
                 <span class="page-title-desc"
                     >${t(
-                        'Interview/test on the computer — read the prompts in a phone/tablet browser',
-                        '在电脑上面试/笔试，在手机、平板网页看电脑提词'
+                        'Interview on the computer — read the prompts in a phone/tablet browser',
+                        '在电脑上面试，在手机、平板网页看电脑提词'
                     )}</span
                 >
             </div>
@@ -659,11 +675,49 @@ export class MainView extends LocalizedLitElement {
         `;
     }
 
+    // 手机端面试 + 电脑端提词：面试通话在手机上，电脑只显示提词。这个模式只开电脑麦克风，用它同时收手机
+    // 外放的面试官和候选人本人，交给腾讯云说话人分离；开局先做声纹检测，用户按 Y 指认自己。
+    _renderPhonePage() {
+        return html`
+            <div class="page-title">
+                ${phoneIcon}${t('Phone interview + desktop prompting', '手机端面试 + 电脑端提词')}
+                <span class="page-title-desc"
+                    >${t(
+                        'Interview on the phone — read the AI prompts on this computer',
+                        '在手机上面试，在本应用看AI提词'
+                    )}</span
+                >
+            </div>
+            <div class="page-note">
+                ${t(
+                    'The interview runs on your phone (video or voice call). Only the computer microphone is used: it hears both the phone speaker (the interviewer) and your own voice, and Tencent Cloud real-time recognition separates the two speakers.\nTurn on the phone speaker and place the phone near the computer microphone. Do not use headphones, or the computer will not hear the interviewer.\nAfter starting, the voiceprint check appears. Say one sentence that clearly belongs to you (for example: “Hello, I am the candidate”), then press Y on the latest bubble. From then on, your speech is kept as background and every other speaker is treated as the interviewer and answered.',
+                    '面试在手机上进行（视频或语音通话）。本模式只开电脑麦克风：它同时接收手机外放出来的面试官声音和你自己的说话声，由腾讯云实时语音识别自动区分两位说话人。\n请打开手机外放并把手机放在电脑麦克风附近，不要戴耳机，否则电脑听不到面试官。\n开始后会先进入声纹检测。请先说一句明显属于你自己的话（例如：「你好，我是候选人」），然后在最新气泡上按 Y。之后你说的话只作为背景，其他说话人都当作面试官并作答。'
+                )
+                    .split('\n')
+                    .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
+            </div>
+            <div class="start-actions">
+                ${this._renderStartButton({
+                    mode: 'phone',
+                    label: t('Start Interview', '开始面试'),
+                    enabled: this._canStartSession(),
+                })}
+            </div>
+            <div class="config-hint">
+                <span class="link" @click=${() => this.onOpenConfig()}
+                    >${t('Configure chat and speech models', '配置对话与语音模型')}</span
+                >
+            </div>
+        `;
+    }
+
     // 加页时在这里加 case；默认回落到第一页，免得 pageIndex 与 MODE_PAGES 不同步时白屏。
     _renderPage() {
         switch (MODE_PAGES[this.pageIndex]) {
             case 'desktopPhone':
                 return this._renderDesktopPhonePage();
+            case 'phone':
+                return this._renderPhonePage();
             case 'desktop':
             default:
                 return this._renderDesktopPage();

@@ -38,8 +38,42 @@ test('help renders both languages with shared defaults and platform shortcuts', 
         assert.ok(rendered.includes('Windows 10'));
         assert.ok(rendered.includes('macOS'));
         assert.ok(rendered.includes('offer-hunter-config'));
-        assert.ok(rendered.includes(language === 'zh' ? '帮助和支持' : 'Help & Support'));
+        const helpTitle = language === 'zh' ? '帮助和支持' : 'Help & Support';
+        // 页面标题现在是激活提示，原帮助标题下沉到输入框之后。
+        const activationTitle = language === 'zh' ? '产品激活' : 'Product activation';
+        assert.ok(rendered.includes(activationTitle));
+        assert.ok(rendered.indexOf(activationTitle) < rendered.indexOf(helpTitle));
+        assert.ok(rendered.includes(language === 'zh' ? '输入新的激活码' : 'Enter a new activation code'));
     }
+});
+
+test('activation input submits trimmed code and reports failures inline', async () => {
+    const context = loadHelp();
+    const { view } = context;
+    const submitted = [];
+    const status = { activated: true, expiresAt: null };
+    context.offerHunter = {
+        license: {
+            activate: async code => {
+                submitted.push(code);
+                return code === 'OH2.BAD' ? { success: false, error: 'machine' } : { success: true };
+            },
+            getStatus: async () => status,
+        },
+    };
+
+    view._licenseInput = '  OH2-NEW-CODE  ';
+    await view.activateLicense();
+    assert.deepEqual(submitted, ['OH2-NEW-CODE']);
+    assert.equal(view._licenseInput, '');
+    assert.equal(view._licenseSuccess, true);
+    assert.equal(view._licenseError, '');
+    assert.deepEqual(view._activation, status);
+
+    view._licenseInput = 'OH2.BAD';
+    await view.activateLicense();
+    assert.equal(view._licenseSuccess, false);
+    assert.equal(view._licenseError, '该激活码属于其他电脑。');
 });
 
 test('search filters answers, expands matches and explains empty results', () => {

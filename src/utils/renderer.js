@@ -303,13 +303,16 @@ function releaseMicCapture() {
 
 // 'none' 是设置页里「不用麦克风」的显式选择，不会走到这里。具体 deviceId 用 'ideal' 而不是 'exact'：那个
 // 设备要是被拔了，退回系统默认设备，而不是整个采集直接失败。
-function buildMicConstraints(micDeviceId) {
+//
+// raw 给手机端面试用：那一路麦克风要同时收手机外放里的面试官和候选人本人，回声消除/降噪会把外放的人声当成
+// 噪音压掉，说话人分离就少了一个人。
+function buildMicConstraints(micDeviceId, raw = false) {
     const audio = {
         sampleRate: SAMPLE_RATE,
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        echoCancellation: !raw,
+        noiseSuppression: !raw,
+        autoGainControl: !raw,
     };
     if (micDeviceId && micDeviceId !== 'none') {
         audio.deviceId = { ideal: micDeviceId };
@@ -346,13 +349,18 @@ async function logPermissionStates() {
 async function startCapture(imageQuality = 'medium', mode = 'interview') {
     currentImageQuality = imageQuality;
     writtenMode = mode === 'written';
+    // 手机端面试：面试在手机上进行，电脑只负责提词，所以不录屏、不开回环，只开电脑麦克风。那一个麦克风同时
+    // 收到手机外放的面试官和候选人本人，交给腾讯云说话人分离去分。
+    const phoneMode = mode === 'phone';
     stopAutoScreenshotTimer();
 
     await loadPreferencesCache();
-    const micDeviceId = preferencesCache.audioInputDeviceId || 'none';
+    const storedMicDeviceId = preferencesCache.audioInputDeviceId || 'none';
+    // 这一模式只有麦克风这一路，设置里选了「不用麦克风」也得退回系统默认设备，否则整个会话没有输入。
+    const micDeviceId = phoneMode && storedMicDeviceId === 'none' ? 'default' : storedMicDeviceId;
     // 麦克风是候选人自己那一路：与扬声器那一路并行，而不是取代它，所以只有「明确不用麦克风」才会关掉它。
     // 笔试两路都不要：没有识别，采集音频只是白白占用设备和隐私。
-    const shouldCaptureMic = !writtenMode && micDeviceId !== 'none';
+    const shouldCaptureMic = !writtenMode && (phoneMode || micDeviceId !== 'none');
 
     console.log('[Capture] start', { imageQuality, mode, micDeviceId, shouldCaptureMic });
     await logPermissionStates();
@@ -362,8 +370,8 @@ async function startCapture(imageQuality = 'medium', mode = 'interview') {
     // 不该继续活着。
     releaseMicCapture();
 
-    await startScreenCapture(!writtenMode);
-    if (shouldCaptureMic) await startMicCapture(micDeviceId);
+    if (!phoneMode) await startScreenCapture(!writtenMode);
+    if (shouldCaptureMic) await startMicCapture(micDeviceId, phoneMode);
     // startCapture 不被 await，用户可能在采集还没起来时就点了暂停：这时不能反过来把定时器开起来。
     if (writtenMode && !capturePaused && preferencesCache.writtenAutoScreenshot !== false) {
         startAutoScreenshotTimer({ immediate: true });
@@ -496,9 +504,9 @@ async function startScreenCapture(withAudio = true) {
 }
 
 // 麦克风独立于屏幕之外：屏幕取不到（缺屏幕录制权限、没有屏幕源）不该顺带把候选人的声音也一起关掉。
-async function startMicCapture(micDeviceId) {
+async function startMicCapture(micDeviceId, raw = false) {
     try {
-        micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId));
+        micCaptureStream = await navigator.mediaDevices.getUserMedia(buildMicConstraints(micDeviceId, raw));
         console.log('Microphone capture started, label:', micCaptureStream.getAudioTracks()[0]?.label);
         setupMicProcessing(micCaptureStream);
     } catch (micError) {
@@ -1446,6 +1454,7 @@ const offerHunter = {
     initializeChat,
     startCapture,
     stopCapture,
+    confirmSpeaker: speakerId => ipcRenderer.invoke('confirm-speaker', speakerId),
     sendTextMessage,
     handleShortcut,
 

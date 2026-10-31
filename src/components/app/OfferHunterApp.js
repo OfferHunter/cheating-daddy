@@ -10,6 +10,7 @@ import { HistoryView } from '../views/HistoryView.js';
 import { AssistantView } from '../views/AssistantView.js';
 import { OnboardingView } from '../views/OnboardingView.js';
 import { AICustomizeView } from '../views/AICustomizeView.js';
+import { VoiceprintView } from '../views/VoiceprintView.js';
 
 // 组件是 ES module，主进程能力统一经 window.require 取用（nodeIntegration 已开）。
 const { ipcRenderer } = window.require('electron');
@@ -364,6 +365,10 @@ export class OfferHunterApp extends LocalizedLitElement {
         sessionActive: { type: Boolean },
         // 'interview'（默认，原会话）或 'written'（笔试：只有详细面板、不开语音识别）。
         sessionMode: { type: String },
+        // 手机端面试的声纹检测页：按句显示麦克风识别到的句子和 speaker_id，用户按 Y 指认自己。
+        voiceprintLines: { type: Array },
+        // 识别服务在检测阶段彻底失败时的错误文本；非空时检测页标题换成「语音服务异常：」。
+        voiceprintError: { type: String },
         messages: { type: Array },
         // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
@@ -383,6 +388,11 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.startTime = null;
         this.sessionActive = false;
         this.sessionMode = 'interview';
+        this.voiceprintLines = [];
+        this.voiceprintError = '';
+        this._confirmingSpeaker = false;
+        // 只有从「手机端面试」被拦到配置页时才非空：打开哪一家识别服务的编辑页。
+        this._configAsrPage = '';
         this.selectedImageQuality = DEFAULT_PREFERENCES.selectedImageQuality;
         this.layoutMode = DEFAULT_CONFIG.layout;
         this.messages = [];
@@ -445,6 +455,11 @@ export class OfferHunterApp extends LocalizedLitElement {
         ipcRenderer.on('response-complete', (_, data) => this.completeResponse(data));
         ipcRenderer.on('transcription-update', (_, data) => this.upsertTranscription(data.text, false, data.speaker, data.blockId, data.turnId));
         ipcRenderer.on('transcription-final', (_, data) => this.upsertTranscription(data.text, true, data.speaker, data.blockId, data.turnId));
+        ipcRenderer.on('diarization-sentence', (_, data) => this.upsertVoiceprintLine(data));
+        ipcRenderer.on('diarization-error', (_, data) => {
+            this.voiceprintError = (data && data.message) || 'unknown error';
+            this.requestUpdate();
+        });
         ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
         ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
             this._isClickThrough = isEnabled;
@@ -471,6 +486,8 @@ export class OfferHunterApp extends LocalizedLitElement {
         ipcRenderer.removeAllListeners('response-complete');
         ipcRenderer.removeAllListeners('transcription-update');
         ipcRenderer.removeAllListeners('transcription-final');
+        ipcRenderer.removeAllListeners('diarization-sentence');
+        ipcRenderer.removeAllListeners('diarization-error');
         ipcRenderer.removeAllListeners('update-status');
         ipcRenderer.removeAllListeners('click-through-toggled');
         ipcRenderer.removeAllListeners('reconnect-failed');
@@ -579,6 +596,58 @@ export class OfferHunterApp extends LocalizedLitElement {
 
         this.messages = [...this.messages, { id: ++this._msgSeq, role, text, ts: Date.now(), final, turnId }];
         this.requestUpdate();
+    }
+
+    // 声纹检测页按句更新：同一个 sentence_id 的中间态反复改写同一条，定稿后锁住。没有 id 时退化成
+    // 「未定稿就改写最后一条、定稿就新开一条」。
+    upsertVoiceprintLine({ text, speakerId = -1, sentenceId, final = false } = {}) {
+        const clean = (text || '').trim();
+        if (!clean) return;
+
+        const id = Number.isInteger(sentenceId) ? sentenceId : null;
+        const incoming = {
+            id: id ?? `local-${++this._msgSeq}`,
+            sentenceId: id,
+            text: clean,
+            speakerId: Number.isFinite(speakerId) ? speakerId : -1,
+            final: Boolean(final),
+        };
+
+        const next = [...this.voiceprintLines];
+        let index = -1;
+        if (id !== null) {
+            for (let i = next.length - 1; i >= 0; i--) {
+                if (next[i].sentenceId === id) {
+                    index = i;
+                    break;
+                }
+            }
+        } else if (next.length && !next[next.length - 1].final) {
+            index = next.length - 1;
+        }
+
+        if (index >= 0) next[index] = { ...next[index], ...incoming, id: next[index].id };
+        else next.push(incoming);
+
+        // 检测页最终会切走，这里只留最近几十句，不需要无限长。
+        this.voiceprintLines = next.slice(-60);
+        this.requestUpdate();
+    }
+
+    // 用户在检测页按 Y：主进程把这个 speaker_id 认成候选人本人，然后切回原来的实时界面。
+    async confirmVoiceprint(speakerId) {
+        // 识别器已经没了：确认了也只会进一个再也听不到说话的界面。
+        if (this._confirmingSpeaker || this.voiceprintError) return;
+        this._confirmingSpeaker = true;
+        try {
+            const result = await offerHunter.confirmSpeaker(speakerId);
+            if (!result?.success) return;
+            this.voiceprintLines = [];
+            this.currentView = 'assistant';
+            this.requestUpdate();
+        } finally {
+            this._confirmingSpeaker = false;
+        }
     }
 
     _assistantIndex(turnId) {
@@ -740,7 +809,9 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.detailCurrent = detailId;
     }
 
-    navigate(view) {
+    // 手机端面试缺腾讯云密钥时要直接翻到腾讯云那一页，否则用户只会看到百炼，不知道该往右翻。
+    navigate(view, options = {}) {
+        this._configAsrPage = view === 'api-config' ? options.asrPage || '' : '';
         this.currentView = view;
         this.requestUpdate();
     }
@@ -748,18 +819,20 @@ export class OfferHunterApp extends LocalizedLitElement {
     // 结束实时会话并回到主页:停止采集、让主进程收尾(会话落盘)、清掉暂停与计时。手机上的「结束会话」直接落
     // 到这里,所以它绝不退出应用——在没有实时会话时也安全地什么都不做。
     async endSession() {
-        if (this.currentView !== 'assistant') return;
+        if (!this._isLiveMode()) return;
         offerHunter.stopCapture();
         await ipcRenderer.invoke('close-session');
         this._paused = false;
         this.sessionActive = false;
+        this.voiceprintLines = [];
+        this.voiceprintError = '';
         this._stopTimer();
         this.currentView = 'main';
         this.requestUpdate();
     }
 
     async handleClose() {
-        if (this.currentView === 'assistant') {
+        if (this._isLiveMode()) {
             await this.endSession();
         } else {
             await ipcRenderer.invoke('quit-application');
@@ -773,10 +846,12 @@ export class OfferHunterApp extends LocalizedLitElement {
     // 真正的关闭按钮：像返回箭头那样把实时会话拆掉——停止采集、关闭会话让转录落盘——然后退出。少了这一步
     // 直接退出，会话会在磁盘上被截断，因为没有别的东西会告诉主进程会话已经结束。
     async handleQuit() {
-        if (this.currentView === 'assistant' && this.sessionActive) {
+        if (this._isLiveMode() && this.sessionActive) {
             offerHunter.stopCapture();
             await ipcRenderer.invoke('close-session');
             this.sessionActive = false;
+            this.voiceprintLines = [];
+            this.voiceprintError = '';
             this._stopTimer();
         }
         await ipcRenderer.invoke('quit-application');
@@ -816,6 +891,8 @@ export class OfferHunterApp extends LocalizedLitElement {
 
     async handleStart(mode = 'interview') {
         const written = mode === 'written';
+        // 手机端面试固定用腾讯云说话人分离引擎，与设置页里选中的通用识别服务无关，所以只校验腾讯云三件套。
+        const phone = mode === 'phone';
         // 面试要求有所选识别服务的那套凭据；对话那把永远是 DeepSeek 的。笔试不开语音识别，只要对话密钥。
         // 识别服务二选一，面试时未配全就拦到配置页。
         const [chatKey, config, creds, prefs] = await Promise.all([
@@ -826,30 +903,32 @@ export class OfferHunterApp extends LocalizedLitElement {
         ]);
 
         const provider = config.asrProvider || 'bailian';
-        const asrConfigured =
-            provider === 'tencent'
-                ? Boolean(
-                      (creds.tencentAppId || '').trim() &&
-                          (creds.tencentSecretId || '').trim() &&
-                          (creds.tencentSecretKey || '').trim() &&
-                          (config.tencentEngineModel || '').trim()
-                  )
-                : Boolean((creds.bailianApiKey || '').trim() && (config.bailianWsUrl || '').trim() && (config.bailianModel || '').trim());
+        const tencentConfigured = Boolean(
+            (creds.tencentAppId || '').trim() &&
+                (creds.tencentSecretId || '').trim() &&
+                (creds.tencentSecretKey || '').trim()
+        );
+        const asrConfigured = phone
+            ? tencentConfigured
+            : provider === 'tencent'
+              ? tencentConfigured && Boolean((config.tencentEngineModel || '').trim())
+              : Boolean((creds.bailianApiKey || '').trim() && (config.bailianWsUrl || '').trim() && (config.bailianModel || '').trim());
 
         // 缺密钥或初始化失败都指向同一个地方——「API 配置」页，那里才是唯一能改密钥的入口。
         if (!chatKey || chatKey.trim() === '' || (!written && !asrConfigured)) {
-            this.navigate('api-config');
+            this.navigate('api-config', { asrPage: phone ? 'tencent' : '' });
             return;
         }
 
         const success = await offerHunter.initializeChat(mode);
         if (!success) {
-            this.navigate('api-config');
+            this.navigate('api-config', { asrPage: phone ? 'tencent' : '' });
             return;
         }
 
         offerHunter.startCapture(this.selectedImageQuality, mode);
-        this.sessionMode = mode;
+        // 手机端面试在界面上就是普通面试（实时视图一模一样），只是开局多一道声纹检测。
+        this.sessionMode = written ? 'written' : 'interview';
         this.writtenError = '';
         this._writtenErrorSource = '';
         this.messages = [];
@@ -864,7 +943,11 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.detailCurrent = null;
         this.startTime = Date.now();
         this.sessionActive = true;
-        this.currentView = 'assistant';
+        // 手机端面试先停在声纹检测页：用户指认自己之前，主进程不会派发任何提问。按 Y 之后才进实时视图。
+        this.voiceprintLines = [];
+        this.voiceprintError = '';
+        this._confirmingSpeaker = false;
+        this.currentView = phone ? 'voiceprint' : 'assistant';
         this._startTimer();
     }
 
@@ -904,8 +987,9 @@ export class OfferHunterApp extends LocalizedLitElement {
         }
     }
 
+    // 声纹检测页也是全屏会话态：侧边栏要收起来，否则窗口又变成普通页面大小。
     _isLiveMode() {
-        return this.currentView === 'assistant';
+        return this.currentView === 'assistant' || this.currentView === 'voiceprint';
     }
 
     renderCurrentView() {
@@ -921,7 +1005,12 @@ export class OfferHunterApp extends LocalizedLitElement {
                 `;
 
             case 'api-config':
-                return html`<api-config-view .onExternalLink=${url => this.handleExternalLinkClick(url)}></api-config-view>`;
+                return html`
+                    <api-config-view
+                        .initialAsrPage=${this._configAsrPage}
+                        .onExternalLink=${url => this.handleExternalLinkClick(url)}
+                    ></api-config-view>
+                `;
 
             case 'ai-customize':
                 return html`<ai-customize-view></ai-customize-view>`;
@@ -941,6 +1030,15 @@ export class OfferHunterApp extends LocalizedLitElement {
 
             case 'history':
                 return html`<history-view></history-view>`;
+
+            case 'voiceprint':
+                return html`
+                    <voiceprint-view
+                        .lines=${this.voiceprintLines}
+                        .error=${this.voiceprintError}
+                        .onConfirm=${id => this.confirmVoiceprint(id)}
+                    ></voiceprint-view>
+                `;
 
             case 'assistant':
                 return html`
@@ -1109,18 +1207,20 @@ export class OfferHunterApp extends LocalizedLitElement {
                             />
                         </svg>
                     </button>
-                    <button
-                        class="icon-btn ${this._paused ? 'active' : ''}"
-                        @click=${() => this.togglePause()}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                            <rect x="7" y="5" width="3.4" height="14" rx="1" />
-                            <rect x="13.6" y="5" width="3.4" height="14" rx="1" />
-                        </svg>
-                    </button>
+                    ${
+                        // 声纹检测还没开始正式面试，暂停/清空上下文都没有意义。
+                        this.currentView === 'voiceprint'
+                            ? ''
+                            : html`<button class="icon-btn ${this._paused ? 'active' : ''}" @click=${() => this.togglePause()}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                      <rect x="7" y="5" width="3.4" height="14" rx="1" />
+                                      <rect x="13.6" y="5" width="3.4" height="14" rx="1" />
+                                  </svg>
+                              </button>`
+                    }
                     ${
                         // 笔试没有对话转录，模型上下文里也从不写入截图轮，清空上下文在这里是个无效按钮。
-                        this.sessionMode === 'written'
+                        this.sessionMode === 'written' || this.currentView === 'voiceprint'
                             ? ''
                             : html`<button class="icon-btn" @click=${() => this.handleClearContext()}>
                                   <!-- 和手机提词页那颗「清空上下文」用同一个扫帚图标,两边一眼对得上。 -->

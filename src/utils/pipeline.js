@@ -57,6 +57,10 @@ let writtenLastAnsweredFrame = null;
 // 说的话永远只是背景。两边算法相同，各一个 socket。
 const INTERVIEWER = 'system';
 const CANDIDATE = 'mic';
+// 手机端面试模式：只有一路麦克风，同时听到手机外放的面试官和候选人本人。这一路用腾讯云说话人分离引擎，
+// 识别结果按 speaker_id 再分给上面两路虚拟流，所以轮次、气泡、历史都和普通面试完全一样。
+const PHONE = 'phone';
+const PHONE_SPEAKER_ENGINE = '16k_zh_en_speaker_2.0';
 
 // 正在从流式句子拼装的那一轮文本。服务端会随听到的更多而改写未定稿的句子，所以未提交的尾巴单独存，只在
 // 定稿或被空闲兜底救回时并进去。
@@ -80,7 +84,26 @@ function createStreamState() {
 const streams = {
     [INTERVIEWER]: createStreamState(),
     [CANDIDATE]: createStreamState(),
+    [PHONE]: createStreamState(),
 };
+
+// 声纹检测阶段：phone 模式下先只把句子显示给用户，让用户按 Y 指认哪一个是自己。确认之前不派发任何轮次。
+let phoneCalibrating = false;
+let phoneSpeakerId = null;
+// 已定稿的手机句子。服务端若重复下发同一条定稿，不能再派发一次，否则同一个提问会被回答两遍。
+// 键里带文本而不只是 sentence_id：断线重连后编号从头开始，单看 id 会把新句子误当成旧句子丢掉。
+const PHONE_FINAL_CACHE = 50;
+let phoneFinalKeys = new Set();
+
+// 返回 true 表示这条定稿之前已经处理过。
+function markPhoneFinal(sentenceId, text) {
+    if (sentenceId === null) return false;
+    const key = `${sentenceId}|${text}`;
+    if (phoneFinalKeys.has(key)) return true;
+    phoneFinalKeys.add(key);
+    if (phoneFinalKeys.size > PHONE_FINAL_CACHE) phoneFinalKeys.delete(phoneFinalKeys.values().next().value);
+    return false;
+}
 
 function speakerFor(source) {
     return source === CANDIDATE ? 'user' : 'interviewer';
@@ -241,13 +264,18 @@ function sendBubble(channel, source) {
     sendToRenderer(channel, payload);
 }
 
-function handleAsrSentence(text, sentenceEnd, source) {
+function handleAsrSentence(text, sentenceEnd, source, meta) {
     // 服务端为暂停之前收到的音频定稿的句子，不是用户想留下的。在这里丢而不是在 flushTurn 里，顺带也就
     // 不会派发任何轮次。
     if (!isLocalActive || paused || !text) return;
 
     const sentence = text.trim();
     if (!sentence) return;
+
+    if (source === PHONE) {
+        routePhoneSentence(sentence, sentenceEnd, meta);
+        return;
+    }
 
     const state = streams[source];
 
@@ -273,6 +301,36 @@ function handleAsrSentence(text, sentenceEnd, source) {
     sendBubble('transcription-update', source);
 
     flushTurn(source);
+}
+
+// 声纹检测阶段只把句子和 speaker_id 推给检测页；用户按 Y 之后，属于他的编号走候选人那路，其余走面试官
+// 那路。两路都是虚拟流：它们没有自己的 socket，缓冲与轮次逻辑和普通面试完全共用。
+function routePhoneSentence(sentence, sentenceEnd, meta) {
+    const speakerId = meta && Number.isFinite(meta.speakerId) ? meta.speakerId : -1;
+    const sentenceId = meta && Number.isInteger(meta.sentenceId) ? meta.sentenceId : null;
+
+    // 定稿只认一次：检测阶段听到的那句定稿在确认后可能又被重发，不能被当成面试官的提问。
+    if (sentenceEnd && markPhoneFinal(sentenceId, sentence)) return;
+
+    if (phoneCalibrating) {
+        sendToRenderer('diarization-sentence', {
+            text: sentence,
+            speakerId,
+            sentenceId: meta ? meta.sentenceId : undefined,
+            final: Boolean(sentenceEnd),
+        });
+        return;
+    }
+
+    if (speakerId === phoneSpeakerId) {
+        handleAsrSentence(sentence, sentenceEnd, CANDIDATE);
+        return;
+    }
+
+    // 还没认出说话人的中间态先不落进面试官那路：它可能随后被改判成候选人，留下的半句要等看门狗兜底才冲掉。
+    if (speakerId < 0 && !sentenceEnd) return;
+
+    handleAsrSentence(sentence, sentenceEnd, INTERVIEWER);
 }
 
 // 闸门刚关上，候选人正说到一半被切断。把现有的显示出来，但不定稿：服务端手里还有已经收到的音频，会为这
@@ -851,13 +909,18 @@ function tickStreamWatchdog(source) {
 // 共用的状态行归面试官那路的识别器，因为会话依赖的是它。候选人那路并行运行且安静地失败：丢了它损失的
 // 是背景，不是回答。
 function startAsrClient(source) {
-    const isInterviewer = source === INTERVIEWER;
+    // 状态行归产生轮次的那一路：普通面试是扬声器，手机模式是唯一的麦克风那路。
+    const isPrimary = source === INTERVIEWER || source === PHONE;
+    const phone = sessionMode === 'phone';
 
     const client = createRealtimeAsr({
+        // 手机模式固定走腾讯云说话人分离引擎，不受设置页里那套通用识别服务选择的影响。
+        provider: phone ? 'tencent' : undefined,
+        engineModel: phone ? PHONE_SPEAKER_ENGINE : undefined,
         maxSentenceSilenceMs: streams[source].sentenceSilenceMs,
-        onSentence: (text, sentenceEnd) => handleAsrSentence(text, sentenceEnd, source),
+        onSentence: (text, sentenceEnd, meta) => handleAsrSentence(text, sentenceEnd, source, meta),
         onState: state => {
-            if (!isInterviewer) return;
+            if (!isPrimary) return;
             // 用户暂停音频期间，socket 做什么都不值得播报。
             if (paused) return;
             if (state === 'connecting') {
@@ -878,7 +941,10 @@ function startAsrClient(source) {
             streams[source].turnText = '';
             streams[source].interimText = '';
 
-            if (!isInterviewer) return;
+            // 还在声纹检测页：把错误直接交给那一页（它在最前面，实时视图的错误气泡这时没人看得到）。
+            if (phone && phoneCalibrating) sendToRenderer('diarization-error', { message: error.message });
+
+            if (!isPrimary) return;
             sendToRenderer('update-status', 'Transcription error: ' + error.message);
             sendToRenderer('reconnect-failed', { message: 'Transcription stopped: ' + error.message });
         },
@@ -889,6 +955,12 @@ function startAsrClient(source) {
 }
 
 function startAsrClients() {
+    // 手机端面试只有一路麦克风：面试官的声音也来自它，靠说话人分离分出来。
+    if (sessionMode === 'phone') {
+        startAsrClient(PHONE);
+        return;
+    }
+
     startAsrClient(INTERVIEWER);
 
     // 'none' 是设置页里「不用麦克风」的显式选择，也是唯一会关掉候选人那路的东西：两条采集不再是二选一，
@@ -902,7 +974,7 @@ function startAsrClients() {
 // 暂停时把两路识别器一起关掉，暂停期间就没有 socket 在计费。先摘掉引用再 close：finish 会同步回调
 // onState('closed')，而那时 streams 里已经不该再有这一路。
 function closeAsrClients() {
-    for (const source of [INTERVIEWER, CANDIDATE]) {
+    for (const source of [INTERVIEWER, CANDIDATE, PHONE]) {
         const client = streams[source].asr;
         streams[source].asr = null;
         if (client) client.close();
@@ -910,7 +982,7 @@ function closeAsrClients() {
 }
 
 function resetAudioState() {
-    for (const source of [INTERVIEWER, CANDIDATE]) {
+    for (const source of [INTERVIEWER, CANDIDATE, PHONE]) {
         const state = streams[source];
         state.asr = null;
         state.turnText = '';
@@ -922,6 +994,9 @@ function resetAudioState() {
     candidateSpeech = [];
     // 跟着 turnSeq 一起从头开始：渲染端在会话音频流入之前会清空字幕，没有留下任何行会跟 id 撞上。
     candidateBlockId = 1;
+    phoneCalibrating = false;
+    phoneSpeakerId = null;
+    phoneFinalKeys = new Set();
     micGated = false;
     micLevelGated = false;
     micGateSideLoud = false;
@@ -942,7 +1017,10 @@ function initializeChatSession(customPrompt, mode = 'interview') {
     sendToRenderer('session-initializing', true);
 
     closeLocalSession();
-    sessionMode = mode === 'written' ? 'written' : 'interview';
+    sessionMode = mode === 'written' ? 'written' : mode === 'phone' ? 'phone' : 'interview';
+    // 手机模式开局先做声纹检测：句子只显示，不派发答案，直到用户按 Y 指认自己。
+    phoneCalibrating = sessionMode === 'phone';
+    phoneSpeakerId = null;
 
     // 开关和知识库索引都在这里一次性读好。索引故意是快照而不是每轮重建：那会给每个回答前面加一次目录
     // 遍历，而实际上没有过期窗口——能改动这两者的设置页在会话进行中到不了。就算 id 过期也答不错，下面
@@ -951,8 +1029,8 @@ function initializeChatSession(customPrompt, mode = 'interview') {
     // 设置里关了自动截图时,桌面开局就处于暂停态(渲染端 _paused 与定时器同一事实)。主进程的 paused
     // 也从这里出发,开局的 update-status 才不会再把它覆盖成「未暂停」——手机上的暂停键跟着它走。
     paused = sessionMode === 'written' && prefs.writtenAutoScreenshot === false;
-    // 手机提词页据此切到笔试页:没有精要/详细三档、暂停键管自动截图。
-    sendToRenderer('session-mode', { mode: sessionMode, paused });
+    // 手机提词页据此切到笔试页:没有精要/详细三档、暂停键管自动截图。手机端面试不用提词页，按面试播报。
+    sendToRenderer('session-mode', { mode: sessionMode === 'phone' ? 'interview' : sessionMode, paused });
     // 用户在编辑面板里改过的系统提示词分段；空对象即全用内置默认。
     const promptOverrides = prefs.promptOverrides || {};
     currentSystemPrompt = getSystemPrompt(customPrompt, promptOverrides);
@@ -973,6 +1051,8 @@ function initializeChatSession(customPrompt, mode = 'interview') {
     const micMaxSentenceSilenceMs = getMicMaxSentenceSilenceMs();
     streams[INTERVIEWER].sentenceSilenceMs = maxSentenceSilenceMs;
     streams[CANDIDATE].sentenceSilenceMs = micMaxSentenceSilenceMs;
+    // 手机模式只有一路音频，按面试官那档的静音时长切句：提问要尽快派发。
+    streams[PHONE].sentenceSilenceMs = maxSentenceSilenceMs;
 
     micGateDb = getMicGateDb();
     micGateDwellMs = getMicGateDwellMs();
@@ -1007,11 +1087,14 @@ function processLocalAudio(monoChunk24k, source = 'system') {
     // 笔试没有识别器；渲染端也不送音频，这里是防绕路的第二道门。
     if (sessionMode === 'written') return;
 
+    // 手机模式只有麦克风：不管渲染端用哪个频道送来，都进那唯一一路带说话人分离的识别器。
+    const routedSource = sessionMode === 'phone' ? PHONE : source;
+
     // 暂停时帧照旧转发，只是内容是静音。端点在听不到声音足够久之后会结束任务，而一个死掉的 socket 得在
     // 恢复后的第一个问题前面重连——所以这些流量让会话保持热着，而用户的音频从不作为语音到达它。闸门和
     // 看门狗是跳过而不是喂给它们：静音量出来是 -inf dBFS，会把闸门打开，而且已经没有文本需要兜底冲掉。
     if (paused) {
-        const state = streams[source];
+        const state = streams[routedSource];
         if (!state || !state.asr) return;
 
         const pcm16k = resample24kTo16k(Buffer.alloc(monoChunk24k.length), state);
@@ -1022,23 +1105,34 @@ function processLocalAudio(monoChunk24k, source = 'system') {
     }
 
     // 在下面那道客户端检查之前先量：回环采集即使识别器已经放弃也照旧送块，而一个从没见过安静块的闸门
-    // 会永远开着。
-    if (source === INTERVIEWER) tickMicGate(pcmRmsDb(monoChunk24k));
+    // 会永远开着。手机模式只有一路麦克风，没有需要互相压制的第二路，闸门不参与。
+    if (routedSource === INTERVIEWER) tickMicGate(pcmRmsDb(monoChunk24k));
 
     // 客户端是根管子：音频直接进识别器。没有客户端的流——没配麦克风时的候选人那路，或者任何识别器已放
     // 弃的流——在这里就丢掉，赶在重采样之前，好让它那半个采样点的状态保持不动。
-    const state = streams[source];
+    const state = streams[routedSource];
     if (!state || !state.asr) return;
 
     // 被闸门拦下的麦克风音频变成真正的静音而不是直接丢块：服务端的 VAD 需要帧才能关掉面试官打断的这句
     // 话。丢掉的话这半句会一直挂着，等闸门抬起后和用户接下来说的话并到一起。
-    const chunk = source === CANDIDATE && micGated ? Buffer.alloc(monoChunk24k.length) : monoChunk24k;
+    const chunk = routedSource === CANDIDATE && micGated ? Buffer.alloc(monoChunk24k.length) : monoChunk24k;
 
     const pcm16k = resample24kTo16k(chunk, state);
     if (pcm16k.length === 0) return;
 
     state.asr.sendAudio(pcm16k);
-    tickStreamWatchdog(source);
+
+    // PHONE 自己从不挂文本，句子已经被分进两路虚拟流；看门狗要喂那两路，否则一句话在最后一块音频之后
+    // 定稿失败时没人兜底。
+    if (routedSource === PHONE) {
+        if (!phoneCalibrating) {
+            tickStreamWatchdog(INTERVIEWER);
+            tickStreamWatchdog(CANDIDATE);
+        }
+        return;
+    }
+
+    tickStreamWatchdog(routedSource);
 }
 
 function closeLocalSession() {
@@ -1049,7 +1143,7 @@ function closeLocalSession() {
     }
     isLocalActive = false;
 
-    for (const source of [INTERVIEWER, CANDIDATE]) {
+    for (const source of [INTERVIEWER, CANDIDATE, PHONE]) {
         const client = streams[source].asr;
         if (client) client.close();
     }
@@ -1062,6 +1156,30 @@ function closeLocalSession() {
     detailKnowledgeEntries = [];
     // 会话结束后让手机退回默认的面试等待页;下一场开局会再发真实的模式。
     if (wasActive) sendToRenderer('session-mode', { mode: '', paused: false });
+}
+
+// 用户在声纹检测页按 Y：把当前气泡上的 speaker_id 认定为候选人本人，从下一句起开始正常分流。
+function confirmPhoneSpeaker(speakerId) {
+    if (!isLocalActive || sessionMode !== 'phone' || !phoneCalibrating) {
+        return { success: false, error: 'Not calibrating' };
+    }
+
+    const id = Number(speakerId);
+    if (!Number.isInteger(id) || id < 0 || id > 9) {
+        return { success: false, error: 'Invalid speaker id' };
+    }
+
+    phoneSpeakerId = id;
+    phoneCalibrating = false;
+    for (const source of [INTERVIEWER, CANDIDATE]) {
+        const state = streams[source];
+        state.turnText = '';
+        state.interimText = '';
+        state.silenceMs = 0;
+    }
+    console.log('[Pipeline] Phone speaker confirmed:', id);
+    sendToRenderer('update-status', 'Listening...');
+    return { success: true, speakerId: id };
 }
 
 function isLocalSessionActive() {
@@ -1095,7 +1213,7 @@ function setPaused(value) {
 
     // 笔试没有识别器，暂停只停自动截图，这个开关与它无关。恢复时重新起 socket 会先报 Connecting...，
     // 由识别器自己的状态回调接管状态行，所以这里不再额外刷新。
-    const disconnects = sessionMode === 'interview' && getPreferences().pauseDisconnectsAsr !== false;
+    const disconnects = (sessionMode === 'interview' || sessionMode === 'phone') && getPreferences().pauseDisconnectsAsr !== false;
 
     if (paused) {
         suspendPendingText();
@@ -1286,6 +1404,7 @@ module.exports = {
     initializeChatSession,
     processLocalAudio,
     closeLocalSession,
+    confirmPhoneSpeaker,
     setPaused,
     clearContext,
     sendLocalText,

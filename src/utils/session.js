@@ -299,6 +299,17 @@ function setupIpcHandlers() {
 
     // 暂停和清空都不结束会话：socket 留着等恢复，而磁盘上的记录是 persistTurn 一轮一轮写的，清空上下文
     // 永远碰不到它。
+    // 手机端面试的声纹检测：用户在检测页按 Y，把当前 speaker_id 认定为候选人本人。
+    ipcMain.handle('confirm-speaker', async (event, speakerId) => {
+        if (!chatSessionActive) return { success: false, error: 'No active session' };
+        try {
+            return getPipeline().confirmPhoneSpeaker(speakerId);
+        } catch (error) {
+            console.error('Error confirming speaker:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('set-audio-paused', async (event, value) => {
         if (!chatSessionActive) return { success: false, error: 'No active session' };
         try {

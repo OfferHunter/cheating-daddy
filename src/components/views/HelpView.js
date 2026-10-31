@@ -46,12 +46,28 @@ function guideSections() {
 }
 
 export class HelpView extends LocalizedLitElement {
-    static properties = { onExternalLinkClick: { type: Function }, query: { state: true }, _activation: { state: true } };
+    static properties = {
+        onExternalLinkClick: { type: Function },
+        query: { state: true },
+        _activation: { state: true },
+        _licenseInput: { state: true },
+        _licenseError: { state: true },
+        _licenseSuccess: { state: true },
+        _licenseBusy: { state: true },
+    };
     static styles = [unifiedPageStyles, scrollbarStyles, css`
         .intro, .answer, .note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.7; }
         .intro { margin: 4px 0 12px; }
-        /* 激活状态标题：绿色对「已激活」，与下方灰色说明形成层级，用中等字号加粗当小标题。 */
-        .activation { margin: 0 0 12px; color: var(--success); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); line-height: 1.5; }
+        /* 激活码输入：与标题同处页面最上方；出错和成功都用行内提示，不弹窗。 */
+        .activation-form { display: flex; gap: 8px; max-width: 560px; margin: 10px 0 0; }
+        .activation-form .code-input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--font-size-sm); cursor: text; user-select: text; }
+        .activation-form .code-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .activation-form button { flex-shrink: 0; }
+        .activation-hint { margin: 8px 0 0; color: var(--text-muted); font-size: var(--font-size-xs); line-height: 1.5; }
+        .activation-feedback { margin: 8px 0 0; font-size: var(--font-size-sm); line-height: 1.5; }
+        .activation-feedback.error { color: var(--danger); }
+        .activation-feedback.success { color: var(--success); }
+        .help-heading { margin-top: 24px; }
         .search { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); font: inherit; cursor: text; user-select: text; }
         .links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
         button { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }
@@ -75,6 +91,10 @@ export class HelpView extends LocalizedLitElement {
         this.query = '';
         this.onExternalLinkClick = () => {};
         this._activation = null;
+        this._licenseInput = '';
+        this._licenseError = '';
+        this._licenseSuccess = false;
+        this._licenseBusy = false;
     }
 
     connectedCallback() {
@@ -90,16 +110,55 @@ export class HelpView extends LocalizedLitElement {
             });
     }
 
-    // 终身激活显示「永久激活」，限期激活按天+小时折算剩余时间，已到期或未激活返回空串（不渲染）。
-    _activationLabel() {
+    // 页面标题就是激活状态：终身显示「永久激活」，限期按天+小时折算剩余时间；未激活/读取中给出中性提示。
+    _activationTitle() {
         const status = this._activation;
-        if (!status || !status.activated) return '';
+        if (!status || !status.activated) return copy('产品激活', 'Product activation');
         if (status.expiresAt == null) return copy('您的产品已永久激活', 'Your product is permanently activated');
 
         const remaining = Math.max(0, status.expiresAt - Date.now());
         const days = Math.floor(remaining / 86400000);
         const hours = Math.floor((remaining % 86400000) / 3600000);
         return copy(`您的产品已激活，剩余时间 ${days} 天 ${hours} 小时`, `Your product is activated — ${days}d ${hours}h remaining`);
+    }
+
+    // 无论当前是否已激活，都可以提交新码：license.activate 直接覆写 license.json，旧码由此被替换。
+    async activateLicense() {
+        if (this._licenseBusy) return;
+        const code = this._licenseInput.trim();
+        if (!code) return;
+
+        this._licenseBusy = true;
+        this._licenseError = '';
+        this._licenseSuccess = false;
+        try {
+            const result = await offerHunter.license.activate(code);
+            if (result.success) {
+                this._licenseInput = '';
+                this._licenseSuccess = true;
+                this._activation = await offerHunter.license.getStatus();
+            } else {
+                this._licenseError = this._licenseErrorMessage(result.error);
+            }
+        } catch {
+            this._licenseError = copy('激活失败，请重试。', 'Activation failed. Please try again.');
+        }
+        this._licenseBusy = false;
+    }
+
+    _licenseErrorMessage(reason) {
+        switch (reason) {
+            case 'format':
+                return copy('激活码格式不正确。', 'Invalid activation code format.');
+            case 'machine':
+                return copy('该激活码属于其他电脑。', 'This activation code is for a different computer.');
+            case 'signature':
+                return copy('激活码无效，请检查后重试。', 'Invalid activation code. Please check it and try again.');
+            case 'expired':
+                return copy('该激活码已过期，请向卖家索取新的激活码。', 'This activation code has expired. Please ask the seller for a new one.');
+            default:
+                return copy('激活失败，请重试。', 'Activation failed. Please try again.');
+        }
     }
 
     jumpTo(id) {
@@ -133,9 +192,29 @@ export class HelpView extends LocalizedLitElement {
         return html`
             <div class="unified-page"><div class="unified-wrap">
                 <header>
-                    <h1 class="page-title">${copy('帮助和支持', 'Help & Support')}</h1>
+                    <h1 class="page-title">${this._activationTitle()}</h1>
+                    <form class="activation-form" @submit=${event => { event.preventDefault(); this.activateLicense(); }}>
+                        <input
+                            class="code-input"
+                            type="text"
+                            aria-label=${copy('激活码', 'Activation code')}
+                            placeholder=${copy('输入新的激活码', 'Enter a new activation code')}
+                            .value=${this._licenseInput}
+                            spellcheck="false"
+                            autocomplete="off"
+                            @input=${event => {
+                                this._licenseInput = event.target.value;
+                                this._licenseError = '';
+                                this._licenseSuccess = false;
+                            }}
+                        />
+                        <button type="submit" ?disabled=${this._licenseBusy}>${this._licenseBusy ? copy('激活中…', 'Activating…') : copy('激活', 'Activate')}</button>
+                    </form>
+                    <p class="activation-hint">${copy('输入新的激活码即可覆盖当前激活码。', 'Enter a new activation code to replace the current one.')}</p>
+                    ${this._licenseError ? html`<p class="activation-feedback error" role="alert">${this._licenseError}</p>` : ''}
+                    ${this._licenseSuccess ? html`<p class="activation-feedback success" role="status">${copy('激活成功，激活码已更新。', 'Activated. The activation code has been updated.')}</p>` : ''}
+                    <h2 class="page-title help-heading">${copy('帮助和支持', 'Help & Support')}</h2>
                     <p class="intro">${copy('从首次配置到日常使用，在这里查找操作说明和常见问题。', 'Find setup instructions, everyday guidance and troubleshooting in one place.')}</p>
-                    ${this._activationLabel() ? html`<p class="activation" role="status">${this._activationLabel()}</p>` : ''}
                     <input class="search" type="search" aria-label=${copy('搜索帮助', 'Search help')} placeholder=${copy('搜索：麦克风、API Key、截图、历史记录…', 'Search: microphone, API key, screenshots, history…')} .value=${this.query} @input=${event => { this.query = event.target.value; }} />
                     <nav class="links" aria-label=${copy('帮助目录', 'Help topics')}>
                         ${sections.map(section => html`<button @click=${() => this.jumpTo(section.id)}>${section.title}</button>`)}

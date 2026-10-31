@@ -316,6 +316,8 @@ export class ApiConfigView extends LocalizedLitElement {
     ];
 
     static properties = {
+        // 从手机端面试被拦过来时直接翻到腾讯云那一页；其它入口留空，停在默认页。
+        initialAsrPage: { type: String },
         onExternalLink: { type: Function },
         _chatBaseUrl: { state: true },
         _chatKey: { state: true },
@@ -436,6 +438,8 @@ export class ApiConfigView extends LocalizedLitElement {
             this._tencentAppId = tencent.appId || '';
             this._tencentSecretId = tencent.secretId || '';
             this._tencentSecretKey = tencent.secretKey || '';
+            // 手机端面试只有腾讯云这一条路，被拦过来时先让用户看到该填的那一页。
+            if (ASR_PAGES.includes(this.initialAsrPage)) this._asrPage = this.initialAsrPage;
 
             this.requestUpdate();
         } catch (error) {
