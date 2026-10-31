@@ -100,8 +100,9 @@ const zh = {
     'High Quality': '高质量',
     'Medium Quality': '中等质量',
     'Low Quality': '低质量',
-    'Sentence Silence (ms)': '语句静音时长（毫秒）',
-    'My Sentence Silence (ms)': '我的语句静音时长（毫秒）',
+    'Audio Player Sentence Silence Threshold (ms)': '扬声器断句静音时长（毫秒）',
+    'Microphone Sentence Silence Threshold (ms)': '麦克风断句静音时长（毫秒）',
+    'Voiceprint Mode Sentence Silence Threshold (ms)': '声纹识别模式断句静音时长',
     'Speaker Gate (dBFS)': '扬声器门限（dBFS）',
     'Speaker Gate Hold (ms)': '扬声器门限保持（毫秒）',
     'Speaker audio always follows the Windows default playback device. A microphone here adds your own voice as a second, right-hand column: it never triggers an answer on its own, it only tells the assistant what you have already said.':
@@ -110,6 +111,8 @@ const zh = {
         '一段静音持续多久后结束并发送问题。数值越低响应越快，但可能拆分句子。范围 200–6000。',
     'The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into several fragments on screen. Only affects your column. 200-6000. Takes effect on the next session.':
         '麦克风使用的静音等待时间，通常建议稍长；说话停顿可能把一条回答拆成多个片段。仅影响你的内容。范围 200–6000，下次会话生效。',
+    'Used only by the phone-interview (voiceprint) mode, where one microphone hears both people and the speaker-separation engine decides the sentence breaks; it replaces the two thresholds above. Longer merges choppy fragments into one bubble at the cost of a slower reply. 200-6000. Takes effect on the next session.':
+        '仅用于手机端面试（声纹识别）模式：这一路麦克风同时听两个人，断句由说话人分离引擎决定，上面两项在这个模式下不生效。数值越大，越能把零碎的半句合并进一个气泡，代价是回答更慢。范围 200–6000，下次会话生效。',
     "While the speaker is louder than this the microphone is ignored, so the interviewer's voice cannot leak into your column. Higher (closer to 0) gates more aggressively; -80 effectively turns it off.":
         '扬声器音量高于此值时忽略麦克风，防止面试官声音混入你的内容。数值越接近 0，抑制越强；-80 相当于关闭。',
     'How long the speaker level must stay on one side of the threshold before the microphone is muted or unmuted. Higher is steadier and less choppy but slower to react. 0-2000. The microphone is also muted while the speaker is still mid-sentence, whatever the level does.':

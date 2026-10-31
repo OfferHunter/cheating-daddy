@@ -21,6 +21,7 @@ const SETTINGS_KEYS = [
     'theme',
     'maxSentenceSilenceMs',
     'micMaxSentenceSilenceMs',
+    'phoneMaxSentenceSilenceMs',
     'micGateDb',
     'micGateDwellMs',
     'detailMode',
@@ -280,6 +281,7 @@ export class CustomizeView extends LocalizedLitElement {
         clearStatusType: { type: String },
         maxSentenceSilenceMs: { type: Number },
         micMaxSentenceSilenceMs: { type: Number },
+        phoneMaxSentenceSilenceMs: { type: Number },
         micGateDb: { type: Number },
         micGateDwellMs: { type: Number },
         audioInputDeviceId: { type: String },
@@ -727,7 +729,7 @@ export class CustomizeView extends LocalizedLitElement {
                         </select>
                     </div>
                     <div class="form-group vertical">
-                        <label class="form-label">Sentence Silence (ms)</label>
+                        <label class="form-label">Audio Player Sentence Silence Threshold (ms)</label>
                         <input
                             type="number"
                             step="100"
@@ -740,7 +742,7 @@ export class CustomizeView extends LocalizedLitElement {
                         <div class="form-help">How much silence ends a question and sends it. Lower is faster but may split it. 200-6000.</div>
                     </div>
                     <div class="form-group vertical">
-                        <label class="form-label">My Sentence Silence (ms)</label>
+                        <label class="form-label">Microphone Sentence Silence Threshold (ms)</label>
                         <input
                             type="number"
                             step="100"
@@ -753,6 +755,23 @@ export class CustomizeView extends LocalizedLitElement {
                         <div class="form-help">
                             The same wait for your own microphone, and usually worth keeping longer: stumbling over a word splits one answer into
                             several fragments on screen. Only affects your column. 200-6000. Takes effect on the next session.
+                        </div>
+                    </div>
+                    <div class="form-group vertical">
+                        <label class="form-label">Voiceprint Mode Sentence Silence Threshold (ms)</label>
+                        <input
+                            type="number"
+                            step="100"
+                            min="200"
+                            max="6000"
+                            class="control"
+                            .value=${this.phoneMaxSentenceSilenceMs}
+                            @change=${e => this.handleNumberPreferenceInput('phoneMaxSentenceSilenceMs', e.target.value)}
+                        />
+                        <div class="form-help">
+                            Used only by the phone-interview (voiceprint) mode, where one microphone hears both people and the speaker-separation engine
+                            decides the sentence breaks; it replaces the two thresholds above. Longer merges choppy fragments into one bubble at the cost
+                            of a slower reply. 200-6000. Takes effect on the next session.
                         </div>
                     </div>
                     <div class="form-group vertical">

@@ -40,7 +40,8 @@ const PAGE = `<!doctype html>
         selectedLanguage: 'cmn-CN', selectedImageQuality: 'medium',
         audioInputDeviceId: 'default', fontSize: 16,
         backgroundTransparency: 0.48, textTransparency: 0.83,
-        maxSentenceSilenceMs: 1500, micMaxSentenceSilenceMs: 2000, micGateDb: -45, micGateDwellMs: 300,
+        maxSentenceSilenceMs: 1500, micMaxSentenceSilenceMs: 2000, phoneMaxSentenceSilenceMs: 2000,
+        micGateDb: -45, micGateDwellMs: 300,
         chatContextTurns: 15, chatMaxTokens: 128000, detailPaneWidth: 0.38, theme: 'gruvbox', nonFocusableSession: true,
         writtenAutoScreenshot: false, writtenScreenshotIntervalSec: 5,
     };
@@ -219,6 +220,21 @@ app.whenReady().then(async () => {
         })()`);
         await wait(150);
         check('pause-disconnect toggle persisted', (await exec(`window.__storedPrefs.pauseDisconnectsAsr`)) === false);
+
+        // 声纹识别模式专用的断句静音时长:独立一档,默认 2000,改完落盘。
+        await exec(`window.__phoneSilenceInput = () => {
+            const label = [...window.__audio().querySelectorAll('.form-label')].find(el => el.textContent.trim() === '声纹识别模式断句静音时长');
+            return label && label.closest('.form-group').querySelector('input[type=number]');
+        }; void 0`);
+        check('voiceprint silence threshold field renders with its own label', await exec(`!!window.__phoneSilenceInput()`));
+        check('voiceprint silence threshold defaults to 2000', (await exec(`window.__phoneSilenceInput().value`)) === '2000');
+        await exec(`(() => {
+            const input = window.__phoneSilenceInput();
+            input.value = '2600';
+            input.dispatchEvent(new Event('change'));
+        })()`);
+        await wait(150);
+        check('voiceprint silence threshold persisted', (await exec(`window.__storedPrefs.phoneMaxSentenceSilenceMs`)) === 2600);
 
         // 快捷键表:截图动作改成了合并名,缓存动作有了自己的默认键。
         const keybindRows = await exec(`[...window.__root().querySelectorAll('.keybind-row')].map(row => [

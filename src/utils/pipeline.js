@@ -22,6 +22,7 @@ const {
     getPreferences,
     getMaxSentenceSilenceMs,
     getMicMaxSentenceSilenceMs,
+    getPhoneMaxSentenceSilenceMs,
     getMicGateDb,
     getMicGateDwellMs,
     getChatContextTurns,
@@ -90,6 +91,9 @@ const streams = {
 // 声纹检测阶段：phone 模式下先只把句子显示给用户，让用户按 Y 指认哪一个是自己。确认之前不派发任何轮次。
 let phoneCalibrating = false;
 let phoneSpeakerId = null;
+// 正式会话里还没认出说话人的那句话。它不进任何一路气泡（身份未定，进错路会被当成提问），只作为居中的
+// 虚线部分结果显示；身份一出来（同句的中间态带上了 id，或者整句定稿）就清掉。
+let phonePartialText = '';
 // 已定稿的手机句子。服务端若重复下发同一条定稿，不能再派发一次，否则同一个提问会被回答两遍。
 // 键里带文本而不只是 sentence_id：断线重连后编号从头开始，单看 id 会把新句子误当成旧句子丢掉。
 const PHONE_FINAL_CACHE = 50;
@@ -303,6 +307,13 @@ function handleAsrSentence(text, sentenceEnd, source, meta) {
     flushTurn(source);
 }
 
+// 居中的部分结果只有一个槽位，内容没变就不发 IPC：中间态每来一次都会走这里。
+function setPhonePartial(text) {
+    if (text === phonePartialText) return;
+    phonePartialText = text;
+    sendToRenderer('phone-partial', { text });
+}
+
 // 声纹检测阶段只把句子和 speaker_id 推给检测页；用户按 Y 之后，属于他的编号走候选人那路，其余走面试官
 // 那路。两路都是虚拟流：它们没有自己的 socket，缓冲与轮次逻辑和普通面试完全共用。
 function routePhoneSentence(sentence, sentenceEnd, meta) {
@@ -322,14 +333,25 @@ function routePhoneSentence(sentence, sentenceEnd, meta) {
         return;
     }
 
+    // 只记 id 不记原文：排查分流问题时 app.log 要能带走，但不能带上对话内容。
+    if (sentenceEnd) {
+        console.log(`[Pipeline] Phone sentence routed: speaker=${speakerId} candidate=${phoneSpeakerId}`);
+    }
+
     if (speakerId === phoneSpeakerId) {
+        setPhonePartial('');
         handleAsrSentence(sentence, sentenceEnd, CANDIDATE);
         return;
     }
 
-    // 还没认出说话人的中间态先不落进面试官那路：它可能随后被改判成候选人，留下的半句要等看门狗兜底才冲掉。
-    if (speakerId < 0 && !sentenceEnd) return;
+    // 还没认出说话人的中间态不落进面试官那路：它可能随后被改判成候选人，留下的半句要等看门狗兜底才冲掉。
+    // 这期间它只作为居中的虚线部分结果出现。
+    if (speakerId < 0 && !sentenceEnd) {
+        setPhonePartial(sentence);
+        return;
+    }
 
+    setPhonePartial('');
     handleAsrSentence(sentence, sentenceEnd, INTERVIEWER);
 }
 
@@ -943,6 +965,8 @@ function startAsrClient(source) {
 
             // 还在声纹检测页：把错误直接交给那一页（它在最前面，实时视图的错误气泡这时没人看得到）。
             if (phone && phoneCalibrating) sendToRenderer('diarization-error', { message: error.message });
+            // 识别器没了，那句等身份的部分结果也不会再有下文。
+            if (phone) setPhonePartial('');
 
             if (!isPrimary) return;
             sendToRenderer('update-status', 'Transcription error: ' + error.message);
@@ -996,6 +1020,7 @@ function resetAudioState() {
     candidateBlockId = 1;
     phoneCalibrating = false;
     phoneSpeakerId = null;
+    phonePartialText = '';
     phoneFinalKeys = new Set();
     micGated = false;
     micLevelGated = false;
@@ -1049,16 +1074,25 @@ function initializeChatSession(customPrompt, mode = 'interview') {
     // 回答切成好几段。
     const maxSentenceSilenceMs = getMaxSentenceSilenceMs();
     const micMaxSentenceSilenceMs = getMicMaxSentenceSilenceMs();
-    streams[INTERVIEWER].sentenceSilenceMs = maxSentenceSilenceMs;
-    streams[CANDIDATE].sentenceSilenceMs = micMaxSentenceSilenceMs;
-    // 手机模式只有一路音频，按面试官那档的静音时长切句：提问要尽快派发。
-    streams[PHONE].sentenceSilenceMs = maxSentenceSilenceMs;
+    const phoneMaxSentenceSilenceMs = getPhoneMaxSentenceSilenceMs();
+    if (sessionMode === 'phone') {
+        // 手机模式那一支麦克风同时听两个人，断句由说话人分离引擎自己做，所以它有独立的档位。三路都写成
+        // 同一个值：物理那路决定服务端 VAD，分出来的面试官/候选人两路只喂看门狗，值不一致时看门狗会
+        // 在服务端还没定稿前先冲掉半句。
+        streams[PHONE].sentenceSilenceMs = phoneMaxSentenceSilenceMs;
+        streams[INTERVIEWER].sentenceSilenceMs = phoneMaxSentenceSilenceMs;
+        streams[CANDIDATE].sentenceSilenceMs = phoneMaxSentenceSilenceMs;
+    } else {
+        streams[INTERVIEWER].sentenceSilenceMs = maxSentenceSilenceMs;
+        streams[CANDIDATE].sentenceSilenceMs = micMaxSentenceSilenceMs;
+    }
 
     micGateDb = getMicGateDb();
     micGateDwellMs = getMicGateDwellMs();
     console.log('[Pipeline] Initializing chat session:', {
         maxSentenceSilenceMs,
         micMaxSentenceSilenceMs,
+        phoneMaxSentenceSilenceMs,
         micGateDb,
         micGateDwellMs,
     });
@@ -1171,6 +1205,7 @@ function confirmPhoneSpeaker(speakerId) {
 
     phoneSpeakerId = id;
     phoneCalibrating = false;
+    setPhonePartial('');
     for (const source of [INTERVIEWER, CANDIDATE]) {
         const state = streams[source];
         state.turnText = '';
@@ -1189,6 +1224,8 @@ function isLocalSessionActive() {
 // 在途的那句比暂停更早、且已经在屏幕上，所以定稿它而不是丢掉：开着不管的话，恢复后说的话会被并到它前
 // 面那半句上，挤在同一个气泡里。不为它派发任何轮次——它不是一个问完的问题。
 function suspendPendingText() {
+    // 暂停后这句话不会再定稿：部分结果跟着一起收回，恢复时从安静的屏幕重新开始。
+    setPhonePartial('');
     flushTurn(CANDIDATE);
     commitCandidateSpeech();
     for (const source of [INTERVIEWER, CANDIDATE]) {

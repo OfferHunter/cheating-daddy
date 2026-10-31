@@ -76,11 +76,14 @@ const DEFAULT_PREFERENCES = Object.freeze({
     textTransparency: 0.83,
     // How much silence ends a sentence on the ASR server. It is added to every turn's latency, so
     // it trades directly against the server splitting one question into fragments.
-    maxSentenceSilenceMs: 1500,
+    maxSentenceSilenceMs: 1200,
     // The same knob for the microphone, and deliberately a larger one: the candidate stutters, so a
     // short silence would cut one answer into many fragments. Fragments are not charged per turn,
     // but each one is a bubble on screen, so a longer wait buys a calmer transcript.
-    micMaxSentenceSilenceMs: 2000,
+    micMaxSentenceSilenceMs: 1500,
+    // 手机端面试（声纹识别模式）专用的断句静音时长。这一路麦克风同时听两个人，切碎了几乎每句话都
+    // 会变成气泡，所以它有自己的档位，不跟着上面两项走；默认比面试官那档长。
+    phoneMaxSentenceSilenceMs: 1200,
     // Speaker gate, in dBFS: while the loopback level is above this the microphone is muted, so the
     // interviewer's voice cannot leak into the candidate column. -80 is effectively digital silence,
     // which is how the gate is turned off.

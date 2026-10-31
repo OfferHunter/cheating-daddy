@@ -244,6 +244,14 @@ function getMicMaxSentenceSilenceMs() {
     return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
 }
 
+// 手机端面试（声纹识别模式）那一路的静音时长。它同时决定服务端 VAD 的断句和客户端看门狗的兜底，
+// 两处必须同源，否则看门狗会在服务端还没定稿时先冲掉半句。
+function getPhoneMaxSentenceSilenceMs() {
+    const value = Number(getPreferences().phoneMaxSentenceSilenceMs);
+    const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.phoneMaxSentenceSilenceMs;
+    return Math.min(MAX_SENTENCE_SILENCE_RANGE.max, Math.max(MAX_SENTENCE_SILENCE_RANGE.min, resolved));
+}
+
 function getMicGateDb() {
     const value = Number(getPreferences().micGateDb);
     const resolved = Number.isFinite(value) ? value : DEFAULT_PREFERENCES.micGateDb;
@@ -519,6 +527,7 @@ module.exports = {
     updatePreference,
     getMaxSentenceSilenceMs,
     getMicMaxSentenceSilenceMs,
+    getPhoneMaxSentenceSilenceMs,
     getMicGateDb,
     getMicGateDwellMs,
     getChatContextTurns,

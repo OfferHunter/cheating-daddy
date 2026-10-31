@@ -115,6 +115,26 @@ export class AssistantView extends LocalizedLitElement {
                 color: var(--text-muted);
                 font-size: var(--font-size-sm);
             }
+
+            /* 手机端面试里还没认出说话人的那句话：身份未定，进哪一路气泡都可能是错的，所以单独放在列表末尾
+               居中显示。虚线框表示它还在变，定稿后这行消失，文字带着编号进面试官/候选人那一路。 */
+            .partial-row {
+                display: flex;
+                justify-content: center;
+            }
+
+            .partial-bubble {
+                max-width: min(560px, 100%);
+                padding: 10px 14px;
+                border: 1px dashed var(--border-strong);
+                border-radius: var(--radius-lg);
+                background: transparent;
+                color: var(--text-secondary);
+                font-size: var(--font-size-base);
+                line-height: 1.55;
+                text-align: left;
+                word-break: break-word;
+            }
         `,
         // 转录的外观与历史页共用：历史页把录下来的会话显示成同一场对话，所以两边从同一处取气泡和 markdown。
         conversationStyles,
@@ -510,6 +530,8 @@ export class AssistantView extends LocalizedLitElement {
         paused: { type: Boolean },
         // 笔试空态里的错误条：由 app 元素持有并传入，采集/发送失败时非空。
         writtenError: { type: String },
+        // 手机端面试里还没定出说话人的当前句，显示在转录列表末尾的居中虚线框里。空串表示没有。
+        partialText: { type: String },
         // 「截图进入缓存」攒了几张。缓存在渲染端模块里,视图重建后从这里读回来。
         screenshotCacheCount: { type: Number, state: true },
         messages: { type: Array },
@@ -528,6 +550,7 @@ export class AssistantView extends LocalizedLitElement {
         this.sessionMode = 'interview';
         this.paused = false;
         this.writtenError = '';
+        this.partialText = '';
         this.screenshotCacheCount = 0;
         // 笔试的长滚动:贴底时跟着新 token 走;用户往上翻后就不再拽回去。导航高亮跟着滚动位置走。
         this._writtenPinned = true;
@@ -1397,10 +1420,13 @@ export class AssistantView extends LocalizedLitElement {
                 <div class="chat-wrap">
                     <div class="chat-scroll" @scroll=${this.handleScroll}>
                         ${
-                            this.messages.length === 0
+                            this.messages.length === 0 && !this.partialText
                                 ? html`<div class="chat-empty">Listening to the interview...</div>`
                                 : html`<div class="chat-list ${this._hasInterviewNav() ? 'with-nav' : ''}">
                                       ${this.messages.map(message => this.renderMessage(message))}
+                                      ${this.partialText
+                                          ? html`<div class="partial-row"><div class="partial-bubble">${this.partialText}</div></div>`
+                                          : ''}
                                   </div>`
                         }
                     </div>

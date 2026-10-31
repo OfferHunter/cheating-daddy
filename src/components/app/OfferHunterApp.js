@@ -369,6 +369,8 @@ export class OfferHunterApp extends LocalizedLitElement {
         voiceprintLines: { type: Array },
         // 识别服务在检测阶段彻底失败时的错误文本；非空时检测页标题换成「语音服务异常：」。
         voiceprintError: { type: String },
+        // 正式会话里还没认出说话人的那句话，显示成居中的虚线部分结果；句子定稿或身份出来时清空。
+        phonePartialText: { type: String },
         messages: { type: Array },
         // 放在这里而不是实时视图里：那个视图每次导航都会被重建，详细回答必须像转录一样熬过一次页面切换。
         detailMessages: { type: Array },
@@ -390,6 +392,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.sessionMode = 'interview';
         this.voiceprintLines = [];
         this.voiceprintError = '';
+        this.phonePartialText = '';
         this._confirmingSpeaker = false;
         // 只有从「手机端面试」被拦到配置页时才非空：打开哪一家识别服务的编辑页。
         this._configAsrPage = '';
@@ -460,6 +463,10 @@ export class OfferHunterApp extends LocalizedLitElement {
             this.voiceprintError = (data && data.message) || 'unknown error';
             this.requestUpdate();
         });
+        ipcRenderer.on('phone-partial', (_, data) => {
+            this.phonePartialText = data && typeof data.text === 'string' ? data.text : '';
+            this.requestUpdate();
+        });
         ipcRenderer.on('update-status', (_, status) => this.setStatus(status));
         ipcRenderer.on('click-through-toggled', (_, isEnabled) => {
             this._isClickThrough = isEnabled;
@@ -488,6 +495,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         ipcRenderer.removeAllListeners('transcription-final');
         ipcRenderer.removeAllListeners('diarization-sentence');
         ipcRenderer.removeAllListeners('diarization-error');
+        ipcRenderer.removeAllListeners('phone-partial');
         ipcRenderer.removeAllListeners('update-status');
         ipcRenderer.removeAllListeners('click-through-toggled');
         ipcRenderer.removeAllListeners('reconnect-failed');
@@ -643,6 +651,7 @@ export class OfferHunterApp extends LocalizedLitElement {
             const result = await offerHunter.confirmSpeaker(speakerId);
             if (!result?.success) return;
             this.voiceprintLines = [];
+            this.phonePartialText = '';
             this.currentView = 'assistant';
             this.requestUpdate();
         } finally {
@@ -826,6 +835,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         this.sessionActive = false;
         this.voiceprintLines = [];
         this.voiceprintError = '';
+        this.phonePartialText = '';
         this._stopTimer();
         this.currentView = 'main';
         this.requestUpdate();
@@ -946,6 +956,7 @@ export class OfferHunterApp extends LocalizedLitElement {
         // 手机端面试先停在声纹检测页：用户指认自己之前，主进程不会派发任何提问。按 Y 之后才进实时视图。
         this.voiceprintLines = [];
         this.voiceprintError = '';
+        this.phonePartialText = '';
         this._confirmingSpeaker = false;
         this.currentView = phone ? 'voiceprint' : 'assistant';
         this._startTimer();
@@ -1046,6 +1057,7 @@ export class OfferHunterApp extends LocalizedLitElement {
                         .sessionMode=${this.sessionMode}
                         .paused=${this._paused}
                         .writtenError=${this.writtenError}
+                        .partialText=${this.phonePartialText}
                         .messages=${this.messages}
                         .detailMessages=${this.detailMessages}
                         .detailCurrent=${this.detailCurrent}

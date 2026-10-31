@@ -1,5 +1,5 @@
-// 声纹检测页的离屏验证：加载真实的 VoiceprintView.js，喂进几行假句子，检查标题、气泡、speaker 编号圆标、
-// 「如果这是你，请按下Y」只出现在最新一行、未定稿或编号未知时按 Y 不生效。
+// 声纹检测页的离屏验证：加载真实的 VoiceprintView.js，喂进几行假句子，检查标题、带编号气泡、
+// 未定稿句子的「?」圆标、「如果这是你，请按下Y」只出现在最新一行且中间态不可点。
 // 结果写 tp-voiceprint-results.txt 到系统 tmp(或 TP_HARNESS_OUT)；截图写同目录的 tp-voiceprint.png。
 // 运行:node_modules/electron/dist/electron.exe scripts/voiceprint-harness.js
 const path = require('node:path');
@@ -125,7 +125,20 @@ app.whenReady().then(async () => {
             (await exec(`window.__q('.detect-empty').textContent`)).includes('请先说一句明显属于你自己的话')
         );
 
-        // 三句：前两句已定稿（speaker 1、2），最后一句仍是中间态（speaker -1）。
+        // 只有中间态：句子照样进列表，圆标是「?」，提示摆着但不可点。
+        await exec(`window.__view.lines = [
+            { id: 1, sentenceId: 0, text: '你好，我是', speakerId: -1, final: false },
+        ]; void 0`);
+        await wait(120);
+        check('an interim line renders as a bubble', (await exec(`window.__all('.bubble').length`)) === 1);
+        check('the interim badge shows a question mark', (await exec(`window.__q('.speaker-badge').textContent.trim()`)) === '?');
+        check('the Y hint follows the newest line', (await exec(`window.__all('.confirm-hint').length`)) === 1);
+        check('the hint stays disabled while the speaker is unknown', await exec(`window.__q('.confirm-hint').disabled`));
+        await exec(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y' })); void 0`);
+        await wait(80);
+        check('pressing Y with an undetermined line is ignored', (await exec(`window.__confirmed.length`)) === 0);
+
+        // 两句已定稿（speaker 1、2），最新一句仍是中间态（speaker -1）。
         await exec(`window.__view.lines = [
             { id: 1, sentenceId: 0, text: '你好，我是候选人。', speakerId: 1, final: true },
             { id: 2, sentenceId: 1, text: '请先做一个自我介绍。', speakerId: 2, final: true },
@@ -133,33 +146,42 @@ app.whenReady().then(async () => {
         ]; void 0`);
         await wait(120);
 
-        check('one bubble per line', (await exec(`window.__all('.bubble').length`)) === 3);
+        check('every line keeps its bubble', (await exec(`window.__all('.bubble').length`)) === 3);
         check(
-            'speaker ids render in the badge',
+            'known ids render in the badge and unknown stays a question mark',
             (await exec(`window.__all('.speaker-badge').map(b => b.textContent.trim()).join(',')`)) === '1,2,?'
         );
+        check('the interim bubble shows the unfinished sentence', (await exec(`window.__all('.bubble')[2].textContent`)).includes('好的，我毕业'));
         check('bubble list is horizontally centered', (await exec(`getComputedStyle(window.__q('.bubble-list')).alignItems`)) === 'center');
         check('list scrolls vertically', (await exec(`getComputedStyle(window.__q('.detect-scroll')).overflowY`)) === 'auto');
-        check('only the latest row carries the Y hint', (await exec(`window.__all('.confirm-hint').length`)) === 1);
+        check('only the newest row carries the Y hint', (await exec(`window.__all('.confirm-hint').length`)) === 1);
         check(
-            'the hint sits next to the newest bubble',
+            'the hint sits next to the newest line',
             await exec(`window.__all('.bubble-row').indexOf(window.__q('.confirm-hint').closest('.bubble-row')) === 2`)
         );
         check('hint text matches the request', (await exec(`window.__q('.confirm-hint').textContent`)).trim().includes('如果这是你，请按下Y'));
-        check('hint is disabled while the newest line is uncertain', await exec(`window.__q('.confirm-hint').disabled`));
+        check('the hint is disabled while the newest line is interim', await exec(`window.__q('.confirm-hint').disabled`));
+        await exec(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Y' })); void 0`);
+        await wait(120);
+        check('pressing Y while the newest line is interim is ignored', (await exec(`window.__confirmed.length`)) === 0);
 
-        // 未定稿时按 Y 什么都不该发生。
-        await exec(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y' })); void 0`);
-        await wait(80);
-        check('pressing Y on an uncertain line is ignored', (await exec(`window.__confirmed.length`)) === 0);
-
-        // 最新一句定稿且编号可靠后，提示可点，按 Y 把该编号交给主进程。
+        // 中间态定稿后：这句话带着编号（3）留在原位，提示变为可点。
         await exec(`window.__view.lines = [
+            { id: 1, sentenceId: 0, text: '你好，我是候选人。', speakerId: 1, final: true },
+            { id: 2, sentenceId: 1, text: '请先做一个自我介绍。', speakerId: 2, final: true },
             { id: 3, sentenceId: 2, text: '好的，我毕业于某大学。', speakerId: 3, final: true },
         ]; void 0`);
         await wait(120);
-        check('hint becomes clickable once the speaker is known', await exec(`!window.__q('.confirm-hint').disabled`));
-        check('the confirmed line shows its speaker id', (await exec(`window.__q('.speaker-badge').textContent`)).trim() === '3');
+        check('the confirmed sentence keeps its place in the list', (await exec(`window.__all('.bubble').length`)) === 3);
+        check(
+            'the confirmed sentence shows its id',
+            (await exec(`window.__all('.speaker-badge').map(b => b.textContent.trim()).join(',')`)) === '1,2,3'
+        );
+        check(
+            'the hint stays on the newest line',
+            await exec(`window.__all('.bubble-row').indexOf(window.__q('.confirm-hint').closest('.bubble-row')) === 2`)
+        );
+        check('the hint is clickable once the speaker is known', await exec(`!window.__q('.confirm-hint').disabled`));
 
         await exec(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Y' })); void 0`);
         await wait(120);
@@ -173,8 +195,11 @@ app.whenReady().then(async () => {
         fs.writeFileSync(path.join(OUT_DIR, 'tp-voiceprint.png'), image.toPNG());
         results.push(`SHOT  ${path.join(OUT_DIR, 'tp-voiceprint.png')}`);
 
-        // 识别服务失败：标题换成「语音服务异常：」，下面一行小字写具体错误，Y 不再生效。
-        await exec(`window.__view.error = 'handshake rejected 4002: signature error'; void 0`);
+        // 识别服务失败：标题换成「语音服务异常：」，下面一行小字写具体错误，部分结果和 Y 都不再出现。
+        await exec(`window.__view.lines = [
+            { id: 1, sentenceId: 0, text: '你好，我是候选人。', speakerId: 1, final: true },
+            { id: 3, sentenceId: 2, text: '好的，我毕业', speakerId: -1, final: false },
+        ]; window.__view.error = 'handshake rejected 4002: signature error'; void 0`);
         await wait(120);
         check('error title replaces the detection title', (await exec(`window.__q('.detect-title').textContent`)).trim() === '语音服务异常：');
         check('error title is marked as an error', await exec(`window.__q('.detect-title').classList.contains('error')`));
@@ -186,6 +211,7 @@ app.whenReady().then(async () => {
         check('error detail carries the message', (await exec(`window.__q('.detect-error').textContent`)).trim() === 'handshake rejected 4002: signature error');
         check('error detail uses the small font', (await exec(`getComputedStyle(window.__q('.detect-error')).fontSize`)) === '11px');
         check('the Y hint disappears on error', (await exec(`window.__all('.confirm-hint').length`)) === 0);
+        check('the lines stay visible on error', (await exec(`window.__all('.bubble').length`)) === 2);
         await exec(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y' })); void 0`);
         await wait(80);
         check('pressing Y on error is ignored', (await exec(`window.__confirmed.join(',')`)) === '3,3');

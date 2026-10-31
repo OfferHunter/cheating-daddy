@@ -4,6 +4,8 @@ import { scrollbarStyles } from './sharedPageStyles.js';
 
 // 手机端面试开局：麦克风听到的每一句都带着腾讯云分配好的 speaker_id。用户在这里指认哪一个是自己，
 // 之后主进程才知道该把哪些话当背景、哪些话当面试官的提问。
+// 这一步还没开始分流，所以每个句子都直接进列表：身份没出来时圆标显示「?」，定稿后换成编号。
+// 正式会话里那种居中的虚线部分结果属于实时页，不属于这里。
 export class VoiceprintView extends LocalizedLitElement {
     static styles = [
         css`
@@ -87,7 +89,7 @@ export class VoiceprintView extends LocalizedLitElement {
                 user-select: text;
             }
 
-            /* 气泡左上角的小圆标：数字就是腾讯云给的 speaker_id。 */
+            /* 气泡左上角的小圆标：数字就是腾讯云给的 speaker_id，还没定出来时是「?」。 */
             .speaker-badge {
                 position: absolute;
                 top: -10px;
@@ -179,11 +181,12 @@ export class VoiceprintView extends LocalizedLitElement {
         if (list) list.scrollTop = list.scrollHeight;
     }
 
+    // 提示只跟着列表最后一行走：用户要指认的是自己刚说的那句。
     _latestLine() {
         return this.lines.length ? this.lines[this.lines.length - 1] : null;
     }
 
-    // 只认已经定稿、且服务端给出了正数 speaker_id 的句子：中间态的编号还可能被改判。
+    // 只认已经定稿、且服务端给出了非负 speaker_id 的句子：中间态的编号还可能被改判。
     async _confirm() {
         if (this._confirming || this.error) return;
         const line = this._latestLine();
@@ -198,9 +201,9 @@ export class VoiceprintView extends LocalizedLitElement {
     }
 
     render() {
-        const latest = this._latestLine();
-
         const error = (this.error || '').trim();
+        // 准备阶段还没有分流，所有句子都按到达顺序进列表；还没定出身份的圆标显示「?」，定稿后换成编号。
+        const latest = this._latestLine();
 
         return html`
             <div class="detect">
@@ -221,6 +224,7 @@ export class VoiceprintView extends LocalizedLitElement {
                         : html`<div class="bubble-list">
                               ${this.lines.map(line => {
                                   const isLatest = line === latest;
+                                  // 还没定稿、或服务端还没给出编号时，提示摆着但不吃点击。
                                   const canConfirm = !error && isLatest && line.final && line.speakerId >= 0;
                                   return html`
                                       <div class="bubble-row">

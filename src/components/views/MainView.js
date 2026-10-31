@@ -643,7 +643,7 @@ export class MainView extends LocalizedLitElement {
     _renderDesktopPhonePage() {
         return html`
             <div class="page-title">
-                ${desktopPhoneIcon}${t('Desktop interview + phone prompting', '电脑端面试 + 手机端提词')}
+                ${desktopPhoneIcon}${t('Desktop interview + phone prompting', '电脑端面试笔试 + 手机端提词')}
                 <span class="page-title-desc"
                     >${t(
                         'Interview on the computer — read the prompts in a phone/tablet browser',
@@ -691,7 +691,7 @@ export class MainView extends LocalizedLitElement {
             <div class="page-note">
                 ${t(
                     'The interview runs on your phone (video or voice call). Only the computer microphone is used: it hears both the phone speaker (the interviewer) and your own voice, and Tencent Cloud real-time recognition separates the two speakers.\nTurn on the phone speaker and place the phone near the computer microphone. Do not use headphones, or the computer will not hear the interviewer.\nAfter starting, the voiceprint check appears. Say one sentence that clearly belongs to you (for example: “Hello, I am the candidate”), then press Y on the latest bubble. From then on, your speech is kept as background and every other speaker is treated as the interviewer and answered.',
-                    '面试在手机上进行（视频或语音通话）。本模式只开电脑麦克风：它同时接收手机外放出来的面试官声音和你自己的说话声，由腾讯云实时语音识别自动区分两位说话人。\n请打开手机外放并把手机放在电脑麦克风附近，不要戴耳机，否则电脑听不到面试官。\n开始后会先进入声纹检测。请先说一句明显属于你自己的话（例如：「你好，我是候选人」），然后在最新气泡上按 Y。之后你说的话只作为背景，其他说话人都当作面试官并作答。'
+                    '面试在手机上进行（视频或语音通话）。本模式不需要手机与电脑连接，只开电脑麦克风，：它同时接收手机外放出来的面试官声音和你自己的说话声，由腾讯云实时语音识别自动区分两位说话人。\n请打开手机外放并把手机放在电脑麦克风附近，不要戴耳机，否则电脑听不到面试官。\n开始后会先进入声纹检测。请先说一句明显属于你自己的话（例如：「你好，我是候选人」），然后在最新气泡上按 Y。之后你说的话只作为背景，其他说话人都当作面试官并作答。'
                 )
                     .split('\n')
                     .map((line, i) => (i === 0 ? line : html`<br />${line}`))}
